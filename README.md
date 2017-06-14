@@ -5,8 +5,8 @@ A New Distribution Layer for EMQ R3
 
 ```
 ----------             ----------
-|  EMQ   |             |  EMQ   |
-----------             ----------
+| EMQ R3 |<--- MQTT--->| EMQ R3 |
+|--------|             |--------|
 |  Ekka  |<----RPC---->|  Ekka  |
 |--------|             |--------|
 | Mnesia |<--Cluster-->| Mnesia |
@@ -14,4 +14,8 @@ A New Distribution Layer for EMQ R3
 | Kernel |<----TCP---->| Kernel |
 ----------             ----------
 ```
+
+## License
+
+Apache License Version 2.0
 
