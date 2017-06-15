@@ -1,11 +1,11 @@
 
 # Ekka
 
-A New Distribution Layer for EMQ R3
+A New Distribution Layer for EMQ X
 
 ```
 ----------             ----------
-| EMQ R3 |<--- MQTT--->| EMQ R3 |
+|  EMQX  |<--- MQTT--->|  EMQX  |
 |--------|             |--------|
 |  Ekka  |<----RPC---->|  Ekka  |
 |--------|             |--------|
