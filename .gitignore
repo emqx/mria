@@ -11,3 +11,4 @@ rel/example_project
 .erlang.mk/
 data/
 ekka.d
+Mnesia*
