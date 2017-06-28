@@ -17,6 +17,7 @@ A New Distribution Layer for EMQ X
 
 ## Node Discovery and AutoCluster
 
+TODO:...
 
 ## Network Partition and Autoheal
 
