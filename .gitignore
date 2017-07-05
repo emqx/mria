@@ -13,3 +13,9 @@ data/
 ekka.d
 Mnesia*
 logs/
+.DS_Store
+cover/
+ct.coverdata
+ebin/test
+eunit.coverdata
+test/ct.cover.spec

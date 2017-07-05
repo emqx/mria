@@ -15,6 +15,10 @@ ERLC_OPTS += +'{parse_transform, lager_transform}'
 BUILD_DEPS = cuttlefish
 dep_cuttlefish = git https://github.com/emqtt/cuttlefish
 
+TEST_ERLC_OPTS += +debug_info
+TEST_ERLC_OPTS += +'{parse_transform, lager_transform}'
+
+COVER = true
 include erlang.mk
 
 app.config::
