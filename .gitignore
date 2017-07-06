@@ -12,3 +12,4 @@ rel/example_project
 data/
 ekka.d
 Mnesia*
+log/
