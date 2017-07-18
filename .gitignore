@@ -19,3 +19,4 @@ ct.coverdata
 ebin/test
 eunit.coverdata
 test/ct.cover.spec
+log/
