@@ -2,10 +2,11 @@ PROJECT = ekka
 PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ
 PROJECT_VERSION = 0.2
 
-DEPS = lager
+DEPS = lager jsx
+dep_jsx   = git https://github.com/talentdeficit/jsx
 dep_lager = git https://github.com/basho/lager master
 
-LOCAL_DEPS = mnesia
+LOCAL_DEPS = mnesia inets
 
 NO_AUTOPATCH = cuttlefish
 
