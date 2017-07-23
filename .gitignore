@@ -4,7 +4,7 @@ deps
 *.beam
 *.plt
 erl_crash.dump
-ebin/*.beam
+ebin/*
 rel/example_project
 .concrete/DEV_MODE
 .rebar
@@ -12,3 +12,11 @@ rel/example_project
 data/
 ekka.d
 Mnesia*
+logs/
+.DS_Store
+cover/
+ct.coverdata
+ebin/test
+eunit.coverdata
+test/ct.cover.spec
+log/
