@@ -1,7 +1,7 @@
 
 # Ekka
 
-Ekka - Autocluster and Autoheal library for EMQ. Ekka hepls build a new distribution layer for EMQ R2.3.
+Ekka - Autocluster and Autoheal for EMQ. Ekka hepls build a new distribution layer for EMQ R2.3.
 
 ```
 ----------             ----------
@@ -21,8 +21,8 @@ Ekka supports Erlang node discovery and autocluster with various strategies:
 
 Strategy   | Description
 -----------|--------------------------------------
-manual     | Join or Leave cluster mannually
-static     | Autocluster by a static node list
+manual     | Join or Leave cluster manually
+static     | Autocluster by static node list
 mcast      | Autocluster by UDP Multicast
 dns        | Autocluster by DNA A Record
 etcd       | Autocluster using etcd
