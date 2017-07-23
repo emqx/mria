@@ -22,7 +22,7 @@ Ekka supports Erlang node discovery and autocluster with various strategies:
 Strategy   | Description
 -----------|--------------------------------------
 manual     | Join or Leave cluster manually
-static     | Autocluster by a static node list
+static     | Autocluster by static node list
 mcast      | Autocluster by UDP Multicast
 dns        | Autocluster by DNA A Record
 etcd       | Autocluster using etcd
