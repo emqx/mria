@@ -1,7 +1,7 @@
 
 # Ekka
 
-A New Distribution Layer for EMQ X
+Ekka - Autocluster and Autoheal library for EMQ. Ekka hepls build a new distribution layer for EMQ R2.3.
 
 ```
 ----------             ----------
@@ -15,19 +15,36 @@ A New Distribution Layer for EMQ X
 ----------             ----------
 ```
 
-## Node Discovery and AutoCluster
+## Node discovery and Autocluster
 
-TODO:...
+Ekka supports Erlang node discovery and autocluster with various strategies:
 
-## Network Partition and Autoheal
+Strategy   | Description
+-----------|--------------------------------------
+manual     | Join or Leave cluster mannually
+static     | Autocluster by a static node list
+mcast      | Autocluster by UDP Multicast
+dns        | Autocluster by DNA A Record
+etcd       | Autocluster using etcd
+k8s        | Autocluster on Kubernetes
 
-1. Report the partition to a leader node which has the oldest guid
+The configuration example files are under 'etc/' folder.
 
-2. Leader generates a global netsplit view and selects one node in the majority as coordinator
+## Network partition and Autoheal
 
-3. Leader requests the coordinator to autoheal the network partitions
+When network partition occurs, the following steps to heal the cluster if autoheal is enabled:
 
-4. Coordinator reboots all the nodes in the minority side
+1. Node reports the partitions to a leader node which has the oldest guid.
+
+2. Leader node create a global netsplit view and choose one node in the majority as coordinator.
+
+3. Leader node requests the coordinator to autoheal the network partition.
+
+4. Coordinator node reboots all the nodes in the minority side.
+
+## Node down and Autoclean
+
+A down node will be removed from the cluster if autoclean is enabled.
 
 ## License
 
