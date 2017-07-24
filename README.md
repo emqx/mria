@@ -1,7 +1,7 @@
 
 # Ekka
 
-Ekka - Autocluster and Autoheal for EMQ. Ekka hepls build a new distribution layer for EMQ R2.3.
+Ekka - Autocluster and Autoheal for EMQ. Ekka helps build a new distribution layer for EMQ R2.3.
 
 ```
 ----------             ----------
