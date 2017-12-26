@@ -1,6 +1,6 @@
 PROJECT = ekka
 PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ
-PROJECT_VERSION = 0.2
+PROJECT_VERSION = 0.2.1
 
 DEPS = lager jsx
 dep_jsx   = git https://github.com/talentdeficit/jsx

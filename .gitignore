@@ -9,7 +9,7 @@ rel/example_project
 .concrete/DEV_MODE
 .rebar
 .erlang.mk/
-data/
+!data/app.etcd.config
 ekka.d
 Mnesia*
 logs/
