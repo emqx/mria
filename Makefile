@@ -1,3 +1,5 @@
+.PHONY: tests
+
 PROJECT = ekka
 PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ
 PROJECT_VERSION = 0.2.1
