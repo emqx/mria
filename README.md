@@ -72,29 +72,29 @@ cluster.discovery = mcast
 ## IP Multicast Address.
 ##
 ## Value: IP Address
-## cluster.mcast.addr = 239.192.0.1
+cluster.mcast.addr = 239.192.0.1
 
 ## Multicast Ports.
 ##
 ## Value: Port List
-## cluster.mcast.ports = 4369,4370
+cluster.mcast.ports = 4369,4370
 
 ## Multicast Iface.
 ##
 ## Value: Iface Address
 ##
 ## Default: 0.0.0.0
-## cluster.mcast.iface = 0.0.0.0
+cluster.mcast.iface = 0.0.0.0
 
 ## Multicast Ttl.
 ##
 ## Value: 0-255
-## cluster.mcast.ttl = 255
+cluster.mcast.ttl = 255
 
 ## Multicast loop.
 ##
 ## Value: on | off
-## cluster.mcast.loop = on
+cluster.mcast.loop = on
 ```
 
 ### Cluster using DNS A records
@@ -193,12 +193,12 @@ cluster.k8s.service_name = ekka
 ## The address type is used to extract host from k8s service.
 ##
 ## Value: ip | dns
-## cluster.k8s.address_type = ip
+cluster.k8s.address_type = ip
 
 ## The app name helps build 'node.name'.
 ##
 ## Value: String
-## cluster.k8s.app_name = ekka
+cluster.k8s.app_name = ekka
 ```
 
 ## Network partition and Autoheal
