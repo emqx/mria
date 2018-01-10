@@ -24,7 +24,7 @@ Strategy   | Description
 manual     | Join cluster manually
 static     | Static node list
 mcast      | IP Multicast
-dns        | DNA A Records
+dns        | DNS A Records
 etcd       | etcd
 k8s        | Kubernetes
 
