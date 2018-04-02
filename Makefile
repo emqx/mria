@@ -1,11 +1,13 @@
 .PHONY: tests
 
 PROJECT = ekka
-PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ
+PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ X Broker
 PROJECT_VERSION = 0.3
 
-DEPS = lager jsx
-dep_jsx   = git https://github.com/talentdeficit/jsx
+DEPS = jsx
+dep_jsx = git https://github.com/talentdeficit/jsx
+
+BUILD_DEPS = lager
 dep_lager = git https://github.com/basho/lager master
 
 LOCAL_DEPS = mnesia inets
@@ -23,7 +25,7 @@ TEST_ERLC_OPTS += +'{parse_transform, lager_transform}'
 
 EUNIT_OPTS = verbose
 
-CT_SUITES = ekka ekka_lib ekka_autocluster
+CT_SUITES = ekka ekka_lib ekka_autocluster ekka_locker
 
 CT_OPTS = -cover test/ct.cover.spec -erl_args -name ekka_ct@127.0.0.1
 
