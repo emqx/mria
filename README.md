@@ -255,8 +255,11 @@ Ekka implements a simple distributed lock service in 0.3 release.  The Lock APIs
 
 TODO:
 
-
 ## License
 
 Apache License Version 2.0
+
+## Author
+
+EMQ X Team.
 
