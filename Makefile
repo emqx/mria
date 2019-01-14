@@ -2,7 +2,7 @@
 
 PROJECT = ekka
 PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ X Broker
-PROJECT_VERSION = 0.4.1
+PROJECT_VERSION = 0.5.2
 
 DEPS = jsx
 dep_jsx = git https://github.com/talentdeficit/jsx 2.9.0
@@ -14,7 +14,7 @@ NO_AUTOPATCH = cuttlefish
 ERLC_OPTS += +debug_info
 
 BUILD_DEPS = cuttlefish
-dep_cuttlefish = git https://github.com/emqx/cuttlefish
+dep_cuttlefish = git https://github.com/emqx/cuttlefish v2.2.1
 
 TEST_ERLC_OPTS += +debug_info
 
