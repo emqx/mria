@@ -1,35 +1,32 @@
 .PHONY: tests
 
 PROJECT = ekka
-PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ
-PROJECT_VERSION = 0.3
+PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ X Broker
+PROJECT_VERSION = 0.5.2
 
-DEPS = lager jsx
-dep_jsx   = git https://github.com/talentdeficit/jsx
-dep_lager = git https://github.com/basho/lager master
+DEPS = jsx
+dep_jsx = git https://github.com/talentdeficit/jsx 2.9.0
 
 LOCAL_DEPS = mnesia inets
 
 NO_AUTOPATCH = cuttlefish
 
 ERLC_OPTS += +debug_info
-ERLC_OPTS += +'{parse_transform, lager_transform}'
 
 BUILD_DEPS = cuttlefish
-dep_cuttlefish = git https://github.com/emqtt/cuttlefish
+dep_cuttlefish = git https://github.com/emqx/cuttlefish v2.2.1
 
 TEST_ERLC_OPTS += +debug_info
-TEST_ERLC_OPTS += +'{parse_transform, lager_transform}'
 
 EUNIT_OPTS = verbose
 
-CT_SUITES = ekka ekka_lib ekka_autocluster
+CT_SUITES = ekka ekka_lib ekka_autocluster ekka_locker
 
 CT_OPTS = -cover test/ct.cover.spec -erl_args -name ekka_ct@127.0.0.1
 
 COVER = true
 
-PLT_APPS = sasl asn1 ssl syntax_tools runtime_tools crypto xmerl os_mon inets public_key ssl lager compiler mnesia
+PLT_APPS = sasl asn1 ssl syntax_tools runtime_tools crypto xmerl os_mon inets public_key ssl compiler mnesia
 DIALYZER_DIRS := ebin/
 DIALYZER_OPTS := --verbose --statistics -Werror_handling \
                  -Wrace_conditions #-Wunmatched_returns
