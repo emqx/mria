@@ -1,38 +1,35 @@
-.PHONY: tests
+REBAR := rebar3
 
-PROJECT = ekka
-PROJECT_DESCRIPTION = Autocluster and Autoheal for EMQ X Broker
-PROJECT_VERSION = 0.5.4
+.PHONY: all
+all: compile
 
-DEPS = jsx
-dep_jsx = git https://github.com/talentdeficit/jsx 2.9.0
+compile:
+	$(REBAR) compile
 
-LOCAL_DEPS = mnesia inets
+.PHONY: clean
+clean: distclean
 
-NO_AUTOPATCH = cuttlefish
+.PHONY: distclean
+distclean:
+	@rm -rf _build erl_crash.dump rebar3.crashdump rebar.lock
 
-ERLC_OPTS += +debug_info
+.PHONY: eunit
+eunit: compile
+	$(REBAR) eunit verbose=true
 
-BUILD_DEPS = cuttlefish
-dep_cuttlefish = git https://github.com/emqx/cuttlefish v2.2.1
+.PHONY: ct
+ct: compile
+	$(REBAR) ct -v
 
-TEST_ERLC_OPTS += +debug_info
+.PHONY: dialyzer
+dialyzer:
+	$(REBAR) dialyzer
 
-EUNIT_OPTS = verbose
+CUTTLEFISH_SCRIPT = _build/default/lib/cuttlefish/cuttlefish
 
-CT_SUITES = ekka ekka_lib ekka_autocluster ekka_locker
+$(CUTTLEFISH_SCRIPT):
+	@${REBAR} get-deps
+	@if [ ! -f cuttlefish ]; then make -C _build/default/lib/cuttlefish; fi
 
-CT_OPTS = -cover test/ct.cover.spec -erl_args -name ekka_ct@127.0.0.1
-
-COVER = true
-
-PLT_APPS = sasl asn1 ssl syntax_tools runtime_tools crypto xmerl os_mon inets public_key ssl compiler mnesia
-DIALYZER_DIRS := ebin/
-DIALYZER_OPTS := --verbose --statistics -Werror_handling \
-                 -Wrace_conditions #-Wunmatched_returns
-
-COVER = true
-include erlang.mk
-
-app.config::
-	./deps/cuttlefish/cuttlefish -l info -e etc/ -c etc/ekka.conf.example -i priv/ekka.schema -d data/
+app.config: $(CUTTLEFISH_SCRIPT)
+	$(verbose) $(CUTTLEFISH_SCRIPT) -l info -e etc/ -c etc/ekka.conf.example -i priv/ekka.schema -d data/
