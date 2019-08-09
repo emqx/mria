@@ -255,6 +255,25 @@ Ekka implements a simple distributed lock service in 0.3 release.  The Lock APIs
 
 TODO:
 
+## Cluster without epmd
+
+The ekka 0.6.0 release implements erlang distribiton without epmd.
+
+See: http://erlang.org/pipermail/erlang-questions/2015-December/087013.html
+
+For example:
+
+```
+## Dist port: 4370
+erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist ekka -start_epmd false -epmd_module ekka_epmd -name node1@127.0.0.1 -s ekka
+## Dist port: 4371
+erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist ekka -start_epmd false -epmd_module ekka_epmd -name node2@127.0.0.1 -s ekka
+## Dist port: 4372
+erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist ekka -start_epmd false -epmd_module ekka_epmd -name node3@127.0.0.1  -s ekka
+```
+
+The erlang distribution port can be tuned by ekka `inet_dist_base_port` env. The default port is 4370.
+
 ## License
 
 Apache License Version 2.0
