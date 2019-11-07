@@ -1,5 +1,7 @@
 REBAR := rebar3
 
+CT_NODE_NAME = ekkact@127.0.0.1
+
 .PHONY: all
 all: compile
 
@@ -19,7 +21,7 @@ eunit: compile
 
 .PHONY: ct
 ct: compile
-	$(REBAR) as test ct -v
+	$(REBAR) as test ct -v --readable=false --name $(CT_NODE_NAME)
 
 cover:
 	$(REBAR) cover
