@@ -1,6 +1,6 @@
 REBAR := rebar3
 
-CT_NODE_NAME = ekkact@127.0.0.1
+CT_NODE_NAME = ct@127.0.0.1
 
 .PHONY: all
 all: compile
@@ -14,6 +14,10 @@ clean: distclean
 .PHONY: distclean
 distclean:
 	@rm -rf _build erl_crash.dump rebar3.crashdump rebar.lock
+
+.PHONY: xref
+xref:
+	$(REBAR) xref
 
 .PHONY: eunit
 eunit: compile
