@@ -1,7 +1,7 @@
 
 # Ekka
 
-Ekka - Autocluster and Autoheal for EMQ. Ekka helps build a new distribution layer for EMQ R2.3.
+Ekka - Autocluster and Autoheal for EMQ X Broker. Ekka helps build a new distribution layer for EMQ X R2.3+.
 
 ```
 ----------             ----------
@@ -32,15 +32,6 @@ The configuration example files are under 'etc/' folder.
 
 ### Cluster using static node list
 
-Erlang config:
-
-```
-{cluster_discovery,
-    {static, [
-        {seeds, ['ekka1@127.0.0.1', 'ekka2@127.0.0.1']}
-    ]}},
-```
-
 Cuttlefish style config:
 
 ```
@@ -49,20 +40,16 @@ cluster.discovery = static
 cluster.static.seeds = ekka1@127.0.0.1,ekka2@127.0.0.1
 ```
 
-### Cluster using IP Multicast
-
 Erlang config:
 
 ```
 {cluster_discovery,
-    {mcast, [
-        {addr,{239,192,0,1}},
-        {ports,[4369,4370]},
-        {iface,{0,0,0,0}},
-        {ttl, 255},
-        {loop,true}
-    ]}},
+  {static, [
+    {seeds, ['ekka1@127.0.0.1', 'ekka2@127.0.0.1']}
+  ]}},
 ```
+
+### Cluster using IP Multicast
 
 Cuttlefish style config:
 
@@ -97,18 +84,20 @@ cluster.mcast.ttl = 255
 cluster.mcast.loop = on
 ```
 
-### Cluster using DNS A records
-
-Erlang Config:
+Erlang config:
 
 ```
 {cluster_discovery,
-    {dns, [
-        {server, "http://127.0.0.1:2379"},
-        {prefix, "ekkacluster"},
-        {node_ttl, 60000}
-    ]}},
+  {mcast, [
+    {addr, {239,192,0,1}},
+    {ports, [4369,4370]},
+    {iface, {0,0,0,0}},
+    {ttl, 255},
+    {loop, true}
+  ]}},
 ```
+
+### Cluster using DNS A records
 
 Cuttlefish style config:
 
@@ -126,18 +115,17 @@ cluster.dns.name = localhost
 cluster.dns.app = ekka
 ```
 
-### Cluster using etcd
-
 Erlang config:
 
 ```
 {cluster_discovery,
-    {etcd, [
-        {server, ["http://127.0.0.1:2379"]},
-        {prefix, "ekkacluster"},
-        {node_ttl, 60000}
-    ]}},
+  {dns, [
+    {name, "localhost"},
+    {app, "ekka"}
+  ]}},
 ```
+
+### Cluster using etcd
 
 Cuttlefish style config:
 
@@ -161,19 +149,44 @@ cluster.etcd.prefix = ekkacl
 ##
 ## Default: 1m, 1 minute
 cluster.etcd.node_ttl = 1m
+
+## Path to a file containing the client's private PEM-encoded key.
+##
+## Value: File
+##
+## cluster.etcd.keyfile = {{platform_etc_dir}}/certs/client-key.pem
+
+## Path to the file containing the client's certificate
+##
+## Value: File
+##
+## cluster.etcd.certfile = {{platform_etc_dir}}/certs/client.pem
+
+## Path to the file containing PEM-encoded CA certificates. The CA certificates
+## are used during server authentication and when building the client certificate chain.
+##
+## Value: File
+##
+## cluster.etcd.cacertfile = {{platform_etc_dir}}/certs/ca.pem
 ```
 
-### Cluster using Kubernates
-
-Erlang Config:
+Erlang config:
 
 ```
 {cluster_discovery,
-    {k8s, [
-        {apiserver, "http://10.110.111.204:8080"},
-        {app, ekka}
-    ]}},
+  {etcd, [
+    {server, ["http://127.0.0.1:2379"]},
+    {prefix, "ekkacluster"},
+    %%{ssl_options, [
+    %%    {keyfile, "path/to/client-key.pem"},
+    %%    {certfile, "path/to/client.pem"},
+    %%    {cacertfile, "path/to/ca.pem"}
+    %%]},
+    {node_ttl, 60000}
+  ]}},
 ```
+
+### Cluster using Kubernates
 
 Cuttlefish style config:
 
@@ -183,22 +196,46 @@ cluster.discovery = k8s
 ## Kubernates API server list, seperated by ','.
 ##
 ## Value: String
-cluster.k8s.apiserver = http://10.110.111.204:8080
+## cluster.k8s.apiserver = http://10.110.111.204:8080
 
 ## The service name helps lookup EMQ nodes in the cluster.
 ##
 ## Value: String
-cluster.k8s.service_name = ekka
+## cluster.k8s.service_name = ekka
+
+## The name space of k8s
+##
+## Value: String
+## cluster.k8s.namespace = default
 
 ## The address type is used to extract host from k8s service.
 ##
-## Value: ip | dns
-cluster.k8s.address_type = ip
+## Value: ip | dns | hostname
+## cluster.k8s.address_type = ip
 
 ## The app name helps build 'node.name'.
 ##
 ## Value: String
-cluster.k8s.app_name = ekka
+## cluster.k8s.app_name = ekka
+
+## The suffix added to dns and hostname get from k8s service
+##
+## Value: String
+## cluster.k8s.suffix = pod.cluster.local
+```
+
+Erlang config:
+
+```
+{cluster_discovery,
+  {k8s, [
+    {apiserver, "http://10.110.111.204:8080"},
+    {namespace, "default"},
+    {service_name, "ekka"},
+    {address_type, ip},
+    {app_name, "ekka"},
+    {suffix, "pod.cluster.local"}
+  ]}}
 ```
 
 ## Network partition and Autoheal
@@ -251,9 +288,33 @@ cluster.autoclean = 5m
 
 ## Lock Service
 
-Ekka implements a simple distributed lock service in 0.3 release.  The Lock APIs:
+Ekka implements a simple distributed lock service in 0.3 release. The Lock APIs:
 
-TODO:
+Acquire lock:
+
+```
+-spec(acquire(resource()) -> {boolean(), [node()]}).
+ekka_locker:acquire(Resource).
+
+-spec(acquire(atom(), resource(), lock_type()) -> lock_result()).
+ekka_locker:acquire(ekka_locker, Resource, Type).
+```
+
+Release lock:
+
+```
+-spec(release(resource()) -> lock_result()).
+ekka_locker:release(Resource).
+
+-spec(release(atom(), resource()) -> lock_result()).
+ekka_locker:release(Name, Resource).
+```
+
+The lock type:
+
+```
+-type(lock_type() :: local | leader | quorum | all).
+```
 
 ## Cluster without epmd
 
