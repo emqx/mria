@@ -25,3 +25,4 @@ log/
 erlang.mk
 ekka.d
 _build/
+.rebar3/
