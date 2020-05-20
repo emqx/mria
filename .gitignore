@@ -26,3 +26,4 @@ erlang.mk
 ekka.d
 _build/
 .rebar3/
+rebar.lock
