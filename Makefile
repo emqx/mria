@@ -6,7 +6,7 @@ CT_NODE_NAME = ct@127.0.0.1
 all: compile
 
 compile:
-	$(REBAR) compile
+	$(REBAR) do compile, dialyzer, xref
 
 .PHONY: clean
 clean: distclean
