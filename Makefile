@@ -25,7 +25,7 @@ eunit: compile
 
 .PHONY: ct
 ct: compile
-	$(REBAR) as test ct -v --readable=false --name $(CT_NODE_NAME)
+	$(REBAR) do eunit, ct -v --readable=false --name $(CT_NODE_NAME)
 
 cover:
 	$(REBAR) cover
