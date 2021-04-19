@@ -20,17 +20,17 @@
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 %% Check that waiting for events never results in infinite wait
-wait_test() ->
+wait_for_shards_test() ->
     {ok, Pid} = ekka_rlog_status:start_link(),
-    spawn_link(fun() ->
-                       catch ekka_rlog_status:notify_shard_up(foo, node())
-               end),
-    spawn_link(fun() ->
-                       catch ekka_rlog_status:notify_shard_up(bar, node())
-               end),
-    spawn_link(fun() ->
-                       exit(Pid, shutdown)
-               end),
+    spawn(fun() ->
+                  catch ekka_rlog_status:notify_shard_up(foo, node())
+          end),
+    spawn(fun() ->
+                  catch ekka_rlog_status:notify_shard_up(bar, node())
+          end),
+    spawn(fun() ->
+                  exit(Pid, shutdown)
+          end),
     %% Check the result:
     try ekka_rlog_status:wait_for_shards([foo, bar], 100) of
         ok ->

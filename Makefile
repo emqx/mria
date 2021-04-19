@@ -66,7 +66,7 @@ concuerror = $(CONCUERROR_RUN) -f $(BUILD_DIR)/concuerror+test/lib/ekka/test/con
 .PHONY: concuerror_test
 concuerror_test: $(CONCUERROR)
 	rebar3 as concuerror eunit -m concuerror_tests
-	$(call concuerror,wait_test)
+	$(call concuerror,wait_for_shards_test)
 
 $(CONCUERROR):
 	mkdir -p _build/
