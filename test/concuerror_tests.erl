@@ -34,6 +34,8 @@ wait_for_shards_test() ->
     %% Check the result:
     try ekka_rlog_status:wait_for_shards([foo, bar], 100) of
         ok ->
+            %% It should always return `ok' the second time:
+            ok = ekka_rlog_status:wait_for_shards([foo, bar], 100),
             ok;
         {timeout, _Shards} ->
             ok
