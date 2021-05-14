@@ -19,30 +19,70 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
-%% Check that waiting for events never results in infinite wait
-wait_for_shards_test() ->
+%% Check that waiting for shards with timeout=infinity always results in `ok'.
+wait_for_shards_inf_test() ->
     {ok, Pid} = ekka_rlog_status:start_link(),
-    spawn(fun() ->
-                  catch ekka_rlog_status:notify_shard_up(foo, node())
-          end),
-    spawn(fun() ->
-                  catch ekka_rlog_status:notify_shard_up(bar, node())
-          end),
-    spawn(fun() ->
-                  exit(Pid, shutdown)
-          end),
-    %% Check the result:
-    try ekka_rlog_status:wait_for_shards([foo, bar], 100) of
-        ok ->
-            %% It should always return `ok' the second time:
-            ok = ekka_rlog_status:wait_for_shards([foo, bar], 100),
-            ok;
-        {timeout, _Shards} ->
-            ok
-    catch
-        error:rlog_restarted -> ok
-    end,
-    ?assertMatch([], flush()).
+    try
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_shard_up(foo, node())
+              end),
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_shard_up(bar, node())
+              end),
+        ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo, bar], infinity)),
+        ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo, bar], infinity)),
+        ?assertMatch([], flush())
+    after
+        cleanup(Pid)
+    end.
+
+%% Check that waiting for shards with a finite timeout never hangs forever:
+wait_for_shards_timeout_test() ->
+    {ok, Pid} = ekka_rlog_status:start_link(),
+    try
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_shard_up(foo, node())
+              end),
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_shard_up(bar, node())
+              end),
+        Ret = ekka_rlog_status:wait_for_shards([foo, bar], 100),
+        case Ret of
+            ok ->
+                %% It should always succeed the second time:
+                ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo, bar], 100));
+            {timeout, Shards} ->
+                ?assertMatch([], Shards -- [foo, bar])
+        end,
+        ?assertMatch([], flush())
+    after
+        cleanup(Pid)
+    end.
+
+%% Check that waiting for events never results in infinite wait
+wait_for_shards_crash_test() ->
+    {ok, Pid} = ekka_rlog_status:start_link(),
+    try
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_shard_up(foo, node())
+              end),
+        spawn(fun() ->
+                      exit(Pid, shutdown)
+              end),
+        %% Check the result:
+        try ekka_rlog_status:wait_for_shards([foo], 100) of
+            ok ->
+                %% It should always return `ok' the second time:
+                ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo], 100));
+            {timeout, _Shards} ->
+                ok
+        catch
+            error:rlog_restarted -> ok
+        end,
+        ?assertMatch([], flush())
+    after
+        cleanup(Pid)
+    end.
 
 flush() ->
     receive
@@ -50,3 +90,12 @@ flush() ->
     after 100 ->
             []
     end.
+
+cleanup(Pid) ->
+    unlink(Pid),
+    MRef = monitor(process, Pid),
+    exit(Pid, shutdown),
+    receive
+        {'DOWN', MRef, _, _, _} -> ok
+    end,
+    ets:delete(ekka_rlog_replica_tab).
