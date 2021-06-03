@@ -19,18 +19,54 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
+%% Note: the number of interleavings that Concuerror has to explore
+%% grows _exponentially_ with the number of concurrent processes and
+%% the number of I/O operations that they perform. So all tests in
+%% this module should be kept as short and simple as possible and only
+%% verify a single property.
+
 %% Check that waiting for shards with timeout=infinity always results in `ok'.
 wait_for_shards_inf_test() ->
     {ok, Pid} = ekka_rlog_status:start_link(),
     try
         spawn(fun() ->
-                      catch ekka_rlog_status:notify_shard_up(foo, node())
+                      catch ekka_rlog_status:notify_shard_up(foo, self())
               end),
         spawn(fun() ->
-                      catch ekka_rlog_status:notify_shard_up(bar, node())
+                      catch ekka_rlog_status:notify_shard_up(bar, self())
               end),
         ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo, bar], infinity)),
         ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo, bar], infinity)),
+        ?assertMatch([], flush())
+    after
+        cleanup(Pid)
+    end.
+
+%% Check that events published with different tags don't leave garbage messages behind
+notify_different_tags_test() ->
+    {ok, Pid} = ekka_rlog_status:start_link(),
+    try
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_shard_up(foo, self())
+              end),
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_core_node_up(foo, node())
+              end),
+        ?assertMatch(ok, ekka_rlog_status:wait_for_shards([foo], infinity)),
+        ?assertMatch([], flush())
+    after
+        cleanup(Pid)
+    end.
+
+%% Test waiting for core node
+get_core_node_test() ->
+    {ok, Pid} = ekka_rlog_status:start_link(),
+    try
+        Node = node(),
+        spawn(fun() ->
+                      catch ekka_rlog_status:notify_core_node_up(foo, Node)
+              end),
+        ?assertMatch({ok, Node}, ekka_rlog_status:get_core_node(foo, infinity)),
         ?assertMatch([], flush())
     after
         cleanup(Pid)
@@ -41,10 +77,10 @@ wait_for_shards_timeout_test() ->
     {ok, Pid} = ekka_rlog_status:start_link(),
     try
         spawn(fun() ->
-                      catch ekka_rlog_status:notify_shard_up(foo, node())
+                      catch ekka_rlog_status:notify_shard_up(foo, self())
               end),
         spawn(fun() ->
-                      catch ekka_rlog_status:notify_shard_up(bar, node())
+                      catch ekka_rlog_status:notify_shard_up(bar, self())
               end),
         Ret = ekka_rlog_status:wait_for_shards([foo, bar], 100),
         case Ret of
@@ -98,4 +134,5 @@ cleanup(Pid) ->
     receive
         {'DOWN', MRef, _, _, _} -> ok
     end,
-    ets:delete(ekka_rlog_replica_tab).
+    ets:delete(ekka_rlog_replica_tab),
+    ets:delete(ekka_rlog_stats_tab).
