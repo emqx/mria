@@ -76,3 +76,18 @@ $(CONCUERROR):
 	mkdir -p _build/
 	cd _build && git clone https://github.com/parapluu/Concuerror.git
 	$(MAKE) -C _build/Concuerror/
+
+##########################################################################################
+# Docs
+##########################################################################################
+DOC_DIR=doc
+DOC_SRC_DIR=$(DOC_DIR)/src
+
+UMLS=$(wildcard $(DOC_SRC_DIR)/*.uml)
+PICS=$(UMLS:$(DOC_SRC_DIR)/%.uml=$(DOC_DIR)/%.png)
+
+.PHONY: doc
+doc: $(PICS)
+
+$(DOC_DIR)/%.png: $(DOC_SRC_DIR)/%.uml
+	cat $< | plantuml -pipe > $@

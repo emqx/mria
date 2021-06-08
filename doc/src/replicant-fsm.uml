@@ -1,0 +1,11 @@
+@startuml
+
+bootstrap: Receiving all the records\n from the core node
+local_replay: Replaying transactions\n that have been buffered locally\n during bootstrap
+normal: Remote transactions are applied\ndirectly to the replica
+
+[*] --> bootstrap
+bootstrap --> local_replay : received bootstrap_complete
+local_replay --> normal : reached the end of the local rlog
+
+@enduml
