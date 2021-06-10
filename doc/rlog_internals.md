@@ -1,5 +1,17 @@
 # RLOG: database developer's guide
 
+## Transaction interception
+
+Due to limitations of mnesia event API, a rather convoluted scheme is used to gain access to the realtime transaction stream.
+
+Each RLOG shard is associated with a mnesia table named after the shard.
+These tables are called "rlog tables", and they are deeply magical.
+`ekka_mnesia:transaction` wrapper intercepts all update operations for the regular tables, and inserts them as a record to the rlog table just before the transaction commits.
+`ekka_rlog_agent` processes subscribe to events for the rlog table, and therefore receive events containing the entire list of transaction ops.
+
+Currently the contents of the rlog tables are never read.
+To avoid a memory leak, rlog tables use "`null_copies`" mnesia storage backend (see `ekka_mnesia_null_storage.erl`), that discards any data written there.
+
 ## Actors
 
 ### RLOG Server
