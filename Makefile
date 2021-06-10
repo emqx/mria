@@ -29,6 +29,14 @@ eunit: compile
 ct: compile
 	$(REBAR) do eunit, ct -v --readable=false --name $(CT_NODE_NAME)
 
+.PHONY: ct-suite
+ct-suite: compile
+ifneq ($(TESTCASE),)
+	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite $(SUITE)  --case $(TESTCASE)
+else
+	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite $(SUITE)
+endif
+
 cover:
 	$(REBAR) cover
 
