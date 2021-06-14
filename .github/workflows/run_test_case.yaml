@@ -18,6 +18,7 @@ jobs:
             make eunit
             make ct
             make cover
+            make concuerror_test
         - name: Coveralls
           env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
