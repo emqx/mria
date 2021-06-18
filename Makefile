@@ -79,6 +79,7 @@ concuerror_test: $(CONCUERROR)
 	$(call concuerror,wait_for_shards_crash_test)
 	$(call concuerror,notify_different_tags_test)
 	$(call concuerror,get_core_node_test)
+	$(call concuerror,dirty_boostrap_test)
 
 $(CONCUERROR):
 	mkdir -p _build/
