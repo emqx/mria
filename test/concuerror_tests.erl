@@ -120,6 +120,83 @@ wait_for_shards_crash_test() ->
         cleanup(Pid)
     end.
 
+%% Verify dirty boostreap procedure (simplified).
+%% TODO: use real boostrapper module?
+dirty_boostrap_test() ->
+    SourceTab = ets:new(source, [public, named_table]),
+    ReplicaTab = ets:new(replica, [public, named_table]),
+    %% Insert some initial data:
+    ets:insert(source, {1, 1}),
+    ets:insert(source, {2, 2}),
+    ets:insert(source, {3, 3}),
+    try
+        register(testcase, self()),
+        %% Spawn "replica" process. In the real code we have two
+        %% processes: boostrapper client and the replica
+        %% process. Replica saves tlogs to the replayq while the
+        %% boostrapper client imports batches. Here we buffer tlogs in
+        %% the message queue instead.
+        Replica = spawn_link(fun replica/0),
+        register(replica, Replica),
+        %% "importer" process emulates mnesia_tm:
+        spawn_link(fun importer/0),
+        %% "bootstrapper" process emulates bootstrapper server:
+        spawn_link(fun bootstrapper/0),
+        receive
+            done ->
+                SrcData = lists:sort(ets:tab2list(source)),
+                RcvData = lists:sort(ets:tab2list(replica)),
+                ?assertEqual(SrcData, RcvData)
+        end
+    after
+        ets:delete(SourceTab),
+        ets:delete(ReplicaTab)
+    end.
+
+importer() ->
+    Ops = [ {write, 3, 3}
+          , {write, 4, 4}
+          , {write, 4, 5}
+          , {delete, 2}
+          ],
+    lists:map(fun(OP) ->
+                      import_op(source, OP),
+                      %% Imitate mnesia event (note: here we send it
+                      %% directly to the replica process bypassing
+                      %% the agent):
+                      replica ! {tlog, OP}
+              end,
+              Ops),
+    replica ! last_trans.
+
+replica() ->
+    receive
+        {bootstrap, K, V} ->
+            ets:insert(replica, {K, V}),
+            replica();
+        bootstrap_done ->
+            replay()
+    end.
+
+replay() ->
+    receive
+        {tlog, Op} ->
+            import_op(replica, Op),
+            replay();
+        last_trans ->
+            testcase ! done
+    end.
+
+import_op(Tab, {write, K, V}) ->
+    ets:insert(Tab, {K, V});
+import_op(Tab, {delete, K}) ->
+    ets:delete(Tab, K).
+
+bootstrapper() ->
+    {Keys, _} = lists:unzip(ets:tab2list(source)),
+    [replica ! {bootstrap, K, V} || K <- Keys, {_, V} <- ets:lookup(source, K)],
+    replica ! bootstrap_done.
+
 flush() ->
     receive
         A -> [A|flush()]
