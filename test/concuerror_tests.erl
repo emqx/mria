@@ -120,9 +120,9 @@ wait_for_shards_crash_test() ->
         cleanup(Pid)
     end.
 
-%% Verify dirty boostreap procedure (simplified).
-%% TODO: use real boostrapper module?
-dirty_boostrap_test() ->
+%% Verify dirty bootstrap procedure (simplified).
+%% TODO: use real bootstrapper module?
+dirty_bootstrap_test() ->
     SourceTab = ets:new(source, [public, named_table]),
     ReplicaTab = ets:new(replica, [public, named_table]),
     %% Insert some initial data:
@@ -132,9 +132,9 @@ dirty_boostrap_test() ->
     try
         register(testcase, self()),
         %% Spawn "replica" process. In the real code we have two
-        %% processes: boostrapper client and the replica
+        %% processes: bootstrapper client and the replica
         %% process. Replica saves tlogs to the replayq while the
-        %% boostrapper client imports batches. Here we buffer tlogs in
+        %% bootstrapper client imports batches. Here we buffer tlogs in
         %% the message queue instead.
         Replica = spawn_link(fun replica/0),
         register(replica, Replica),
@@ -158,6 +158,9 @@ importer() ->
           , {write, 4, 4}
           , {write, 4, 5}
           , {delete, 2}
+          , {write, 5, 5}
+          , {write, 4, 3}
+          , {delete, 5}
           ],
     lists:map(fun(OP) ->
                       import_op(source, OP),
