@@ -4,7 +4,7 @@ set -euo pipefail
 
 TAG="$1"
 DRYRUN=0
-if [ "$2" = "--dryrun" ]; then
+if [ "${2:-}" = "--dryrun" ]; then
     DRYRUN=1
 fi
 
