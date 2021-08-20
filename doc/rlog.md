@@ -53,13 +53,7 @@ Thankfully, migration from plain mnesia to RLOG is rather simple.
 ### Assigning tables to the shards
 
 First, each mnesia table should be assigned to an RLOG shard.
-It is done either by adding a special annotation:
-
-```erlang
--rlog_shard({shard_name, table_name}).
-```
-
-or by adding `{rlog_shard, shard_name}` tuple to the option list of `ekka_mnesia:create_table` function.
+It is done by adding `{rlog_shard, shard_name}` tuple to the option list of `ekka_mnesia:create_table` function.
 
 For example:
 
@@ -69,10 +63,9 @@ For example:
 -boot_mnesia({mnesia, [boot]}).
 -copy_mnesia({mnesia, [copy]}).
 
--rlog_shard({route_shard, emqx_route}).
-
 mnesia(boot) ->
     ok = ekka_mnesia:create_table(emqx_route, [{type, bag},
+                                               {rlog_shard, emqx_route},
                                                {ram_copies, [node()]},
                                               ]),
     ok = ekka_mnesia:create_table(emqx_trie, [{type, bag},
