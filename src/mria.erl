@@ -29,15 +29,9 @@
 -export([info/0, info/1]).
 
 %% Cluster API
--export([cluster_name/0]).
 -export([ join/1
         , leave/0
         , force_leave/1
-        ]).
-
-%% Autocluster API
--export([ autocluster/0
-        , autocluster/1
         ]).
 
 %% Register callback
@@ -105,6 +99,8 @@ stop() ->
 %% Env
 %%--------------------------------------------------------------------
 
+
+%% TODO: Remove after annotation is gone
 -spec(env(atom() | {callback, atom()}) -> undefined | {ok, term()}).
 env(Key) ->
     %% TODO: hack, using apply to trick dialyzer.
@@ -134,9 +130,6 @@ info() ->
 %% Cluster API
 %%--------------------------------------------------------------------
 
--spec(cluster_name() -> cluster()).
-cluster_name() -> env(cluster_name, undefined).
-
 %% @doc Join the cluster
 -spec(join(node()) -> ok | ignore | {error, term()}).
 join(Node) -> mria_cluster:join(Node).
@@ -148,18 +141,6 @@ leave() -> mria_cluster:leave().
 %% @doc Force a node leave from cluster.
 -spec(force_leave(node()) -> ok | ignore | {error, term()}).
 force_leave(Node) -> mria_cluster:force_leave(Node).
-
-%%--------------------------------------------------------------------
-%% Autocluster
-%%--------------------------------------------------------------------
-
-autocluster() -> autocluster(mria).
-
-autocluster(App) ->
-    case env(cluster_enable, true) andalso mria_autocluster:enabled() of
-        true  -> mria_autocluster:run(App);
-        false -> ok
-    end.
 
 %%--------------------------------------------------------------------
 %% Register callback
