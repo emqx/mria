@@ -2,7 +2,7 @@
 
 ## Motivation
 
-Using Ekka in RLOG mode aims to improve database write throughput in large clusters (4 nodes and more).
+Using Mria in RLOG mode aims to improve database write throughput in large clusters (4 nodes and more).
 
 The default unpatched mnesia has two modes of table access:
 
@@ -19,22 +19,22 @@ This allows to improve write throughput of the cluster without sacrificing read 
 ## Enabling RLOG
 
 RLOG feature is disabled by default.
-It can be enabled by setting `ekka.db_backend` application environment variable to `rlog`.
+It can be enabled by setting `mria.db_backend` application environment variable to `rlog`.
 
 ## Node roles
 
 When RLOG is enabled, each node assumes one of the two roles: `core` or `replicant`.
-The role is determined by `ekka.node_role` application environment variable.
+The role is determined by `mria.node_role` application environment variable.
 The default value is `core`.
 Core nodes behave much like regular mnesia nodes: they are connected in a full mesh, and each node can initiate write transactions, hold locks, etc.
 
 Replicant nodes, on the other hand, don't participate in the mnesia transactions.
-They connect to one of the core nodes and passively replicate the transactions from it using an internal Ekka protocol.
+They connect to one of the core nodes and passively replicate the transactions from it using an internal Mria protocol.
 From the point of mnesia they simply don't exist: they don't appear in the `table_copies` list, they don't hold any locks and don't participate in the two-phase commit protocol.
 
 This means replicant nodes aren't allowed to perform any write operations on their own.
 They instead perform an RPC call to a core node, that performs the write operation (such as transaction or `dirty_write`) for them.
-This is decided internally by `ekka_mnesia:transaction` function.
+This is decided internally by `mria_mnesia:transaction` function.
 Conversely, dirty reads and read-only transactions run locally on the replicant.
 The semantics of the read operations are the following: they operate on a consistent, but potentially outdated snapshot of the data.
 
@@ -53,7 +53,7 @@ Thankfully, migration from plain mnesia to RLOG is rather simple.
 ### Assigning tables to the shards
 
 First, each mnesia table should be assigned to an RLOG shard.
-It is done by adding `{rlog_shard, shard_name}` tuple to the option list of `ekka_mnesia:create_table` function.
+It is done by adding `{rlog_shard, shard_name}` tuple to the option list of `mria_mnesia:create_table` function.
 
 For example:
 
@@ -64,23 +64,23 @@ For example:
 -copy_mnesia({mnesia, [copy]}).
 
 mnesia(boot) ->
-    ok = ekka_mnesia:create_table(emqx_route, [{type, bag},
+    ok = mria_mnesia:create_table(emqx_route, [{type, bag},
                                                {rlog_shard, emqx_route},
                                                {ram_copies, [node()]},
                                               ]),
-    ok = ekka_mnesia:create_table(emqx_trie, [{type, bag},
+    ok = mria_mnesia:create_table(emqx_trie, [{type, bag},
                                               {ram_copies, [node()]},
                                               {rlog_shard, emqx_route}
                                              ]);
 mnesia(copy) ->
-    ok = ekka_mnesia:copy_table(emqx_route, ram_copies),
-    ok = ekka_mnesia:copy_table(emqx_trie, ram_copies).
+    ok = mria_mnesia:copy_table(emqx_route, ram_copies),
+    ok = mria_mnesia:copy_table(emqx_trie, ram_copies).
 ```
 
 ### Waiting for shard replication
 
 Please note that replicants don't connect to all the shards automatically.
-Connection to the upstream core node and replication of the transactions should be triggered by calling `ekka_rlog:wait_for_shards(ListOfShards, Timeout)` function.
+Connection to the upstream core node and replication of the transactions should be triggered by calling `mria_rlog:wait_for_shards(ListOfShards, Timeout)` function.
 Typically one should call this function in the application start callback, for example:
 
 ```erlang
@@ -93,7 +93,7 @@ Typically one should call this function in the application start callback, for e
 
 start(_Type, _Args) ->
     ...
-    ok = ekka_rlog:wait_for_shards(?EMQX_SHARDS, infinity),
+    ok = mria_rlog:wait_for_shards(?EMQX_SHARDS, infinity),
     {ok, Sup} = emqx_sup:start_link(),
     ...
     {ok, Sup}.
@@ -110,14 +110,14 @@ Use of the following `mnesia` APIs is forbidden:
 * `mnesia:dirty_delete_object`
 * `mnesia:clear_table`
 
-Replace them with the equivalents from the `ekka_mnesia` module.
+Replace them with the equivalents from the `mria_mnesia` module.
 
 Using transactional versions of the mnesia APIs for writes and deletes is fine.
 
 With that in mind, typical write transaction should look like this:
 
 ```erlang
-ekka_mnesia:transaction(shard_name,
+mria_mnesia:transaction(shard_name,
                         fun() ->
                           mnesia:read(shard_tab, foo),
                           mnesia:write(#shard_tab{key = foo, val = bar})
@@ -127,5 +127,5 @@ ekka_mnesia:transaction(shard_name,
 ### Read operations
 
 Dirty read operations (such as `mnesia:dirty_read`, `ets:lookup` and `mnesia:dirty_select`) are allowed.
-However, it is recommended to wrap all reads in `ekka_mnesia:ro_transaction` function.
+However, it is recommended to wrap all reads in `mria_mnesia:ro_transaction` function.
 Under normal conditions (when all shards are in sync) it should not introduce extra overhead.

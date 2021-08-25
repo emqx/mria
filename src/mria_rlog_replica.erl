@@ -1,0 +1,444 @@
+%%--------------------------------------------------------------------
+%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
+%%--------------------------------------------------------------------
+
+%% @doc This module implements a gen_statem which collects rlogs from
+%% a remote core node.
+-module(mria_rlog_replica).
+
+%% API:
+-export([start_link/1]).
+
+%% gen_statem callbacks:
+-export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
+
+%% Internal exports:
+-export([do_push_tlog_entry/2, push_tlog_entry/2]).
+
+-include("mria_rlog.hrl").
+-include_lib("snabbkaffe/include/trace.hrl").
+
+%%================================================================================
+%% Type declarations
+%%================================================================================
+
+%% States:
+-define(disconnected, disconnected).
+-define(bootstrap, bootstrap).
+-define(local_replay, local_replay).
+-define(normal, normal).
+
+-type state() :: ?bootstrap
+               | ?local_replay
+               | ?normal
+               | ?disconnected.
+
+%% Timeouts:
+-define(local_replay_loop, local_replay_loop).
+-define(reconnect, reconnect).
+
+-record(d,
+        { shard                        :: mria_rlog:shard()
+        , remote_core_node = undefined :: node() | undefined
+        , agent                        :: pid() | undefined
+        , tmp_worker       = undefined :: pid() | undefined
+        , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
+        , next_batch_seqno = 0         :: integer()
+        , replayq                      :: replayq:q() | undefined
+        }).
+
+-type data() :: #d{}.
+
+-type fsm_result() :: gen_statem:event_handler_result(state()).
+
+%%================================================================================
+%% API funcions
+%%================================================================================
+
+start_link(Shard) ->
+    Config = #{}, % TODO
+    gen_statem:start_link({local, Shard}, ?MODULE, {Shard, Config}, []).
+
+%%================================================================================
+%% gen_statem callbacks
+%%================================================================================
+
+%% @private We use handle_event_function style, because it leads to
+%% better code reuse and makes it harder to accidentally forget to
+%% handle some type of event in one of the states. Also it allows to
+%% group event handlers logically.
+callback_mode() -> [handle_event_function, state_enter].
+
+-spec init({mria_rlog:shard(), any()}) -> {ok, state(), data()}.
+init({Shard, _Opts}) ->
+    process_flag(trap_exit, true),
+    logger:update_process_metadata(#{ domain => [mria, rlog, replica]
+                                    , shard  => Shard
+                                    }),
+    ?tp(info, rlog_replica_start,
+        #{ node => node()
+         , shard => Shard
+         }),
+    D = #d{ shard = Shard
+          },
+    {ok, ?disconnected, D}.
+
+-spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) -> fsm_result().
+handle_event(cast, {tlog_entry, Tx}, State, D) ->
+    handle_tlog_entry(State, Tx, D);
+%% Events specific to `disconnected' state:
+handle_event(enter, OldState, ?disconnected, D) ->
+    handle_state_trans(OldState, ?disconnected, D),
+    initiate_reconnect(D);
+handle_event(timeout, ?reconnect, ?disconnected, D) ->
+    handle_reconnect(D);
+%% Events specific to `bootstrap' state:
+handle_event(enter, OldState, ?bootstrap, D) ->
+    handle_state_trans(OldState, ?bootstrap, D),
+    initiate_bootstrap(D);
+handle_event(info, {bootstrap_complete, Pid, Checkpoint}, ?bootstrap, D = #d{tmp_worker = Pid}) ->
+    handle_bootstrap_complete(Checkpoint, D);
+%% Events specific to `local_replay' state:
+handle_event(enter, OldState, ?local_replay, D) ->
+    handle_state_trans(OldState, ?local_replay, D),
+    initiate_local_replay(D);
+handle_event(timeout, ?local_replay_loop, ?local_replay, D) ->
+    replay_local(D);
+%% Events specific to `normal' state:
+handle_event(enter, OldState, ?normal, D) ->
+    handle_normal(D),
+    handle_state_trans(OldState, ?normal, D);
+%% Common events:
+handle_event(enter, OldState, State, Data) ->
+    handle_state_trans(OldState, State, Data);
+handle_event(info, {'EXIT', Worker, Reason}, State, D = #d{tmp_worker = Worker}) ->
+    handle_worker_down(State, Reason, D);
+handle_event(info, {'EXIT', Agent, Reason}, State, D = #d{agent = Agent}) ->
+    handle_agent_down(State, Reason, D);
+handle_event(EventType, Event, State, Data) ->
+    handle_unknown(EventType, Event, State, Data).
+
+code_change(_OldVsn, State, Data, _Extra) ->
+    {ok, State, Data}.
+
+terminate(_Reason, _State, #d{}) ->
+    ok.
+
+%%================================================================================
+%% Internal exports
+%%================================================================================
+
+%% This function is called by the remote core node.
+-spec push_tlog_entry(mria_rlog_lib:subscriber(), mria_rlog_lib:tlog_entry()) -> ok.
+push_tlog_entry({Node, Pid}, Batch) ->
+    %% TODO: this should be a cast, but gen_rpc doesn't guarantee the
+    %% ordering of cast messages. In the production code this will be
+    %% horrible!
+    mria_rlog_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
+
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+%% @private Consume transactions from the core node
+-spec handle_tlog_entry(state(), mria_rlog_lib:tlog_entry(), data()) -> fsm_result().
+handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
+                  D = #d{ agent            = Agent
+                        , next_batch_seqno = SeqNo
+                        , shard            = Shard
+                        }) ->
+    %% Normal flow, transactions are applied directly to the replica:
+    ?tp(rlog_replica_import_trans,
+        #{ agent       => Agent
+         , seqno       => SeqNo
+         , txid        => TXID
+         , transaction => Transaction
+         }),
+    Checkpoint = mria_rlog_lib:txid_to_checkpoint(TXID),
+    mria_rlog_lib:import_batch(transaction, Transaction),
+    mria_rlog_status:notify_replicant_import_trans(Shard, Checkpoint),
+    {keep_state, D#d{ next_batch_seqno = SeqNo + 1
+                    , checkpoint       = Checkpoint
+                    }};
+handle_tlog_entry(St, {Agent, SeqNo, TXID, Transaction},
+                  D0 = #d{ agent = Agent
+                         , next_batch_seqno = SeqNo
+                         }) when St =:= ?bootstrap orelse
+                                 St =:= ?local_replay ->
+    %% Historical data is being replayed, realtime transactions should
+    %% be buffered up for later consumption:
+    ?tp(rlog_replica_store_trans,
+        #{ agent       => Agent
+         , seqno       => SeqNo
+         , txid        => TXID
+         , transaction => Transaction
+         }),
+    D = buffer_tlog_ops(Transaction, D0),
+    MaybeCheckpoint = case St of
+                          ?local_replay -> TXID;
+                          ?bootstrap    -> undefined
+                      end,
+    {keep_state, D#d{ next_batch_seqno = SeqNo + 1
+                    , checkpoint       = MaybeCheckpoint
+                    }};
+handle_tlog_entry(_State, {Agent, SeqNo, TXID, _},
+             #d{ agent = Agent
+               , next_batch_seqno = MySeqNo
+               }) when SeqNo > MySeqNo ->
+    %% Gap in the TLOG. Consuming it now will cause inconsistency, so we must restart.
+    %% TODO: sometimes it should be possible to restart gracefully to
+    %% salvage the bootstrapped data.
+    error({gap_in_the_tlog, TXID, SeqNo, MySeqNo});
+handle_tlog_entry(State, {Agent, SeqNo, TXID, _Transaction},
+                  #d{ next_batch_seqno = ExpectedSeqno
+                    , agent            = ExpectedAgent
+                    }) ->
+    ?tp(warning, rlog_replica_unexpected_trans,
+        #{ state          => State
+         , from           => Agent
+         , from_expected  => ExpectedAgent
+         , txid           => TXID
+         , seqno          => SeqNo
+         , seqno_expected => ExpectedSeqno
+         }),
+    keep_state_and_data.
+
+-spec initiate_bootstrap(data()) -> fsm_result().
+initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote}) ->
+    %% Disable local reads before starting bootstrap:
+    set_where_to_read(Remote, Shard),
+    %% Discard all data of the shard:
+    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    [ok = clear_table(Tab) || Tab <- Tables],
+    %% Do bootstrap:
+    {ok, Pid} = mria_rlog_bootstrapper:start_link_client(Shard, Remote, self()),
+    ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
+    ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
+    ReplayqExtraOpts = application:get_env(mria, rlog_replayq_options, #{}),
+    Q = replayq:open(ReplayqExtraOpts
+                     #{ mem_only => ReplayqMemOnly
+                      , sizer    => fun(_) -> 1 end
+                      , dir      => filename:join(ReplayqBaseDir, atom_to_list(Shard))
+                      }),
+    {keep_state, D#d{ tmp_worker = Pid
+                    , replayq    = Q
+                    }}.
+
+-spec handle_bootstrap_complete(mria_rlog_server:checkpoint(), data()) -> fsm_result().
+handle_bootstrap_complete(Checkpoint, D) ->
+    ?tp(notice, "Bootstrap of the shard is complete",
+        #{ checkpoint => Checkpoint
+         , shard      => D#d.shard
+         }),
+    forget_tmp_worker(D),
+    {next_state, ?local_replay, D#d{ tmp_worker = undefined
+                                   , checkpoint = Checkpoint
+                                   }}.
+
+-spec handle_agent_down(state(), term(), data()) -> fsm_result().
+handle_agent_down(State, Reason, D) ->
+    ?tp(notice, "Remote RLOG agent died",
+        #{ reason => Reason
+         , repl_state => State
+         }),
+    case State of
+        ?normal ->
+            {next_state, ?disconnected, D#d{agent = undefined}};
+        _ ->
+            %% TODO: Sometimes it should be possible to handle it more gracefully
+            exit(agent_died)
+    end.
+
+-spec initiate_local_replay(data()) -> fsm_result().
+initiate_local_replay(_D) ->
+    {keep_state_and_data, [{timeout, 0, ?local_replay_loop}]}.
+
+-spec replay_local(data()) -> fsm_result().
+replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
+    {Q, AckRef, Items} = replayq:pop(Q0, #{}),
+    mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    mria_rlog_lib:import_batch(dirty, Items),
+    ok = replayq:ack(Q, AckRef),
+    case replayq:is_empty(Q) of
+        true ->
+            replayq:close(Q),
+            D = D0#d{replayq = undefined},
+            {next_state, ?normal, D};
+        false ->
+            D = D0#d{replayq = Q},
+            {keep_state, D, [{timeout, 0, ?local_replay_loop}]}
+    end.
+
+-spec initiate_reconnect(data()) -> fsm_result().
+initiate_reconnect(#d{shard = Shard}) ->
+    mria_rlog_status:notify_shard_down(Shard),
+    {keep_state_and_data, [{timeout, 0, ?reconnect}]}.
+
+%% @private Try connecting to a core node
+-spec handle_reconnect(data()) -> fsm_result().
+handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
+    ?tp(warning, rlog_replica_reconnect,
+        #{ node => node()
+         }),
+    case try_connect(Shard, Checkpoint) of
+        {ok, _BootstrapNeeded = true, Node, ConnPid, TableSpecs} ->
+            D = #d{ shard            = Shard
+                  , agent            = ConnPid
+                  , remote_core_node = Node
+                  },
+            {Tables, _} = lists:unzip(TableSpecs),
+            mria_rlog_config:load_shard_config(Shard, Tables),
+            ok = mria_rlog_schema:converge(Shard, TableSpecs),
+            {next_state, ?bootstrap, D};
+        {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs} ->
+            D = #d{ shard            = Shard
+                  , agent            = ConnPid
+                  , remote_core_node = Node
+                  , checkpoint       = Checkpoint
+                  },
+            {Tables, _} = lists:unzip(TableSpecs),
+            mria_rlog_config:load_shard_config(Shard, Tables),
+            ok = mria_rlog_schema:converge(Shard, TableSpecs),
+            {next_state, ?normal, D};
+        {error, Err} ->
+            ?tp(debug, "Replicant couldn't connect to the upstream node",
+                #{ reason => Err
+                 }),
+            ReconnectTimeout = application:get_env(mria, rlog_replica_reconnect_interval, 5000),
+            {keep_state_and_data, [{timeout, ReconnectTimeout, ?reconnect}]}
+    end.
+
+-spec try_connect(mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
+                { ok
+                , boolean()
+                , node()
+                , pid()
+                , [{mria_mnesia:table(), mria_mnesia:table_config()}]
+                }
+              | {error, term()}.
+try_connect(Shard, Checkpoint) ->
+    try_connect(mria_rlog_lib:shuffle(mria_rlog:core_nodes()), Shard, Checkpoint).
+
+-spec try_connect([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
+                { ok
+                , boolean()
+                , node()
+                , pid()
+                , [{mria_mnesia:table(), mria_mnesia:table_config()}]
+                }
+              | {error, term()}.
+try_connect([], _, _) ->
+    {error, no_core_available};
+try_connect([Node|Rest], Shard, Checkpoint) ->
+    ?tp(info, "Trying to connect to the core node",
+        #{ node => Node
+         }),
+    case mria_rlog:subscribe(Shard, Node, self(), Checkpoint) of
+        {ok, NeedBootstrap, Agent, TableSpecs} ->
+            link(Agent),
+            {ok, NeedBootstrap, Node, Agent, TableSpecs};
+        Err ->
+            ?tp(info, "Failed to connect to the core node",
+                #{ node => Node
+                 , reason => Err
+                 }),
+            try_connect(Rest, Shard, Checkpoint)
+    end.
+
+-spec buffer_tlog_ops(mria_rlog_lib:tx(), data()) -> data().
+buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
+    Q = replayq:append(Q0, Transaction),
+    mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    D#d{replayq = Q}.
+
+-spec handle_normal(data()) -> ok.
+handle_normal(D = #d{shard = Shard, agent = Agent}) ->
+    mria_rlog_status:notify_shard_up(Shard, Agent),
+    %% Now we can enable local reads:
+    set_where_to_read(node(), Shard),
+    ?tp(notice, "Shard fully up",
+        #{ node => node()
+         , shard => D#d.shard
+         }).
+
+-spec handle_worker_down(state(), term(), data()) -> no_return().
+handle_worker_down(State, Reason, D) ->
+    ?tp(critical, "Failed to initialize replica",
+        #{ state => State
+         , reason => Reason
+         , worker => D#d.tmp_worker
+         }),
+    exit(bootstrap_failed).
+
+-spec handle_unknown(term(), term(), state(), data()) -> fsm_result().
+handle_unknown(EventType, Event, State, Data) ->
+    ?tp(warning, "RLOG replicant received unknown event",
+        #{ event_type => EventType
+         , event => Event
+         , state => State
+         , data => Data
+         }),
+    keep_state_and_data.
+
+handle_state_trans(OldState, State, Data) ->
+    ?tp(info, state_change,
+        #{ from => OldState
+         , to => State
+         }),
+    mria_rlog_status:notify_replicant_state(Data#d.shard, State),
+    keep_state_and_data.
+
+-spec forget_tmp_worker(data()) -> ok.
+forget_tmp_worker(#d{tmp_worker = Pid}) ->
+    unlink(Pid),
+    receive
+        {'EXIT', Pid, normal} -> ok
+    after 0 -> ok
+    end.
+
+-spec do_push_tlog_entry(pid(), mria_rlog_lib:tlog_entry()) -> ok.
+do_push_tlog_entry(Pid, Batch) ->
+    ?tp(receive_tlog_entry,
+        #{ entry => Batch
+         }),
+    gen_statem:cast(Pid, {tlog_entry, Batch}).
+
+-spec clear_table(atom()) -> ok.
+clear_table(Table) ->
+    case mnesia:clear_table(Table) of
+        {atomic, ok}              -> ok;
+        {aborted, {no_exists, _}} -> ok
+    end.
+
+%% @private Dirty hack: patch mnesia internal table (see
+%% implementation of `mnesia:dirty_rpc')
+-spec set_where_to_read(node(), mria_rlog:shard()) -> ok.
+set_where_to_read(Node, Shard) ->
+    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    lists:foreach(
+      fun(Tab) ->
+              Key = {Tab, where_to_read},
+              %% Sanity check (Hopefully it breaks if something inside
+              %% mnesia changes):
+              OldNode = ets:lookup_element(mnesia_gvar, Key, 2),
+              true = is_atom(OldNode),
+              %% Now change it:
+              ets:insert(mnesia_gvar, {Key, Node})
+      end,
+      Tables),
+    ?tp(rlog_read_from,
+        #{ source => Node
+         , shard  => Shard
+         }).

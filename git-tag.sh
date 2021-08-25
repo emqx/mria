@@ -8,8 +8,8 @@ if [ "${2:-}" = "--dryrun" ]; then
     DRYRUN=1
 fi
 
-VSN="$(erl -noshell -eval '{ok, [{application, ekka, App}]}=file:consult("src/ekka.app.src"), io:format(proplists:get_value(vsn,App)), halt(0)')"
-UPGRADE_BASE="$(erl -noshell -eval '{ok, [Appup]}=file:consult("src/ekka.appup.src"), io:format(element(1,Appup)), halt(0)')"
+VSN="$(erl -noshell -eval '{ok, [{application, mria, App}]}=file:consult("src/mria.app.src"), io:format(proplists:get_value(vsn,App)), halt(0)')"
+UPGRADE_BASE="$(erl -noshell -eval '{ok, [Appup]}=file:consult("src/mria.appup.src"), io:format(element(1,Appup)), halt(0)')"
 
 if [ "$VSN" != "$UPGRADE_BASE" ]; then
     echo "ERROR: vsn and upgrade base mismatch"

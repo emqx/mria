@@ -1,13 +1,13 @@
 
-# Ekka
+# Mria
 
-Ekka - Autocluster, Autoheal and a [database](doc/rlog.md) for EMQ X Broker. Ekka helps building a new distribution layer for EMQ X R2.3+.
+Mria - Autocluster, Autoheal and a [database](doc/rlog.md) for EMQ X Broker. Mria helps building a new distribution layer for EMQ X R2.3+.
 
 ```
 ----------             ----------
 |  EMQX  |<--- MQTT--->|  EMQX  |
 |--------|             |--------|
-|  Ekka  |<----RPC---->|  Ekka  |
+|  Mria  |<----RPC---->|  Mria  |
 |--------|             |--------|
 | Mnesia |<--Cluster-->| Mnesia |
 |--------|             |--------|
@@ -17,7 +17,7 @@ Ekka - Autocluster, Autoheal and a [database](doc/rlog.md) for EMQ X Broker. Ekk
 
 ## Node discovery and Autocluster
 
-Ekka supports erlang node discovery and autocluster using various strategies:
+Mria supports erlang node discovery and autocluster using various strategies:
 
 Strategy   | Description
 -----------|--------------------------------------
@@ -37,7 +37,7 @@ Cuttlefish style config:
 ```
 cluster.discovery = static
 
-cluster.static.seeds = ekka1@127.0.0.1,ekka2@127.0.0.1
+cluster.static.seeds = mria1@127.0.0.1,mria2@127.0.0.1
 ```
 
 Erlang config:
@@ -45,7 +45,7 @@ Erlang config:
 ```
 {cluster_discovery,
   {static, [
-    {seeds, ['ekka1@127.0.0.1', 'ekka2@127.0.0.1']}
+    {seeds, ['mria1@127.0.0.1', 'mria2@127.0.0.1']}
   ]}},
 ```
 
@@ -112,7 +112,7 @@ cluster.dns.name = localhost
 ## The App name is used to build 'node.name' with IP address.
 ##
 ## Value: String
-cluster.dns.app = ekka
+cluster.dns.app = mria
 ```
 
 Erlang config:
@@ -121,7 +121,7 @@ Erlang config:
 {cluster_discovery,
   {dns, [
     {name, "localhost"},
-    {app, "ekka"}
+    {app, "mria"}
   ]}},
 ```
 
@@ -141,7 +141,7 @@ cluster.etcd.server = http://127.0.0.1:2379
 ## will create a path in etcd: v2/keys/<prefix>/<cluster.name>/<node.name>
 ##
 ## Value: String
-cluster.etcd.prefix = ekkacl
+cluster.etcd.prefix = mriacl
 
 ## The TTL for node's path in etcd.
 ##
@@ -176,7 +176,7 @@ Erlang config:
 {cluster_discovery,
   {etcd, [
     {server, ["http://127.0.0.1:2379"]},
-    {prefix, "ekkacluster"},
+    {prefix, "mriacluster"},
     %%{ssl_options, [
     %%    {keyfile, "path/to/client-key.pem"},
     %%    {certfile, "path/to/client.pem"},
@@ -201,7 +201,7 @@ cluster.discovery = k8s
 ## The service name helps lookup EMQ nodes in the cluster.
 ##
 ## Value: String
-## cluster.k8s.service_name = ekka
+## cluster.k8s.service_name = mria
 
 ## The name space of k8s
 ##
@@ -216,7 +216,7 @@ cluster.discovery = k8s
 ## The app name helps build 'node.name'.
 ##
 ## Value: String
-## cluster.k8s.app_name = ekka
+## cluster.k8s.app_name = mria
 
 ## The suffix added to dns and hostname get from k8s service
 ##
@@ -231,9 +231,9 @@ Erlang config:
   {k8s, [
     {apiserver, "http://10.110.111.204:8080"},
     {namespace, "default"},
-    {service_name, "ekka"},
+    {service_name, "mria"},
     {address_type, ip},
-    {app_name, "ekka"},
+    {app_name, "mria"},
     {suffix, "pod.cluster.local"}
   ]}}
 ```
@@ -288,26 +288,26 @@ cluster.autoclean = 5m
 
 ## Lock Service
 
-Ekka implements a simple distributed lock service in 0.3 release. The Lock APIs:
+Mria implements a simple distributed lock service in 0.3 release. The Lock APIs:
 
 Acquire lock:
 
 ```
 -spec(acquire(resource()) -> {boolean(), [node()]}).
-ekka_locker:acquire(Resource).
+mria_locker:acquire(Resource).
 
 -spec(acquire(atom(), resource(), lock_type()) -> lock_result()).
-ekka_locker:acquire(ekka_locker, Resource, Type).
+mria_locker:acquire(mria_locker, Resource, Type).
 ```
 
 Release lock:
 
 ```
 -spec(release(resource()) -> lock_result()).
-ekka_locker:release(Resource).
+mria_locker:release(Resource).
 
 -spec(release(atom(), resource()) -> lock_result()).
-ekka_locker:release(Name, Resource).
+mria_locker:release(Name, Resource).
 ```
 
 The lock type:
@@ -318,7 +318,7 @@ The lock type:
 
 ## Cluster without epmd
 
-The ekka 0.6.0 release implements erlang distribiton without epmd.
+The mria 0.6.0 release implements erlang distribiton without epmd.
 
 See: http://erlang.org/pipermail/erlang-questions/2015-December/087013.html
 
@@ -326,14 +326,14 @@ For example:
 
 ```
 ## Dist port: 4370
-erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist ekka -start_epmd false -epmd_module ekka_epmd -name node1@127.0.0.1 -s ekka
+erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist mria -start_epmd false -epmd_module mria_epmd -name node1@127.0.0.1 -s mria
 ## Dist port: 4371
-erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist ekka -start_epmd false -epmd_module ekka_epmd -name node2@127.0.0.1 -s ekka
+erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist mria -start_epmd false -epmd_module mria_epmd -name node2@127.0.0.1 -s mria
 ## Dist port: 4372
-erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist ekka -start_epmd false -epmd_module ekka_epmd -name node3@127.0.0.1  -s ekka
+erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist mria -start_epmd false -epmd_module mria_epmd -name node3@127.0.0.1  -s mria
 ```
 
-The erlang distribution port can be tuned by ekka `inet_dist_base_port` env. The default port is 4370.
+The erlang distribution port can be tuned by mria `inet_dist_base_port` env. The default port is 4370.
 
 ## License
 
@@ -342,4 +342,3 @@ Apache License Version 2.0
 ## Author
 
 EMQ X Team.
-

@@ -55,7 +55,7 @@ $(CUTTLEFISH_SCRIPT):
 	@if [ ! -f cuttlefish ]; then make -C _build/default/lib/cuttlefish; fi
 
 app.config: $(CUTTLEFISH_SCRIPT)
-	$(verbose) $(CUTTLEFISH_SCRIPT) -l info -e etc/ -c etc/ekka.conf.example -i priv/ekka.schema -d data/
+	$(verbose) $(CUTTLEFISH_SCRIPT) -l info -e etc/ -c etc/mria.conf.example -i priv/mria.schema -d data/
 
 ##########################################################################################
 # Concuerror
@@ -66,9 +66,9 @@ CONCUERROR_RUN := $(CONCUERROR) \
 	--treat_as_normal shutdown --treat_as_normal normal \
 	-x code -x code_server -x error_handler \
 	-pa $(BUILD_DIR)/concuerror+test/lib/snabbkaffe/ebin \
-	-pa $(BUILD_DIR)/concuerror+test/lib/ekka/ebin
+	-pa $(BUILD_DIR)/concuerror+test/lib/mria/ebin
 
-concuerror = $(CONCUERROR_RUN) -f $(BUILD_DIR)/concuerror+test/lib/ekka/test/concuerror_tests.beam -t $(1) || \
+concuerror = $(CONCUERROR_RUN) -f $(BUILD_DIR)/concuerror+test/lib/mria/test/concuerror_tests.beam -t $(1) || \
 	{ cat concuerror_report.txt; exit 1; }
 
 .PHONY: concuerror_test

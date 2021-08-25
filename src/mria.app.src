@@ -1,0 +1,27 @@
+{application, mria,
+ [{description, "Autocluster and Autoheal for EMQ X Broker"},
+  {vsn, "0.10.4"},
+  {mod, {mria_app,[]}},
+  {registered,
+   [mria_sup,
+    mria_membership,
+    mria_cluster_sup,
+    mria_node_monitor,
+    mria_rlog_server,
+    mria_rlog_lb,
+    mria_rlog_sup
+   ]},
+  {applications,
+   [kernel,
+    stdlib,
+    mnesia,
+    inets,
+    gen_rpc,
+    replayq,
+    snabbkaffe
+   ]},
+  {modules, []},
+  {licenses, ["Apache 2.0"]},
+  {maintainers, ["EMQ X Team <contact@emqx.io>"]},
+  {links, [{"Github","https://github.com/emqx/mria"}]}
+ ]}.
