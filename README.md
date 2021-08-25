@@ -1,344 +1,127 @@
+# RLOG: asynchronous Mnesia replication (application developer's guide)
 
-# Mria
-
-Mria - Autocluster, Autoheal and a [database](doc/rlog.md) for EMQ X Broker. Mria helps building a new distribution layer for EMQ X R2.3+.
+## Motivation
 
-```
-----------             ----------
-|  EMQX  |<--- MQTT--->|  EMQX  |
-|--------|             |--------|
-|  Mria  |<----RPC---->|  Mria  |
-|--------|             |--------|
-| Mnesia |<--Cluster-->| Mnesia |
-|--------|             |--------|
-| Kernel |<----TCP---->| Kernel |
-----------             ----------
-```
-
-## Node discovery and Autocluster
-
-Mria supports erlang node discovery and autocluster using various strategies:
+Using Mria in RLOG mode aims to improve database write throughput in large clusters (4 nodes and more).
 
-Strategy   | Description
------------|--------------------------------------
-manual     | Join cluster manually
-static     | Static node list
-mcast      | IP Multicast
-dns        | DNS A Records
-etcd       | etcd
-k8s        | Kubernetes
-
-The configuration example files are under 'etc/' folder.
+The default unpatched mnesia has two modes of table access:
 
-### Cluster using static node list
-
-Cuttlefish style config:
+* Local: when the table has a local replica.
+  The current replication of Mnesia is based on full-mesh Erlang distribution which does not scale well and has the risk of split-brain.
+  Adding more nodes to the cluster creates more overhead for writes.
 
-```
-cluster.discovery = static
-
-cluster.static.seeds = mria1@127.0.0.1,mria2@127.0.0.1
-```
-
-Erlang config:
-
-```
-{cluster_discovery,
-  {static, [
-    {seeds, ['mria1@127.0.0.1', 'mria2@127.0.0.1']}
-  ]}},
-```
-
-### Cluster using IP Multicast
-
-Cuttlefish style config:
-
-```
-cluster.discovery = mcast
-
-## IP Multicast Address.
-##
-## Value: IP Address
-cluster.mcast.addr = 239.192.0.1
-
-## Multicast Ports.
-##
-## Value: Port List
-cluster.mcast.ports = 4369,4370
-
-## Multicast Iface.
-##
-## Value: Iface Address
-##
-## Default: 0.0.0.0
-cluster.mcast.iface = 0.0.0.0
-
-## Multicast Ttl.
-##
-## Value: 0-255
-cluster.mcast.ttl = 255
-
-## Multicast loop.
-##
-## Value: on | off
-cluster.mcast.loop = on
-```
-
-Erlang config:
-
-```
-{cluster_discovery,
-  {mcast, [
-    {addr, {239,192,0,1}},
-    {ports, [4369,4370]},
-    {iface, {0,0,0,0}},
-    {ttl, 255},
-    {loop, true}
-  ]}},
-```
-
-### Cluster using DNS A records
-
-Cuttlefish style config:
-
-```
-cluster.discovery = dns
-
-## DNS name.
-##
-## Value: String
-cluster.dns.name = localhost
-
-## The App name is used to build 'node.name' with IP address.
-##
-## Value: String
-cluster.dns.app = mria
-```
-
-Erlang config:
-
-```
-{cluster_discovery,
-  {dns, [
-    {name, "localhost"},
-    {app, "mria"}
-  ]}},
-```
-
-### Cluster using etcd
-
-Cuttlefish style config:
-
-```
-cluster.discovery = etcd
-
-## Etcd server list, seperated by ','.
-##
-## Value: String
-cluster.etcd.server = http://127.0.0.1:2379
-
-## The prefix helps build nodes path in etcd. Each node in the cluster
-## will create a path in etcd: v2/keys/<prefix>/<cluster.name>/<node.name>
-##
-## Value: String
-cluster.etcd.prefix = mriacl
-
-## The TTL for node's path in etcd.
-##
-## Value: Duration
-##
-## Default: 1m, 1 minute
-cluster.etcd.node_ttl = 1m
-
-## Path to a file containing the client's private PEM-encoded key.
-##
-## Value: File
-##
-## cluster.etcd.keyfile = {{platform_etc_dir}}/certs/client-key.pem
-
-## Path to the file containing the client's certificate
-##
-## Value: File
-##
-## cluster.etcd.certfile = {{platform_etc_dir}}/certs/client.pem
-
-## Path to the file containing PEM-encoded CA certificates. The CA certificates
-## are used during server authentication and when building the client certificate chain.
-##
-## Value: File
-##
-## cluster.etcd.cacertfile = {{platform_etc_dir}}/certs/ca.pem
-```
-
-Erlang config:
-
-```
-{cluster_discovery,
-  {etcd, [
-    {server, ["http://127.0.0.1:2379"]},
-    {prefix, "mriacluster"},
-    %%{ssl_options, [
-    %%    {keyfile, "path/to/client-key.pem"},
-    %%    {certfile, "path/to/client.pem"},
-    %%    {cacertfile, "path/to/ca.pem"}
-    %%]},
-    {node_ttl, 60000}
-  ]}},
-```
+* Remote: when the table doesn't have a local replica, and the data is read via RPC call to a node that has a table copy.
+  Network latency is orders of magnitude larger than reading data locally.
 
-### Cluster using Kubernates
+RLOG finds a middle ground between the two approaches: data is read locally on all nodes, but only a few nodes actively participate in the transaction.
+This allows to improve write throughput of the cluster without sacrificing read latency, at the cost of strong consistency guarantees.
 
-Cuttlefish style config:
+## Enabling RLOG
 
-```
-cluster.discovery = k8s
+RLOG feature is disabled by default.
+It can be enabled by setting `mria.db_backend` application environment variable to `rlog`.
 
-## Kubernates API server list, seperated by ','.
-##
-## Value: String
-## cluster.k8s.apiserver = http://10.110.111.204:8080
+## Node roles
 
-## The service name helps lookup EMQ nodes in the cluster.
-##
-## Value: String
-## cluster.k8s.service_name = mria
+When RLOG is enabled, each node assumes one of the two roles: `core` or `replicant`.
+The role is determined by `mria.node_role` application environment variable.
+The default value is `core`.
+Core nodes behave much like regular mnesia nodes: they are connected in a full mesh, and each node can initiate write transactions, hold locks, etc.
 
-## The name space of k8s
-##
-## Value: String
-## cluster.k8s.namespace = default
+Replicant nodes, on the other hand, don't participate in the mnesia transactions.
+They connect to one of the core nodes and passively replicate the transactions from it using an internal Mria protocol.
+From the point of mnesia they simply don't exist: they don't appear in the `table_copies` list, they don't hold any locks and don't participate in the two-phase commit protocol.
 
-## The address type is used to extract host from k8s service.
-##
-## Value: ip | dns | hostname
-## cluster.k8s.address_type = ip
+This means replicant nodes aren't allowed to perform any write operations on their own.
+They instead perform an RPC call to a core node, that performs the write operation (such as transaction or `dirty_write`) for them.
+This is decided internally by `mria:transaction` function.
+Conversely, dirty reads and read-only transactions run locally on the replicant.
+The semantics of the read operations are the following: they operate on a consistent, but potentially outdated snapshot of the data.
 
-## The app name helps build 'node.name'.
-##
-## Value: String
-## cluster.k8s.app_name = mria
+## Shards
 
-## The suffix added to dns and hostname get from k8s service
-##
-## Value: String
-## cluster.k8s.suffix = pod.cluster.local
-```
+For performance reasons, mnesia tables are separated into disjunctive subsets called shards.
+Transactions for each shard are replicated separately.
+Currently transaction can only modify tables in one shard.
+Usually it is a good idea to group all tables that belong to a particular OTP application in one shard.
 
-Erlang config:
+## Enabling RLOG in your application
 
-```
-{cluster_discovery,
-  {k8s, [
-    {apiserver, "http://10.110.111.204:8080"},
-    {namespace, "default"},
-    {service_name, "mria"},
-    {address_type, ip},
-    {app_name, "mria"},
-    {suffix, "pod.cluster.local"}
-  ]}}
-```
+It is important to make the application code compatible with the RLOG feature by using the correct APIs.
+Thankfully, migration from plain mnesia to RLOG is rather simple.
 
-## Network partition and Autoheal
+### Assigning tables to the shards
 
-### Autoheal Design
-
-When network partition occurs, the following steps to heal the cluster if autoheal is enabled:
-
-1. Node reports the partitions to a leader node which has the oldest guid.
-
-2. Leader node create a global netsplit view and choose one node in the majority as coordinator.
-
-3. Leader node requests the coordinator to autoheal the network partition.
-
-4. Coordinator node reboots all the nodes in the minority side.
-
-### Enable autoheal
-
-Erlang config:
-
-```
-{cluster_autoheal, true},
-```
-
-Cuttlefish style config:
-
-```
-cluster.autoheal = on
-```
-
-## Node down and Autoclean
-
-### Autoclean Design
-
-A down node will be removed from the cluster if autoclean is enabled.
-
-### Enable autoclean
-
-Erlang config:
-
-```
-{cluster_autoclean, 60000},
-```
-
-Cuttlefish style config:
-
-```
-cluster.autoclean = 5m
-```
-
-## Lock Service
-
-Mria implements a simple distributed lock service in 0.3 release. The Lock APIs:
-
-Acquire lock:
-
-```
--spec(acquire(resource()) -> {boolean(), [node()]}).
-mria_locker:acquire(Resource).
-
--spec(acquire(atom(), resource(), lock_type()) -> lock_result()).
-mria_locker:acquire(mria_locker, Resource, Type).
-```
-
-Release lock:
-
-```
--spec(release(resource()) -> lock_result()).
-mria_locker:release(Resource).
-
--spec(release(atom(), resource()) -> lock_result()).
-mria_locker:release(Name, Resource).
-```
-
-The lock type:
-
-```
--type(lock_type() :: local | leader | quorum | all).
-```
-
-## Cluster without epmd
-
-The mria 0.6.0 release implements erlang distribiton without epmd.
-
-See: http://erlang.org/pipermail/erlang-questions/2015-December/087013.html
+First, each mnesia table should be assigned to an RLOG shard.
+It is done by adding `{rlog_shard, shard_name}` tuple to the option list of `mria:create_table` function.
 
 For example:
 
+```erlang
+-export([mnesia/1]).
+-boot_mnesia({mnesia, [boot]}).
+-copy_mnesia({mnesia, [copy]}).
+mnesia(boot) ->
+    ok = mria:create_table(emqx_route, [{type, bag},
+                                        {rlog_shard, emqx_route},
+                                        {ram_copies, [node()]},
+                                       ]),
+    ok = mria:create_table(emqx_trie, [{type, bag},
+                                       {ram_copies, [node()]},
+                                       {rlog_shard, emqx_route}
+                                      ]);
+mnesia(copy) ->
+    ok = mria_mnesia:copy_table(emqx_route, ram_copies),
+    ok = mria_mnesia:copy_table(emqx_trie, ram_copies).
 ```
-## Dist port: 4370
-erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist mria -start_epmd false -epmd_module mria_epmd -name node1@127.0.0.1 -s mria
-## Dist port: 4371
-erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist mria -start_epmd false -epmd_module mria_epmd -name node2@127.0.0.1 -s mria
-## Dist port: 4372
-erl -pa ebin -pa _build/default/lib/*/ebin -proto_dist mria -start_epmd false -epmd_module mria_epmd -name node3@127.0.0.1  -s mria
+
+### Waiting for shard replication
+
+Please note that replicants don't connect to all the shards automatically.
+Connection to the upstream core node and replication of the transactions should be triggered by calling `mria_rlog:wait_for_shards(ListOfShards, Timeout)` function.
+Typically one should call this function in the application start callback, for example:
+
+```erlang
+-define(EMQX_SHARDS, [emqx_shard, route_shard, emqx_dashboard_shard,
+                      emqx_rule_engine_shard, emqx_management_shard]).
+%%--------------------------------------------------------------------
+%% Application callbacks
+%%--------------------------------------------------------------------
+start(_Type, _Args) ->
+    ...
+    ok = mria_rlog:wait_for_shards(?EMQX_SHARDS, infinity),
+    {ok, Sup} = emqx_sup:start_link(),
+    ...
+    {ok, Sup}.
 ```
 
-The erlang distribution port can be tuned by mria `inet_dist_base_port` env. The default port is 4370.
 
-## License
+### Write operations
 
-Apache License Version 2.0
+Use of the following `mnesia` APIs is forbidden:
 
-## Author
+* `mnesia:transaction`
+* `mnesia:dirty_write`
+* `mnesia:dirty_delete`
+* `mnesia:dirty_delete_object`
+* `mnesia:clear_table`
 
-EMQ X Team.
+Replace them with the equivalents from the `mria` module.
+
+Using transactional versions of the mnesia APIs for writes and deletes is fine.
+
+With that in mind, typical write transaction should look like this:
+
+```erlang
+mria:transaction(shard_name,
+                 fun() ->
+                   mnesia:read(shard_tab, foo),
+                   mnesia:write(#shard_tab{key = foo, val = bar})
+                 end)
+```
+
+### Read operations
+
+Dirty read operations (such as `mnesia:dirty_read`, `ets:lookup` and `mnesia:dirty_select`) are allowed.
+However, it is recommended to wrap all reads in `mria:ro_transaction` function.
+Under normal conditions (when all shards are in sync) it should not introduce extra overhead.
