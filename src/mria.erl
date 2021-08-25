@@ -44,21 +44,6 @@
         , is_running/2
         ]).
 
-%% Membership API
--export([ members/0
-        , is_member/1
-        , local_member/0
-        , nodelist/0
-        , nodelist/1
-        ]).
-
-%% Membership Monitor API
--export([ monitor/1
-        , monitor/2
-        , unmonitor/1
-        , unmonitor/2
-        ]).
-
 -define(IS_MON_TYPE(T), T == membership orelse T == partition).
 
 -type(info_key() :: members | running_nodes | stopped_nodes | partitions).
@@ -122,7 +107,7 @@ info(Key) ->
 info() ->
     ClusterInfo = mria_cluster:info(),
     Partitions = mria_node_monitor:partitions(),
-    maps:merge(ClusterInfo, #{members    => members(),
+    maps:merge(ClusterInfo, #{members    => mria_membership:members(),
                               partitions => Partitions
                              }).
 
@@ -145,7 +130,7 @@ force_leave(Node) -> mria_cluster:force_leave(Node).
 %%--------------------------------------------------------------------
 %% Register callback
 %%--------------------------------------------------------------------
-
+%% TODO: Drop this
 -spec callback(atom()) -> undefined | {ok, function()}.
 callback(Name) ->
     env({callback, Name}).
@@ -169,42 +154,3 @@ is_aliving(Node) ->
 -spec(is_running(node(), atom()) -> boolean()).
 is_running(Node, App) ->
     mria_node:is_running(Node, App).
-
-%%--------------------------------------------------------------------
-%% Membership API
-%%--------------------------------------------------------------------
-
-%% Cluster members
--spec(members() -> list(member())).
-members() -> mria_membership:members().
-
-%% Local member
--spec(local_member() -> member()).
-local_member() -> mria_membership:local_member().
-
-%% Is node a member?
--spec(is_member(node()) -> boolean()).
-is_member(Node) -> mria_membership:is_member(Node).
-
-%% Node list
--spec(nodelist() -> list(node())).
-nodelist() -> mria_membership:nodelist().
-
--spec(nodelist(up|down) -> list(node())).
-nodelist(Status) -> mria_membership:nodelist(Status).
-
-%%--------------------------------------------------------------------
-%% Membership Monitor API
-%%--------------------------------------------------------------------
-
-monitor(Type) when ?IS_MON_TYPE(Type) ->
-    mria_membership:monitor(Type, self(), true).
-
-monitor(Type, Fun) when is_function(Fun), ?IS_MON_TYPE(Type) ->
-    mria_membership:monitor(Type, Fun, true).
-
-unmonitor(Type) when ?IS_MON_TYPE(Type) ->
-    mria_membership:monitor(Type, self(), false).
-
-unmonitor(Type, Fun) when is_function(Fun), ?IS_MON_TYPE(Type) ->
-    mria_membership:monitor(Type, Fun, false).
