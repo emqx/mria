@@ -13,9 +13,9 @@ jobs:
 
         steps:
         - uses: actions/checkout@v1
-        - name: Check versions
-          run: |
-            ./git-tag.sh dummy --dryrun
+        # - name: Check versions
+        #   run: |
+        #     ./git-tag.sh dummy --dryrun
         - name: Run tests
           run: |
             make eunit
