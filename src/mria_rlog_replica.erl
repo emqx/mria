@@ -325,7 +325,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                 , boolean()
                 , node()
                 , pid()
-                , [{mria_mnesia:table(), mria_mnesia:table_config()}]
+                , [{mria:table(), mria:table_config()}]
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
@@ -336,7 +336,7 @@ try_connect(Shard, Checkpoint) ->
                 , boolean()
                 , node()
                 , pid()
-                , [{mria_mnesia:table(), mria_mnesia:table_config()}]
+                , [{mria:table(), mria:table_config()}]
                 }
               | {error, term()}.
 try_connect([], _, _) ->

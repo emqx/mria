@@ -88,7 +88,7 @@ t_rand_error_injection(_) ->
                ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0)
        end).
 
-%% This testcase verifies verifies various modes of mria_mnesia:ro_transaction
+%% This testcase verifies verifies various modes of mria:ro_transaction
 t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,

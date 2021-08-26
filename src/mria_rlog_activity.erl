@@ -45,7 +45,7 @@ ro_transaction(Fun) ->
     assert_ro(),
     Ret.
 
--spec clear_table(mria_mnesia:table()) -> ok.
+-spec clear_table(mria:table()) -> ok.
 clear_table(Tab) ->
     case get(mnesia_activity_state) of
         {mnesia, Tid, Ts}  ->

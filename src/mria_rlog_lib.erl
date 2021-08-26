@@ -32,6 +32,9 @@
 
         , call_backend_rw_trans/3
         , call_backend_rw_dirty/3
+
+        , ensure_ok/1
+        , ensure_tab/1
         ]).
 
 %% Internal exports
@@ -63,7 +66,7 @@
 
 -type change_type() :: write | delete | delete_object | clear_table.
 
--type op() :: {{mria_mnesia:table(), term()}, term(), change_type()}.
+-type op() :: {{mria:table(), term()}, term(), change_type()}.
 
 -type dirty() :: {dirty, _Fun :: atom(), _Args :: list()}.
 
@@ -222,7 +225,7 @@ call_backend_rw_trans(Shard, Function, Args) ->
             mria_rlog_lib:rpc_call(Core, ?MODULE, transactional_wrapper, [Shard, Function, Args])
     end.
 
--spec call_backend_rw_dirty(atom(), mria_mnesia:table(), list()) -> term().
+-spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
 call_backend_rw_dirty(Function, Table, Args) ->
     Role = mria_rlog:role(),
     case mria_rlog:backend() of
@@ -245,7 +248,7 @@ call_backend_rw_dirty(Function, Table, Args) ->
 
 %% @doc Perform a transaction and log changes.
 %% the logged changes are to be replicated to other nodes.
--spec transactional_wrapper(mria_rlog:shard(), atom(), list()) -> mria_mnesia:t_result(term()).
+-spec transactional_wrapper(mria_rlog:shard(), atom(), list()) -> mria:t_result(term()).
 transactional_wrapper(Shard, Fun, Args) ->
     ensure_no_transaction(),
     TxFun =
@@ -260,7 +263,7 @@ transactional_wrapper(Shard, Fun, Args) ->
         end,
     mnesia:transaction(TxFun).
 
--spec local_transactional_wrapper(atom(), list()) -> mria_mnesia:t_result(term()).
+-spec local_transactional_wrapper(atom(), list()) -> mria:t_result(term()).
 local_transactional_wrapper(Activity, Args) ->
     ensure_no_transaction(),
     TxFun =
@@ -273,7 +276,7 @@ local_transactional_wrapper(Activity, Args) ->
     mnesia:transaction(TxFun).
 
 %% @doc Perform a dirty operation and log changes.
--spec dirty_wrapper(mria_rlog:shard(), atom(), mria_mnesia:table(), list()) -> ok.
+-spec dirty_wrapper(mria_rlog:shard(), atom(), mria:table(), list()) -> ok.
 dirty_wrapper(Shard, Fun, Table, Args) ->
     Ret = apply(mnesia, Fun, [Table|Args]),
     case Shard of
@@ -294,6 +297,16 @@ get_internals() ->
         {_, TID, #tidstore{store = TxStore}} ->
             {TID, TxStore}
     end.
+
+ensure_ok(ok) -> ok;
+ensure_ok({error, {Node, {already_exists, Node}}}) -> ok;
+ensure_ok({badrpc, Reason}) -> throw({error, {badrpc, Reason}});
+ensure_ok({error, Reason}) -> throw({error, Reason}).
+
+ensure_tab({atomic, ok})                             -> ok;
+ensure_tab({aborted, {already_exists, _Name}})       -> ok;
+ensure_tab({aborted, {already_exists, _Name, _Node}})-> ok;
+ensure_tab({aborted, Error})                         -> Error.
 
 %%================================================================================
 %% Internal

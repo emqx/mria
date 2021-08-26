@@ -6,7 +6,7 @@ Due to limitations of mnesia event API, a rather convoluted scheme is used to ga
 
 Each RLOG shard is associated with a mnesia table named after the shard.
 These tables are called "rlog tables", and they are deeply magical.
-`mria_mnesia:transaction` wrapper intercepts all update operations for the regular tables, and inserts them as a record to the rlog table just before the transaction commits.
+`mria:transaction` wrapper intercepts all update operations for the regular tables, and inserts them as a record to the rlog table just before the transaction commits.
 `mria_rlog_agent` processes subscribe to events for the rlog table, and therefore receive events containing the entire list of transaction ops.
 
 Currently the contents of the rlog tables are never read.
