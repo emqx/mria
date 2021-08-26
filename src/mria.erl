@@ -53,6 +53,7 @@
         , dirty_delete/2
         , dirty_delete/1
 
+        , dirty_delete_object/1
         , dirty_delete_object/2
 
         , local_content_shard/0
@@ -302,6 +303,10 @@ dirty_delete({Tab, Key}) ->
 -spec dirty_delete_object(mria:table(), tuple()) -> ok.
 dirty_delete_object(Tab, Record) ->
     mria_rlog_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
+
+-spec dirty_delete_object(tuple()) -> ok.
+dirty_delete_object(Record) ->
+    dirty_delete_object(element(1, Record), Record).
 
 %%================================================================================
 %% Internal functions

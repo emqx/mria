@@ -196,7 +196,7 @@ execute_op_dirty({write, Tab, Key, Val}) ->
 execute_op_dirty({delete, Tab, Key}) ->
     ok = mria:dirty_delete({Tab, Key});
 execute_op_dirty({delete_object, Tab, {K, V}}) ->
-    ok = mria:dirty_delete_object(Tab, {Tab, K, V}).
+    ok = mria:dirty_delete_object({Tab, K, V}).
 
 execute(Node, {clear_table, Tab}) ->
     {atomic, ok} = rpc:call(Node, mria, clear_table, [Tab]);
