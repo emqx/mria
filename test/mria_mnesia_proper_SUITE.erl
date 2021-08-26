@@ -38,7 +38,7 @@
 
 t_import_transactions(Config0) when is_list(Config0) ->
     Config = [{proper, #{max_size => 300,
-                         numtests => 50,
+                         numtests => 100,
                          timeout  => 100000
                         }} | Config0],
     ?run_prop(Config, prop()).
@@ -106,7 +106,8 @@ trans_op(#s{bag = Bag, set = Set}) ->
          end).
 
 transaction(State) ->
-    frequency([ {95, {transaction, resize(10, list(trans_op(State)))}}
+    frequency([ {50, {transaction, resize(10, list(trans_op(State)))}}
+              , {50, {dirty, trans_op(State)}}
               , {5, {clear_table, table()}}
               ]).
 
@@ -140,7 +141,9 @@ next_state(State, _Res, {call, ?MODULE, execute, [_, Args]}) ->
         {clear_table, test_bag} ->
             State#s{bag = []};
         {transaction, Ops} ->
-            lists:foldl(fun symbolic_exec_trans_op/2, State, Ops)
+            lists:foldl(fun symbolic_exec_op/2, State, Ops);
+        {dirty, Op} ->
+            symbolic_exec_op(Op, State)
     end;
 next_state(State, _Res, _Call) ->
     State.
@@ -164,20 +167,20 @@ compare_lists(Type, Node, Cmds, Expected, Got) ->
 %% Internal functions
 %%================================================================================
 
-symbolic_exec_trans_op({write, test_tab, Key, Val}, State = #s{set = Old}) ->
+symbolic_exec_op({write, test_tab, Key, Val}, State = #s{set = Old}) ->
     Set = Old#{Key => Val},
     State#s{set = Set};
-symbolic_exec_trans_op({write, test_bag, Key, Val}, State = #s{bag = Old}) ->
+symbolic_exec_op({write, test_bag, Key, Val}, State = #s{bag = Old}) ->
     Rec = {Key, Val},
     Bag = [Rec | Old -- [Rec]],
     State#s{bag = Bag};
-symbolic_exec_trans_op({delete, test_tab, Key}, State = #s{set = Old}) ->
+symbolic_exec_op({delete, test_tab, Key}, State = #s{set = Old}) ->
     Set = maps:remove(Key, Old),
     State#s{set = Set};
-symbolic_exec_trans_op({delete, test_bag, Key}, State = #s{bag = Old}) ->
+symbolic_exec_op({delete, test_bag, Key}, State = #s{bag = Old}) ->
     Bag = proplists:delete(Key, Old),
     State#s{bag = Bag};
-symbolic_exec_trans_op({delete_object, test_bag, Rec}, State = #s{bag = Old}) ->
+symbolic_exec_op({delete_object, test_bag, Rec}, State = #s{bag = Old}) ->
     Bag = lists:delete(Rec, Old),
     State#s{bag = Bag}.
 
@@ -188,13 +191,22 @@ execute_op({delete, Tab, Key}) ->
 execute_op({delete_object, Tab, {K, V}}) ->
     ok = mnesia:delete_object({Tab, K, V}).
 
+execute_op_dirty({write, Tab, Key, Val}) ->
+    ok = mria:dirty_write({Tab, Key, Val});
+execute_op_dirty({delete, Tab, Key}) ->
+    ok = mria:dirty_delete({Tab, Key});
+execute_op_dirty({delete_object, Tab, {K, V}}) ->
+    ok = mria:dirty_delete_object(Tab, {Tab, K, V}).
+
 execute(Node, {clear_table, Tab}) ->
     {atomic, ok} = rpc:call(Node, mria, clear_table, [Tab]);
 execute(Node, {transaction, Ops}) ->
     Fun = fun() ->
                   lists:foreach(fun execute_op/1, Ops)
           end,
-    {atomic, ok} = rpc:call(Node, mria_mnesia, transaction, [test_shard, Fun]).
+    {atomic, ok} = rpc:call(Node, mria, transaction, [test_shard, Fun]);
+execute(Node, {dirty, Op}) ->
+    ok = rpc:call(Node, ?MODULE, execute_op_dirty, [Op]).
 
 restart_mria(Node) ->
     rpc:call(Node, application, stop, [mria]),

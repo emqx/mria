@@ -299,9 +299,9 @@ dirty_delete(Tab, Key) ->
 dirty_delete({Tab, Key}) ->
     dirty_delete(Tab, Key).
 
--spec dirty_delete_object(mria:table(), term()) -> ok.
-dirty_delete_object(Tab, Key) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Key]).
+-spec dirty_delete_object(mria:table(), tuple()) -> ok.
+dirty_delete_object(Tab, Record) ->
+    mria_rlog_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
 
 %%================================================================================
 %% Internal functions
