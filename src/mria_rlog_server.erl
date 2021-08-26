@@ -82,7 +82,7 @@ probe(Node, Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [{mria_mnesia:table(), mria_mnesia:table_config()}]
+          , [{mria:table(), mria:table_config()}]
           }.
 subscribe(Shard, Subscriber, Checkpoint) ->
     gen_server:call(Shard, {subscribe, Subscriber, Checkpoint}, infinity).
@@ -199,7 +199,7 @@ maybe_start_child(Supervisor, Args) ->
         {error, {already_started, Pid}} -> Pid
     end.
 
--spec process_schema(mria_rlog:shard()) -> [mria_mnesia:table()].
+-spec process_schema(mria_rlog:shard()) -> [mria:table()].
 process_schema(Shard) ->
     ok = mria_mnesia:wait_for_tables([?schema]),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),

@@ -9,9 +9,9 @@
 -define(schema, mria_rlog_schema).
 
 -record(?schema,
-        { mnesia_table :: mria_mnesia:table()
+        { mnesia_table :: mria:table()
         , shard        :: mria_rlog:shard()
-        , config       :: mria_mnesia:table_config() | '$2' | '_' %% TODO: fix type
+        , config       :: mria:table_config() | '$2' | '_' %% TODO: fix type
         }).
 
 -define(LOCAL_CONTENT_SHARD, undefined).

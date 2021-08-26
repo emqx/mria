@@ -44,7 +44,7 @@
 
 -type role() :: core | replicant.
 
--type shard_config() :: #{ tables := [mria_mnesia:table()]
+-type shard_config() :: #{ tables := [mria:table()]
                          , match_spec := ets:match_spec()
                          }.
 
@@ -110,7 +110,7 @@ ensure_shard(Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [{mria_mnesia:table(), mria_mnesia:table_config()}]
+          , [{mria:table(), mria:table_config()}]
           }
         | {badrpc | badtcp, term()}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->

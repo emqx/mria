@@ -49,7 +49,7 @@ t_data_dir(_) ->
 t_create_del_table(_) ->
     try
         mria:start(),
-        ok = mria_mnesia:create_table(kv_tab, [
+        ok = mria:create_table(kv_tab, [
                     {ram_copies, [node()]},
                     {rlog_shard, test_shard},
                     {record_name, kv_tab},
@@ -264,7 +264,7 @@ t_rlog_clear_table(_) ->
            rpc:call(N1, mria_transaction_gen, init, []),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
-           ?assertMatch({atomic, ok}, rpc:call(N1, mria_mnesia, clear_table, [test_tab])),
+           ?assertMatch({atomic, ok}, rpc:call(N1, mria, clear_table, [test_tab])),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
        after
@@ -280,14 +280,14 @@ t_rlog_dirty_operations(_) ->
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),
-           ok = rpc:call(N1, mria_mnesia, dirty_write, [{test_tab, 1, 1}]),
-           ok = rpc:call(N2, mria_mnesia, dirty_write, [{test_tab, 2, 2}]),
-           ok = rpc:call(N2, mria_mnesia, dirty_write, [{test_tab, 3, 3}]),
+           ok = rpc:call(N1, mria, dirty_write, [{test_tab, 1, 1}]),
+           ok = rpc:call(N2, mria, dirty_write, [{test_tab, 2, 2}]),
+           ok = rpc:call(N2, mria, dirty_write, [{test_tab, 3, 3}]),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
-           ok = rpc:call(N1, mria_mnesia, dirty_delete, [test_tab, 1]),
-           ok = rpc:call(N2, mria_mnesia, dirty_delete, [test_tab, 2]),
-           ok = rpc:call(N2, mria_mnesia, dirty_delete, [{test_tab, 3}]),
+           ok = rpc:call(N1, mria, dirty_delete, [test_tab, 1]),
+           ok = rpc:call(N2, mria, dirty_delete, [test_tab, 2]),
+           ok = rpc:call(N2, mria, dirty_delete, [{test_tab, 3}]),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ?assertMatch(#{ backend        := rlog
@@ -316,14 +316,14 @@ t_local_content(_) ->
       try
           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
           %% Create the table on all nodes:
-          {[ok, ok], []} = rpc:multicall(Nodes, mria_mnesia, create_table,
+          {[ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
                                          [local_tab,
                                           [{local_content, true}]
                                          ]),
           %% Perform an invalid r/w transactions on both nodes:
           [?assertMatch( {aborted, {invalid_transaction, _, _}}
-                       , rpc:call(N, mria_mnesia, transaction,
-                                  [mria_mnesia:local_content_shard(),
+                       , rpc:call(N, mria, transaction,
+                                  [mria:local_content_shard(),
                                    fun() ->
                                            ok = mnesia:write({test_tab, key, val})
                                    end
@@ -331,7 +331,7 @@ t_local_content(_) ->
                        )
            || N <- Nodes],
           [?assertMatch( {aborted, {invalid_transaction, _, _}}
-                       , rpc:call(N, mria_mnesia, transaction,
+                       , rpc:call(N, mria, transaction,
                                   [test_shard,
                                    fun() ->
                                            ok = mnesia:write({local_tab, key, val})
@@ -341,8 +341,8 @@ t_local_content(_) ->
            || N <- Nodes],
           %% Perform r/w transactions on both nodes with different content:
           ?assertMatch( {atomic, N1}
-                      , rpc:call(N1, mria_mnesia, transaction,
-                                  [mria_mnesia:local_content_shard(),
+                      , rpc:call(N1, mria, transaction,
+                                  [mria:local_content_shard(),
                                    fun() ->
                                            mnesia:write({local_tab, key, node()}),
                                            node()
@@ -350,8 +350,8 @@ t_local_content(_) ->
                                   ])
                        ),
           ?assertMatch( {atomic, N2}
-                      , rpc:call(N2, mria_mnesia, transaction,
-                                  [mria_mnesia:local_content_shard(),
+                      , rpc:call(N2, mria, transaction,
+                                  [mria:local_content_shard(),
                                    fun() ->
                                            mnesia:write({local_tab, key, node()}),
                                            node()
@@ -360,8 +360,8 @@ t_local_content(_) ->
                        ),
           %% Perform a successful r/o transaction:
           [?assertMatch( {atomic, N}
-                       , rpc:call(N, mria_mnesia, ro_transaction,
-                                  [mria_mnesia:local_content_shard(),
+                       , rpc:call(N, mria, ro_transaction,
+                                  [mria:local_content_shard(),
                                    fun() ->
                                            [key] = mnesia:all_keys(local_tab),
                                            Node = node(),
@@ -373,8 +373,8 @@ t_local_content(_) ->
            || N <- Nodes],
           %% Perform an invalid r/o transaction, it should abort:
           [?assertMatch( {aborted, _}
-                       , rpc:call(N, mria_mnesia, ro_transaction,
-                                  [mria_mnesia:local_content_shard(),
+                       , rpc:call(N, mria, ro_transaction,
+                                  [mria:local_content_shard(),
                                    fun() ->
                                            mnesia:write({local_tab, 1, 1})
                                    end
@@ -389,7 +389,7 @@ t_local_content(_) ->
               true
       end).
 
-%% This testcase verifies verifies various modes of mria_mnesia:ro_transaction
+%% This testcase verifies verifies various modes of mria:ro_transaction
 t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
@@ -468,7 +468,7 @@ t_dirty_reads(_) ->
            [N1, N2] = mria_ct:start_cluster(mria_async, Cluster),
            mria_mnesia_test_util:wait_shards([N1]),
            %% Insert data:
-           ok = rpc:call(N1, mria_mnesia, dirty_write, [{test_tab, Key, Val}]),
+           ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
            %% Ensure that the replicant still reads the correct value by doing an RPC to the core node:
            ?block_until(#{?snk_kind := rlog_read_from, source := N1}),
            ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key])),
@@ -497,25 +497,25 @@ t_rlog_schema(_) ->
            mria_mnesia_test_util:wait_shards(Nodes),
            %% Add a few new tables to the shard
            [?assertMatch( {[ok, ok], []}
-                        , rpc:multicall([N1, N2], mria_mnesia, create_table,
+                        , rpc:multicall([N1, N2], mria, create_table,
                                         [Tab, [{rlog_shard, test_shard}]])
                         ) || Tab <- [tab1, tab2, tab3, tab4, tab6, tab7, tab8, tab9, tab10]],
-           ok = rpc:call(N1, mria_mnesia, dirty_write, [{tab1, 1, 1}]),
+           ok = rpc:call(N1, mria, dirty_write, [{tab1, 1, 1}]),
            %% Check idempotency:
            ?assertMatch( {[ok, ok], []}
-                       , rpc:multicall([N1, N2], mria_mnesia, create_table,
+                       , rpc:multicall([N1, N2], mria, create_table,
                                        [tab1, [{rlog_shard, test_shard}]])
                        ),
            %% Try to change the shard of an existing table (this should crash):
            ?assertMatch( {[{badrpc, {'EXIT', _}}, {badrpc, {'EXIT', _}}], []}
-                       , rpc:multicall([N1, N2], mria_mnesia, create_table,
+                       , rpc:multicall([N1, N2], mria, create_table,
                                        [tab1, [{rlog_shard, another_shard}]])
                        ),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            mria_mnesia_test_util:compare_table_contents(tab1, Nodes),
            %% Now create a new record that will be replicated in normal mode:
-           ok = rpc:call(N1, mria_mnesia, dirty_write, [{tab1, 2, 2}]),
+           ok = rpc:call(N1, mria, dirty_write, [{tab1, 2, 2}]),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            mria_mnesia_test_util:compare_table_contents(tab1, Nodes),

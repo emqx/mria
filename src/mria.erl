@@ -16,9 +16,6 @@
 
 -module(mria).
 
--include("mria.hrl").
--include_lib("snabbkaffe/include/snabbkaffe.hrl").
-
 %% Start/Stop
 -export([start/0, stop/0]).
 
@@ -44,6 +41,26 @@
         , is_running/2
         ]).
 
+%% Database API
+-export([ ro_transaction/2
+        , transaction/3
+        , transaction/2
+        , clear_table/1
+
+        , dirty_write/2
+        , dirty_write/1
+
+        , dirty_delete/2
+        , dirty_delete/1
+
+        , dirty_delete_object/2
+
+        , local_content_shard/0
+
+        , create_table/2
+        , create_table_internal/2
+        ]).
+
 -define(IS_MON_TYPE(T), T == membership orelse T == partition).
 
 -type(info_key() :: members | running_nodes | stopped_nodes | partitions).
@@ -55,6 +72,30 @@
                   }).
 
 -export_type([info_key/0, infos/0]).
+
+-export_type([ t_result/1
+             , backend/0
+             , table/0
+             , table_config/0
+             ]).
+
+-include("mria.hrl").
+-include("mria_rlog.hrl").
+-include_lib("kernel/include/logger.hrl").
+-include_lib("snabbkaffe/include/trace.hrl").
+
+%%--------------------------------------------------------------------
+%% Types
+%%--------------------------------------------------------------------
+
+-type t_result(Res) :: {'atomic', Res} | {'aborted', Reason::term()}.
+
+-type backend() :: rlog | mnesia.
+
+-type table() :: atom().
+
+-type table_config() :: list().
+
 
 %%--------------------------------------------------------------------
 %% Start/Stop
@@ -154,3 +195,134 @@ is_aliving(Node) ->
 -spec(is_running(node(), atom()) -> boolean()).
 is_running(Node, App) ->
     mria_node:is_running(Node, App).
+
+
+local_content_shard() ->
+    ?LOCAL_CONTENT_SHARD.
+
+%%--------------------------------------------------------------------
+%% Transaction API
+%%--------------------------------------------------------------------
+
+%% @doc Create mnesia table.
+-spec(create_table(Name:: table(), TabDef :: list()) -> ok | {error, any()}).
+create_table(Name, TabDef) ->
+    ?tp(debug, mria_mnesia_create_table,
+        #{ name    => Name
+         , options => TabDef
+         }),
+    MnesiaTabDef = lists:keydelete(rlog_shard, 1, TabDef),
+    case {proplists:get_value(rlog_shard, TabDef, ?LOCAL_CONTENT_SHARD),
+          proplists:get_value(local_content, TabDef, false)} of
+        {?LOCAL_CONTENT_SHARD, true} ->
+            %% Local content table:
+            create_table_internal(Name, MnesiaTabDef);
+        {?LOCAL_CONTENT_SHARD, false} ->
+            ?LOG(critical, "Table ~p doesn't belong to any shard", [Name]),
+            error(badarg);
+        {Shard, false} ->
+            case create_table_internal(Name, MnesiaTabDef) of
+                ok ->
+                    %% It's important to add the table to the shard
+                    %% _after_ we actually create it:
+                    mria_rlog_schema:add_table(Shard, Name, MnesiaTabDef);
+                Err ->
+                    Err
+            end;
+        {_Shard, true} ->
+            ?LOG(critical, "local_content table ~p should belong to ?LOCAL_CONTENT_SHARD.", [Name]),
+            error(badarg)
+    end.
+
+%% @doc Create mnesia table (skip RLOG stuff)
+-spec(create_table_internal(Name:: atom(), TabDef :: list()) -> ok | {error, any()}).
+create_table_internal(Name, TabDef) ->
+    mria_rlog_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
+
+-spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
+ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->
+    mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]);
+ro_transaction(Shard, Fun) ->
+    case mria_rlog:role() of
+        core ->
+            mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]);
+        replicant ->
+            ?tp(mria_ro_transaction, #{role => replicant}),
+            case mria_rlog_status:upstream(Shard) of
+                {ok, AgentPid} ->
+                    Ret = mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]),
+                    %% Now we check that the agent pid is still the
+                    %% same, meaning the replicant node haven't gone
+                    %% through bootstrapping process while running the
+                    %% transaction and it didn't have a chance to
+                    %% observe the stale writes.
+                    case mria_rlog_status:upstream(Shard) of
+                        {ok, AgentPid} ->
+                            Ret;
+                        _ ->
+                            %% Restart transaction. If the shard is
+                            %% still disconnected, it will become an
+                            %% RPC call to a core node:
+                            ro_transaction(Shard, Fun)
+                    end;
+                disconnected ->
+                    ro_trans_rpc(Shard, Fun)
+            end
+    end.
+
+-spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
+transaction(Shard, Fun, Args) ->
+    mria_rlog_lib:call_backend_rw_trans(Shard, transaction, [Fun, Args]).
+
+-spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
+transaction(Shard, Fun) ->
+    transaction(Shard, fun erlang:apply/2, [Fun, []]).
+
+-spec clear_table(mria:table()) -> t_result(ok).
+clear_table(Table) ->
+    Shard = mria_rlog_config:shard_rlookup(Table),
+    mria_rlog_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
+
+-spec dirty_write(tuple()) -> ok.
+dirty_write(Record) ->
+    dirty_write(element(1, Record), Record).
+
+-spec dirty_write(mria:table(), tuple()) -> ok.
+dirty_write(Tab, Record) ->
+    mria_rlog_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
+
+-spec dirty_delete(mria:table(), term()) -> ok.
+dirty_delete(Tab, Key) ->
+    mria_rlog_lib:call_backend_rw_dirty(dirty_delete, Tab, [Key]).
+
+-spec dirty_delete({mria:table(), term()}) -> ok.
+dirty_delete({Tab, Key}) ->
+    dirty_delete(Tab, Key).
+
+-spec dirty_delete_object(mria:table(), term()) -> ok.
+dirty_delete_object(Tab, Key) ->
+    mria_rlog_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Key]).
+
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+-spec ro_trans_rpc(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
+ro_trans_rpc(Shard, Fun) ->
+    {ok, Core} = mria_rlog_status:get_core_node(Shard, 5000),
+    case mria_rlog_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
+        {badrpc, Err} ->
+            ?tp(error, ro_trans_badrpc,
+                #{ core   => Core
+                 , reason => Err
+                 }),
+            error(badrpc);
+        {badtcp, Err} ->
+            ?tp(error, ro_trans_badtcp,
+                #{ core   => Core
+                 , reason => Err
+                 }),
+            error(badrpc);
+        Ans ->
+            Ans
+    end.

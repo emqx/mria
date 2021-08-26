@@ -42,7 +42,7 @@
 %%================================================================================
 
 -type batch() :: { _From    :: pid()
-                 , _Table   :: mria_mnesia:table()
+                 , _Table   :: mria:table()
                  , _Records :: [tuple()]
                  }.
 
@@ -50,7 +50,7 @@
         { shard       :: mria_rlog:shard()
         , subscriber  :: mria_rlog_lib:subscriber()
         , key_queue   :: replayq:q() | undefined
-        , tables      :: [mria_mnesia:table()]
+        , tables      :: [mria:table()]
         }).
 
 -record(client,
@@ -206,7 +206,7 @@ traverse_queue(St0 = #server{key_queue = Q0, subscriber = Subscriber, tables = [
             {stop, normal, St0}
     end.
 
--spec prepare_batch(mria_mnesia:table(), list()) -> [tuple()].
+-spec prepare_batch(mria:table(), list()) -> [tuple()].
 prepare_batch(Table, Keys) ->
     lists:foldl( fun(Key, Acc) -> mnesia:dirty_read(Table, Key) ++ Acc end
                , []

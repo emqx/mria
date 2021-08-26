@@ -78,7 +78,7 @@
 %%
 %% Currently there is no requirement to implement this, so we can get
 %% away with managing each shard separately
--spec add_table(mria_rlog:shard(), mria_mnesia:table(), list()) -> ok.
+-spec add_table(mria_rlog:shard(), mria:table(), list()) -> ok.
 add_table(Shard, Table, Config) ->
     case mnesia:transaction(fun do_add_table/3, [Shard, Table, Config], infinity) of
         {atomic, ok}   -> ok;
@@ -90,7 +90,7 @@ init(boot) ->
     ?tp(debug, rlog_schema_init,
         #{ type => boot
          }),
-    ok = mria_mnesia:create_table_internal(?schema, [{type, ordered_set},
+    ok = mria:create_table_internal(?schema, [{type, ordered_set},
                                                      {ram_copies, [node()]},
                                                      {record_name, ?schema},
                                                      {attributes, record_info(fields, ?schema)}
@@ -106,14 +106,14 @@ init(copy) ->
     ok.
 
 %% @doc Return the list of tables that belong to the shard.
--spec tables_of_shard(mria_rlog:shard()) -> [mria_mnesia:table()].
+-spec tables_of_shard(mria_rlog:shard()) -> [mria:table()].
 tables_of_shard(Shard) ->
     {Tables, _} = lists:unzip(table_specs_of_shard(Shard)),
     Tables.
 
 %% @doc Return the list of tables that belong to the shard and their
 %% properties:
--spec table_specs_of_shard(mria_rlog:shard()) -> [{mria_mnesia:table(), mria_mnesia:table_config()}].
+-spec table_specs_of_shard(mria_rlog:shard()) -> [{mria:table(), mria:table_config()}].
 table_specs_of_shard(Shard) ->
     %%core = mria_rlog_config:role(), % assert
     MS = {#?schema{mnesia_table = '$1', shard = Shard, config = '$2'}, [], [{{'$1', '$2'}}]},
@@ -121,7 +121,7 @@ table_specs_of_shard(Shard) ->
     Tuples.
 
 %% @doc Get the shard of a table
--spec shard_of_table(mria_mnesia:table()) -> {ok, mria_rlog:shard()} | undefined.
+-spec shard_of_table(mria:table()) -> {ok, mria_rlog:shard()} | undefined.
 shard_of_table(Table) ->
     case mnesia:dirty_read(?schema, Table) of
         [#?schema{shard = Shard}] ->
@@ -138,7 +138,7 @@ shards() ->
     lists:usort(Shards).
 
 %% @doc Ensure that the replicant has the same tables as the upstream
--spec converge(mria_rlog:shard(), [{mria_mnesia:table(), mria_mnesia:table_config()}]) -> ok.
+-spec converge(mria_rlog:shard(), [{mria:table(), mria:table_config()}]) -> ok.
 converge(_Shard, TableSpecs) ->
     %% TODO: Check shard
     lists:foreach(fun ensure_table/1, TableSpecs).
@@ -147,7 +147,7 @@ converge(_Shard, TableSpecs) ->
 %% Internal functions
 %%================================================================================
 
--spec do_add_table(mria_rlog:shard(), mria_mnesia:table(), list()) -> ok.
+-spec do_add_table(mria_rlog:shard(), mria:table(), list()) -> ok.
 do_add_table(Shard, Table, Config) ->
     case mnesia:wread({?schema, Table}) of
         [] ->
@@ -168,7 +168,7 @@ do_add_table(Shard, Table, Config) ->
             error(bad_schema)
     end.
 
--spec ensure_table({mria_mnesia:table(), mria_mnesia:table_config()}) -> ok.
+-spec ensure_table({mria:table(), mria:table_config()}) -> ok.
 ensure_table({Name, Config0}) ->
     Config = lists:map( fun({ram_copies, _})       -> {ram_copies, [node()]};
                            ({disk_copies, _})      -> {disk_copies, [node()]};
@@ -177,4 +177,4 @@ ensure_table({Name, Config0}) ->
                         end
                       , Config0
                       ),
-    ok = mria_mnesia:create_table_internal(Name, Config).
+    ok = mria:create_table_internal(Name, Config).

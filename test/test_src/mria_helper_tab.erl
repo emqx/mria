@@ -33,7 +33,7 @@
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 mnesia(boot) ->
-    ok = mria_mnesia:create_table(?TABLE, [{type, ordered_set},
+    ok = mria:create_table(?TABLE, [{type, ordered_set},
                                            {rlog_shard, test_shard},
                                            {ram_copies, [node()]},
                                            {record_name, ?TABLE},
@@ -66,4 +66,4 @@ emit_last_transaction(Node, Ref) ->
     Fun = fun() ->
                   mnesia:write(#?TABLE{key = '$seal', val = Ref})
           end,
-    {atomic, ok} = rpc:call(Node, mria_mnesia, transaction, [test_shard, Fun]).
+    {atomic, ok} = rpc:call(Node, mria, transaction, [test_shard, Fun]).

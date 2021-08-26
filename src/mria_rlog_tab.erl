@@ -44,7 +44,7 @@ ensure_table(Shard) ->
         #{ node => node()
          , shard => Shard
          }),
-    ok = mria_mnesia:create_table_internal(Shard, Opts),
+    ok = mria:create_table_internal(Shard, Opts),
     ok = mria_mnesia:copy_table(Shard, null_copies).
 
 %% @doc Write a transaction log.

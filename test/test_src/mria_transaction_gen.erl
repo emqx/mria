@@ -37,13 +37,13 @@
 -record(test_bag, {key, val}).
 
 mnesia(boot) ->
-    ok = mria_mnesia:create_table(test_tab, [{type, ordered_set},
+    ok = mria:create_table(test_tab, [{type, ordered_set},
                                              {rlog_shard, test_shard},
                                              {ram_copies, [node()]},
                                              {record_name, test_tab},
                                              {attributes, record_info(fields, test_tab)}
                                             ]),
-    ok = mria_mnesia:create_table(test_bag, [{type, bag},
+    ok = mria:create_table(test_bag, [{type, bag},
                                              {rlog_shard, test_shard},
                                              {ram_copies, [node()]},
                                              {record_name, test_bag},
@@ -59,7 +59,7 @@ verify_trans_sum(N, Delay) ->
     verify_trans_sum_loop(N, Delay).
 
 init() ->
-    mria_mnesia:transaction(
+    mria:transaction(
       test_shard,
       fun() ->
               [mnesia:write(#test_tab{ key = I
@@ -68,7 +68,7 @@ init() ->
       end).
 
 ro_read_all_keys() ->
-    mria_mnesia:ro_transaction(
+    mria:ro_transaction(
       test_shard,
       fun() ->
               Keys = mnesia:all_keys(test_tab),
@@ -76,7 +76,7 @@ ro_read_all_keys() ->
       end).
 
 delete(K) ->
-    mria_mnesia:transaction(
+    mria:transaction(
       test_shard,
       fun() ->
               mnesia:delete({test_tab, K})
@@ -89,7 +89,7 @@ counter(_Key, 0, _) ->
     ok;
 counter(Key, NIter, Delay) ->
     {atomic, Val} =
-        mria_mnesia:transaction(
+        mria:transaction(
           test_shard,
           fun() ->
                   case mria_ct:read(test_tab, Key) of
@@ -114,7 +114,7 @@ abort(Backend, AbortKind) ->
           end,
     case Backend of
         mnesia      -> mnesia:transaction(Fun);
-        mria_mnesia -> mria_mnesia:transaction(test_shard, Fun)
+        mria_mnesia -> mria:transaction(test_shard, Fun)
     end.
 
 do_abort(abort) ->
@@ -156,7 +156,7 @@ loop(Cnt, NKeys) ->
     receive
         complete -> Cnt
     after 0 ->
-            {atomic, _} = mria_mnesia:transaction(
+            {atomic, _} = mria:transaction(
                             test_shard,
                             fun() ->
                                     [begin
@@ -190,7 +190,7 @@ verify_trans_sum_loop(N, Delay) ->
     end.
 
 do_trans_gen() ->
-    mria_mnesia:transaction(
+    mria:transaction(
       test_shard,
       fun() ->
               [mnesia:write(#test_tab{key = I, val = rand:uniform()})
@@ -200,7 +200,7 @@ do_trans_gen() ->
       end).
 
 do_trans_verify(Delay) ->
-    mria_mnesia:ro_transaction(
+    mria:ro_transaction(
       test_shard,
       fun() ->
               case mnesia:all_keys(test_tab) of

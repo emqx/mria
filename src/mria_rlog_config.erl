@@ -52,7 +52,7 @@
 %%================================================================================
 
 %% @doc Find which shard the table belongs to
--spec shard_rlookup(mria_mnesia:table()) -> mria_rlog:shard() | undefined.
+-spec shard_rlookup(mria:table()) -> mria_rlog:shard() | undefined.
 shard_rlookup(Table) ->
     persistent_term:get(?shard_rlookup(Table), undefined).
 
@@ -60,7 +60,7 @@ shard_rlookup(Table) ->
 shard_config(Shard) ->
     persistent_term:get(?shard_config(Shard)).
 
--spec backend() -> mria_mnesia:backend().
+-spec backend() -> mria:backend().
 backend() ->
     persistent_term:get(?mria(db_backend), mnesia).
 
@@ -86,7 +86,7 @@ load_config() ->
     copy_from_env(strict_mode),
     consistency_check().
 
--spec load_shard_config(mria_rlog:shard(), [mria_mnesia:table()]) -> ok.
+-spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
 load_shard_config(Shard, Tables) ->
     %% erase_shard_config(Shard),
     ?tp(notice, "Setting RLOG shard config",
@@ -122,7 +122,7 @@ copy_from_env(Key) ->
     end.
 
 %% Create a reverse lookup table for finding shard of the table
--spec create_shard_rlookup(mria_rlog:shard(), [mria_mnesia:table()]) -> ok.
+-spec create_shard_rlookup(mria_rlog:shard(), [mria:table()]) -> ok.
 create_shard_rlookup(Shard, Tables) ->
     [persistent_term:put(?shard_rlookup(Tab), Shard) || Tab <- Tables],
     ok.
@@ -156,7 +156,7 @@ erase_all_config() ->
                  , persistent_term:get()
                  ).
 
--spec make_shard_match_spec([mria_mnesia:table()]) -> ets:match_spec().
+-spec make_shard_match_spec([mria:table()]) -> ets:match_spec().
 make_shard_match_spec(Tables) ->
     [{ {{Table, '_'}, '_', '_'}
      , []

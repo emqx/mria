@@ -189,7 +189,7 @@ execute_op({delete_object, Tab, {K, V}}) ->
     ok = mnesia:delete_object({Tab, K, V}).
 
 execute(Node, {clear_table, Tab}) ->
-    {atomic, ok} = rpc:call(Node, mria_mnesia, clear_table, [Tab]);
+    {atomic, ok} = rpc:call(Node, mria, clear_table, [Tab]);
 execute(Node, {transaction, Ops}) ->
     Fun = fun() ->
                   lists:foreach(fun execute_op/1, Ops)
