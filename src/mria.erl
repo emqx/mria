@@ -36,11 +36,6 @@
         , callback/2
         ]).
 
-%% Node API
--export([ is_aliving/1
-        , is_running/2
-        ]).
-
 %% Database API
 -export([ ro_transaction/2
         , transaction/3
@@ -184,28 +179,13 @@ callback(Name, Fun) ->
     apply(application, set_env, [mria, {callback, Name}, Fun]).
 
 %%--------------------------------------------------------------------
-%% Node API
+%% Transaction API
 %%--------------------------------------------------------------------
-
-%% @doc Is node aliving?
--spec(is_aliving(node()) -> boolean()).
-is_aliving(Node) ->
-    mria_node:is_aliving(Node).
-
-%% @doc Is the application running?
--spec(is_running(node(), atom()) -> boolean()).
-is_running(Node, App) ->
-    mria_node:is_running(Node, App).
-
 
 local_content_shard() ->
     ?LOCAL_CONTENT_SHARD.
 
-%%--------------------------------------------------------------------
-%% Transaction API
-%%--------------------------------------------------------------------
-
-%% @doc Create mnesia table.
+%% @doc Create a table.
 -spec(create_table(Name:: table(), TabDef :: list()) -> ok | {error, any()}).
 create_table(Name, TabDef) ->
     ?tp(debug, mria_mnesia_create_table,
