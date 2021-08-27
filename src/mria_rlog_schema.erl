@@ -95,14 +95,14 @@ init(boot) ->
                                                      {record_name, ?schema},
                                                      {attributes, record_info(fields, ?schema)}
                                                     ]),
-    mria_mnesia:wait_for_tables([?schema]),
+    mria:wait_for_tables([?schema]),
     ok;
 init(copy) ->
     ?tp(debug, rlog_schema_init,
         #{ type => copy
          }),
     ok = mria_mnesia:copy_table(?schema, ram_copies),
-    mria_mnesia:wait_for_tables([?schema]),
+    mria:wait_for_tables([?schema]),
     ok.
 
 %% @doc Return the list of tables that belong to the shard.

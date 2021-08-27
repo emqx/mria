@@ -124,7 +124,7 @@ handle_continue(post_init, {Parent, Shard}) ->
     mria_rlog_config:load_shard_config(Shard, Tables),
     AgentSup = mria_rlog_shard_sup:start_agent_sup(Parent, Shard),
     BootstrapperSup = mria_rlog_shard_sup:start_bootstrapper_sup(Parent, Shard),
-    mria_mnesia:wait_for_tables([Shard|Tables]),
+    mria:wait_for_tables([Shard|Tables]),
     mria_rlog_status:notify_shard_up(Shard, self()),
     ?tp(notice, "Shard fully up",
         #{ node  => node()
@@ -201,7 +201,7 @@ maybe_start_child(Supervisor, Args) ->
 
 -spec process_schema(mria_rlog:shard()) -> [mria:table()].
 process_schema(Shard) ->
-    ok = mria_mnesia:wait_for_tables([?schema]),
+    ok = mria:wait_for_tables([?schema]),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),
     Tables = mria_rlog_schema:tables_of_shard(Shard),
     Tables.

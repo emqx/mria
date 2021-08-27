@@ -51,7 +51,6 @@
         , del_schema_copy/1
         , copy_table/1
         , copy_table/2
-        , wait_for_tables/1
         ]).
 
 -deprecated({copy_table, 1, next_major_release}).
@@ -341,16 +340,4 @@ wait_for(stop) ->
     end;
 wait_for(tables) ->
     Tables = mnesia:system_info(local_tables),
-    wait_for_tables(Tables).
-
-wait_for_tables(Tables) ->
-    case mnesia:wait_for_tables(Tables, 30000) of
-        ok                   -> ok;
-        {error, Reason}      -> {error, Reason};
-        {timeout, BadTables} ->
-            logger:warning("~p: still waiting for table(s): ~p", [?MODULE, BadTables]),
-            %% lets try to force reconnect all the db_nodes to get schema merged,
-            %% mnesia_controller is smart enough to not force reconnect the node that is already connected.
-            mnesia_controller:connect_nodes(mnesia:system_info(db_nodes)),
-            wait_for_tables(BadTables)
-    end.
+    mria:wait_for_tables(Tables).
