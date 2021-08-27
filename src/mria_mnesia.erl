@@ -14,6 +14,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
+%% @private Modules for manipulating Mnesia schema and cluster
 -module(mria_mnesia).
 
 -include("mria.hrl").
@@ -38,9 +39,7 @@
         , cluster_view/0
         , cluster_nodes/1
         , running_nodes/0
-        ]).
-
--export([ is_node_in_cluster/0
+        , is_node_in_cluster/0
         , is_node_in_cluster/1
         ]).
 
@@ -70,17 +69,6 @@ start() ->
     init_tables(),
     wait_for(tables).
 
-%% @private
-ensure_data_dir() ->
-    case filelib:ensure_dir(data_dir()) of
-        ok              -> ok;
-        {error, Reason} -> {error, Reason}
-    end.
-
-%% @doc Data dir
--spec(data_dir() -> string()).
-data_dir() -> mnesia:system_info(directory).
-
 %% @doc Ensure mnesia started
 -spec(ensure_started() -> ok | {error, any()}).
 ensure_started() ->
@@ -93,18 +81,161 @@ ensure_started() ->
 ensure_stopped() ->
     stopped = mnesia:stop(), wait_for(stop).
 
-%% @private
-%% @doc Init mnesia schema or tables.
-init_schema() ->
-    IsAlone = case mnesia:system_info(extra_db_nodes) of
-                  []    -> true;
-                  [_|_] -> false
-              end,
-    case (mria_rlog:role() =:= replicant) orelse IsAlone of
-        true ->
-            mnesia:create_schema([node()]);
-        false ->
+%% @doc Cluster with node.
+-spec(connect(node()) -> ok | {error, any()}).
+connect(Node) ->
+    case mnesia:change_config(extra_db_nodes, [Node]) of
+        {ok, [Node]} -> ok;
+        {ok, []}     -> {error, {failed_to_connect_node, Node}};
+        Error        -> Error
+    end.
+
+
+%%--------------------------------------------------------------------
+%% Cluster mnesia
+%%--------------------------------------------------------------------
+
+%% @doc Join the mnesia cluster
+-spec(join_cluster(node()) -> ok).
+join_cluster(Node) when Node =/= node() ->
+    case {mria_rlog:role(), mria_rlog:role(Node)} of
+        {core, core} ->
+            %% Stop mnesia and delete schema first
+            mria_rlog_lib:ensure_ok(ensure_stopped()),
+            mria_rlog_lib:ensure_ok(delete_schema()),
+            %% Start mnesia and cluster to node
+            mria_rlog_lib:ensure_ok(ensure_started()),
+            mria_rlog_lib:ensure_ok(connect(Node)),
+            mria_rlog_lib:ensure_ok(copy_schema(node())),
+            %% Copy tables
+            copy_tables(),
+            mria_rlog_lib:ensure_ok(wait_for(tables));
+        _ ->
             ok
+    end.
+
+%% @doc This node try leave the cluster
+-spec(leave_cluster() -> ok | {error, any()}).
+leave_cluster() ->
+    case running_nodes() -- [node()] of
+        [] ->
+            {error, node_not_in_cluster};
+        Nodes ->
+            case lists:any(fun(Node) ->
+                            case leave_cluster(Node) of
+                                ok               -> true;
+                                {error, _Reason} -> false
+                            end
+                          end, Nodes) of
+                true  -> ok;
+                false -> {error, {failed_to_leave, Nodes}}
+            end
+    end.
+
+%% @doc Remove node from mnesia cluster.
+-spec(remove_from_cluster(node()) -> ok | {error, any()}).
+remove_from_cluster(Node) when Node =/= node() ->
+    case {is_node_in_cluster(Node), is_running_db_node(Node)} of
+        {true, true} ->
+            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, ensure_stopped, [])),
+            mnesia_lib:del(extra_db_nodes, Node),
+            mria_rlog_lib:ensure_ok(del_schema_copy(Node)),
+            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
+        {true, false} ->
+            mnesia_lib:del(extra_db_nodes, Node),
+            mria_rlog_lib:ensure_ok(del_schema_copy(Node));
+            %mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
+        {false, _} ->
+            {error, node_not_in_cluster}
+    end.
+
+%% @doc Cluster Info
+-spec(cluster_info() -> map()).
+cluster_info() ->
+    Running = cluster_nodes(running),
+    Stopped = cluster_nodes(stopped),
+    #{running_nodes => lists:sort(Running),
+      stopped_nodes => lists:sort(Stopped)
+     }.
+
+%% @doc Cluster status of the node
+-spec(cluster_status(node()) -> running | stopped | false).
+cluster_status(Node) ->
+    case is_node_in_cluster(Node) of
+        true ->
+            case lists:member(Node, running_nodes()) of
+                true  -> running;
+                false -> stopped
+            end;
+        false -> false
+    end.
+
+-spec(cluster_view() -> {[node()], [node()]}).
+cluster_view() ->
+    list_to_tuple([lists:sort(cluster_nodes(Status))
+                   || Status <- [running, stopped]]).
+
+%% @doc Cluster nodes.
+-spec(cluster_nodes(all | running | stopped) -> [node()]).
+cluster_nodes(all) ->
+    Running = running_nodes(),
+    %% Note: stopped replicant nodes won't appear in the list
+    lists:usort(Running ++ mnesia:system_info(db_nodes));
+cluster_nodes(running) ->
+    running_nodes();
+cluster_nodes(stopped) ->
+    cluster_nodes(all) -- cluster_nodes(running).
+
+%% @doc Running nodes.
+-spec(running_nodes() -> list(node())).
+running_nodes() ->
+    case mria_rlog:role() of
+        core ->
+            CoreNodes = mnesia:system_info(running_db_nodes),
+            {Replicants0, _} = rpc:multicall(CoreNodes, mria_rlog_status, replicants, []),
+            Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
+            lists:usort(CoreNodes ++ Replicants);
+        replicant ->
+            case mria_rlog_status:shards_up() of
+                [Shard|_] ->
+                    {ok, CoreNode} = mria_rlog_status:upstream_node(Shard),
+                    case mria_rlog_lib:rpc_call(CoreNode, ?MODULE, running_nodes, []) of
+                        {badrpc, _} -> [];
+                        {badtcp, _} -> [];
+                        Result      -> Result
+                    end;
+                [] ->
+                    []
+            end
+    end.
+
+%% @doc Is this node in mnesia cluster?
+is_node_in_cluster() ->
+    mria_mnesia:cluster_nodes(all) =/= [node()].
+
+%% @doc Is the node in mnesia cluster?
+-spec(is_node_in_cluster(node()) -> boolean()).
+is_node_in_cluster(Node) when Node =:= node() ->
+    is_node_in_cluster();
+is_node_in_cluster(Node) ->
+    lists:member(Node, cluster_nodes(all)).
+
+%%--------------------------------------------------------------------
+%% Dir and Schema
+%%--------------------------------------------------------------------
+
+%% @doc Data dir
+-spec(data_dir() -> string()).
+data_dir() -> mnesia:system_info(directory).
+
+%% @doc Copy schema.
+copy_schema(Node) ->
+    case mnesia:change_table_copy_type(schema, Node, disc_copies) of
+        {atomic, ok} -> ok;
+        {aborted, {already_exists, schema, Node, disc_copies}} ->
+            ok;
+        {aborted, Error} ->
+            {error, Error}
     end.
 
 %% @private
@@ -145,16 +276,6 @@ copy_table(Name, RamOrDisc) ->
             ?LOG(warning, "Ignoring illegal attempt to create a table copy ~p on replicant node ~p", [Name, node()])
     end.
 
-%% @doc Copy schema.
-copy_schema(Node) ->
-    case mnesia:change_table_copy_type(schema, Node, disc_copies) of
-        {atomic, ok} -> ok;
-        {aborted, {already_exists, schema, Node, disc_copies}} ->
-            ok;
-        {aborted, Error} ->
-            {error, Error}
-    end.
-
 %% @doc Force to delete schema.
 delete_schema() ->
     mnesia:delete_schema([node()]).
@@ -167,160 +288,29 @@ del_schema_copy(Node) ->
     end.
 
 %%--------------------------------------------------------------------
-%% Cluster mnesia
+%% Internal functions
 %%--------------------------------------------------------------------
 
-%% @doc Join the mnesia cluster
--spec(join_cluster(node()) -> ok).
-join_cluster(Node) when Node =/= node() ->
-    case {mria_rlog:role(), mria_rlog:role(Node)} of
-        {core, core} ->
-            %% Stop mnesia and delete schema first
-            mria_rlog_lib:ensure_ok(ensure_stopped()),
-            mria_rlog_lib:ensure_ok(delete_schema()),
-            %% Start mnesia and cluster to node
-            mria_rlog_lib:ensure_ok(ensure_started()),
-            mria_rlog_lib:ensure_ok(connect(Node)),
-            mria_rlog_lib:ensure_ok(copy_schema(node())),
-            %% Copy tables
-            copy_tables(),
-            mria_rlog_lib:ensure_ok(wait_for(tables));
-        _ ->
-            ok
+%% @private
+ensure_data_dir() ->
+    case filelib:ensure_dir(data_dir()) of
+        ok              -> ok;
+        {error, Reason} -> {error, Reason}
     end.
-
-%% @doc Cluster Info
--spec(cluster_info() -> map()).
-cluster_info() ->
-    Running = cluster_nodes(running),
-    Stopped = cluster_nodes(stopped),
-    #{running_nodes => lists:sort(Running),
-      stopped_nodes => lists:sort(Stopped)
-     }.
-
-%% @doc Cluster status of the node
--spec(cluster_status(node()) -> running | stopped | false).
-cluster_status(Node) ->
-    case is_node_in_cluster(Node) of
-        true ->
-            case lists:member(Node, running_nodes()) of
-                true  -> running;
-                false -> stopped
-            end;
-        false -> false
-    end.
-
--spec(cluster_view() -> {[node()], [node()]}).
-cluster_view() ->
-    list_to_tuple([lists:sort(cluster_nodes(Status))
-                   || Status <- [running, stopped]]).
-
-%% @doc This node try leave the cluster
--spec(leave_cluster() -> ok | {error, any()}).
-leave_cluster() ->
-    case running_nodes() -- [node()] of
-        [] ->
-            {error, node_not_in_cluster};
-        Nodes ->
-            case lists:any(fun(Node) ->
-                            case leave_cluster(Node) of
-                                ok               -> true;
-                                {error, _Reason} -> false
-                            end
-                          end, Nodes) of
-                true  -> ok;
-                false -> {error, {failed_to_leave, Nodes}}
-            end
-    end.
-
--spec(leave_cluster(node()) -> ok | {error, any()}).
-leave_cluster(Node) when Node =/= node() ->
-    case is_running_db_node(Node) of
-        true ->
-            mria_rlog_lib:ensure_ok(ensure_stopped()),
-            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
-            mria_rlog_lib:ensure_ok(delete_schema());
-            %%mria_rlog_lib:ensure_ok(start()); %% restart?
-        false ->
-            {error, {node_not_running, Node}}
-    end.
-
-%% @doc Remove node from mnesia cluster.
--spec(remove_from_cluster(node()) -> ok | {error, any()}).
-remove_from_cluster(Node) when Node =/= node() ->
-    case {is_node_in_cluster(Node), is_running_db_node(Node)} of
-        {true, true} ->
-            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, ensure_stopped, [])),
-            mnesia_lib:del(extra_db_nodes, Node),
-            mria_rlog_lib:ensure_ok(del_schema_copy(Node)),
-            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
-        {true, false} ->
-            mnesia_lib:del(extra_db_nodes, Node),
-            mria_rlog_lib:ensure_ok(del_schema_copy(Node));
-            %mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
-        {false, _} ->
-            {error, node_not_in_cluster}
-    end.
-
-%% @doc Is this node in mnesia cluster?
-is_node_in_cluster() ->
-    mria_mnesia:cluster_nodes(all) =/= [node()].
-
-%% @doc Is the node in mnesia cluster?
--spec(is_node_in_cluster(node()) -> boolean()).
-is_node_in_cluster(Node) when Node =:= node() ->
-    is_node_in_cluster();
-is_node_in_cluster(Node) ->
-    lists:member(Node, cluster_nodes(all)).
 
 %% @private
-%% @doc Is running db node.
-is_running_db_node(Node) ->
-    lists:member(Node, running_nodes()).
-
-%% @doc Cluster with node.
--spec(connect(node()) -> ok | {error, any()}).
-connect(Node) ->
-    case mnesia:change_config(extra_db_nodes, [Node]) of
-        {ok, [Node]} -> ok;
-        {ok, []}     -> {error, {failed_to_connect_node, Node}};
-        Error        -> Error
+%% @doc Init mnesia schema or tables.
+init_schema() ->
+    IsAlone = case mnesia:system_info(extra_db_nodes) of
+                  []    -> true;
+                  [_|_] -> false
+              end,
+    case (mria_rlog:role() =:= replicant) orelse IsAlone of
+        true ->
+            mnesia:create_schema([node()]);
+        false ->
+            ok
     end.
-
-%% @doc Running nodes.
--spec(running_nodes() -> list(node())).
-running_nodes() ->
-    case mria_rlog:role() of
-        core ->
-            CoreNodes = mnesia:system_info(running_db_nodes),
-            {Replicants0, _} = rpc:multicall(CoreNodes, mria_rlog_status, replicants, []),
-            Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
-            lists:usort(CoreNodes ++ Replicants);
-        replicant ->
-            case mria_rlog_status:shards_up() of
-                [Shard|_] ->
-                    {ok, CoreNode} = mria_rlog_status:upstream_node(Shard),
-                    case mria_rlog_lib:rpc_call(CoreNode, ?MODULE, running_nodes, []) of
-                        {badrpc, _} -> [];
-                        {badtcp, _} -> [];
-                        Result      -> Result
-                    end;
-                [] ->
-                    []
-            end
-    end.
-
-%% @doc Cluster nodes.
--spec(cluster_nodes(all | running | stopped) -> [node()]).
-cluster_nodes(all) ->
-    Running = running_nodes(),
-    %% Note: stopped replicant nodes won't appear in the list
-    lists:usort(Running ++ mnesia:system_info(db_nodes));
-cluster_nodes(running) ->
-    running_nodes();
-cluster_nodes(stopped) ->
-    cluster_nodes(all) -- cluster_nodes(running).
-
 
 %% @doc Wait for mnesia to start, stop or tables ready.
 -spec(wait_for(start | stop | tables) -> ok | {error, Reason :: term()}).
@@ -341,3 +331,20 @@ wait_for(stop) ->
 wait_for(tables) ->
     Tables = mnesia:system_info(local_tables),
     mria:wait_for_tables(Tables).
+
+%% @private
+%% @doc Is running db node.
+is_running_db_node(Node) ->
+    lists:member(Node, running_nodes()).
+
+-spec(leave_cluster(node()) -> ok | {error, any()}).
+leave_cluster(Node) when Node =/= node() ->
+    case is_running_db_node(Node) of
+        true ->
+            mria_rlog_lib:ensure_ok(ensure_stopped()),
+            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
+            mria_rlog_lib:ensure_ok(delete_schema());
+            %%mria_rlog_lib:ensure_ok(start()); %% restart?
+        false ->
+            {error, {node_not_running, Node}}
+    end.
