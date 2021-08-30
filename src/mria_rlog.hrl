@@ -8,10 +8,13 @@
 
 -define(schema, mria_rlog_schema).
 
+%% Note to self: don't forget to update all the match specs in
+%% `mria_rlog_schema' module when changing fields in this record
 -record(?schema,
-        { mnesia_table :: mria:table()
-        , shard        :: mria_rlog:shard()
-        , config       :: mria:table_config() | '$2' | '_' %% TODO: fix type
+        { mnesia_table
+        , shard
+        , storage
+        , config
         }).
 
 -define(LOCAL_CONTENT_SHARD, undefined).

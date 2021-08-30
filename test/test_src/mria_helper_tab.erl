@@ -34,11 +34,11 @@
 
 mnesia(boot) ->
     ok = mria:create_table(?TABLE, [{type, ordered_set},
-                                           {rlog_shard, test_shard},
-                                           {ram_copies, [node()]},
-                                           {record_name, ?TABLE},
-                                           {attributes, record_info(fields, ?TABLE)}
-                                          ]);
+                                    {rlog_shard, test_shard},
+                                    {storage, ram_copies},
+                                    {record_name, ?TABLE},
+                                    {attributes, record_info(fields, ?TABLE)}
+                                   ]);
 mnesia(copy) ->
     ok = mria_mnesia:copy_table(?TABLE, ram_copies).
 

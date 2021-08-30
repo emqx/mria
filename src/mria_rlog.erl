@@ -110,7 +110,7 @@ ensure_shard(Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [{mria:table(), mria:table_config()}]
+          , [mria_rlog_schema:entry()]
           }
         | {badrpc | badtcp, term()}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->

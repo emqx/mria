@@ -38,13 +38,12 @@ ensure_table(Shard) ->
     Opts = [ {type, ordered_set}
            , {record_name, rlog}
            , {attributes, record_info(fields, rlog)}
-           , {null_copies, [node()]}
            ],
     ?tp(info, creating_rlog_tab,
         #{ node => node()
          , shard => Shard
          }),
-    ok = mria:create_table_internal(Shard, Opts),
+    ok = mria:create_table_internal(Shard, null_copies, Opts),
     ok = mria_mnesia:copy_table(Shard, null_copies).
 
 %% @doc Write a transaction log.

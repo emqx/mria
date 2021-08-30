@@ -82,7 +82,7 @@ probe(Node, Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [{mria:table(), mria:table_config()}]
+          , [mria_rlog_schema:entry()]
           }.
 subscribe(Shard, Subscriber, Checkpoint) ->
     gen_server:call(Shard, {subscribe, Subscriber, Checkpoint}, infinity).

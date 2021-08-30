@@ -38,17 +38,17 @@
 
 mnesia(boot) ->
     ok = mria:create_table(test_tab, [{type, ordered_set},
-                                             {rlog_shard, test_shard},
-                                             {ram_copies, [node()]},
-                                             {record_name, test_tab},
-                                             {attributes, record_info(fields, test_tab)}
-                                            ]),
+                                      {rlog_shard, test_shard},
+                                      {storage, ram_copies},
+                                      {record_name, test_tab},
+                                      {attributes, record_info(fields, test_tab)}
+                                     ]),
     ok = mria:create_table(test_bag, [{type, bag},
-                                             {rlog_shard, test_shard},
-                                             {ram_copies, [node()]},
-                                             {record_name, test_bag},
-                                             {attributes, record_info(fields, test_bag)}
-                                            ]);
+                                      {rlog_shard, test_shard},
+                                      {storage, ram_copies},
+                                      {record_name, test_bag},
+                                      {attributes, record_info(fields, test_bag)}
+                                     ]);
 mnesia(copy) ->
     ok = mria_mnesia:copy_table(test_tab, ram_copies),
     ok = mria_mnesia:copy_table(test_bag, ram_copies).

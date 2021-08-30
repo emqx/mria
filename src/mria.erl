@@ -56,7 +56,7 @@
         , create_table/2
         , wait_for_tables/1
 
-        , create_table_internal/2
+        , create_table_internal/3
         ]).
 
 -define(IS_MON_TYPE(T), T == membership orelse T == partition).
@@ -69,11 +69,14 @@
                    partitions    := list(node())
                   }).
 
+-type storage() :: ram_copies | disc_copies | disc_only_copies | null_copies | atom().
+
 -export_type([info_key/0, infos/0]).
 
 -export_type([ t_result/1
              , backend/0
              , table/0
+             , storage/0
              , table_config/0
              ]).
 
@@ -188,27 +191,33 @@ local_content_shard() ->
     ?LOCAL_CONTENT_SHARD.
 
 %% @doc Create a table.
--spec(create_table(Name:: table(), TabDef :: list()) -> ok | {error, any()}).
+-spec(create_table(table(), Options :: list()) -> ok | {error, any()}).
 create_table(Name, TabDef) ->
     ?tp(debug, mria_mnesia_create_table,
         #{ name    => Name
          , options => TabDef
          }),
-    MnesiaTabDef = lists:keydelete(rlog_shard, 1, TabDef),
+    Storage = proplists:get_value(storage, TabDef, ram_copies),
+    MnesiaTabDef = lists:keydelete(rlog_shard, 1, lists:keydelete(storage, 1, TabDef)),
     case {proplists:get_value(rlog_shard, TabDef, ?LOCAL_CONTENT_SHARD),
           proplists:get_value(local_content, TabDef, false)} of
         {?LOCAL_CONTENT_SHARD, true} ->
             %% Local content table:
-            create_table_internal(Name, MnesiaTabDef);
+            create_table_internal(Name, Storage, MnesiaTabDef);
         {?LOCAL_CONTENT_SHARD, false} ->
             ?LOG(critical, "Table ~p doesn't belong to any shard", [Name]),
             error(badarg);
         {Shard, false} ->
-            case create_table_internal(Name, MnesiaTabDef) of
+            case create_table_internal(Name, Storage, MnesiaTabDef) of
                 ok ->
                     %% It's important to add the table to the shard
                     %% _after_ we actually create it:
-                    mria_rlog_schema:add_table(Shard, Name, MnesiaTabDef);
+                    Entry = #?schema{ mnesia_table = Name
+                                    , shard        = Shard
+                                    , storage      = Storage
+                                    , config       = MnesiaTabDef
+                                    },
+                    mria_rlog_schema:add_entry(Entry);
                 Err ->
                     Err
             end;
@@ -231,8 +240,16 @@ wait_for_tables(Tables) ->
     end.
 
 %% @doc Create mnesia table (skip RLOG stuff)
--spec(create_table_internal(Name:: atom(), TabDef :: list()) -> ok | {error, any()}).
-create_table_internal(Name, TabDef) ->
+-spec(create_table_internal(table(), storage(), TabDef :: list()) ->
+             ok | {error, any()}).
+create_table_internal(Name, Storage, Params) ->
+    %% Note: it's impossible to check storage type due to possiblity
+    %% of registering custom backends
+    ClusterNodes = case mria_rlog_config:role() of
+                       core      -> mnesia:system_info(db_nodes);
+                       replicant -> [node()]
+                   end,
+    TabDef = [{Storage, ClusterNodes}|Params],
     mria_rlog_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).

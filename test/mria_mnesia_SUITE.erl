@@ -35,10 +35,12 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
-init_per_testcase(_TestCase, Config) ->
+init_per_testcase(TestCase, Config) ->
+    logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
     Config.
 
 end_per_testcase(TestCase, Config) ->
+    logger:notice(asciiart:visible($%, "Complete ~p", [TestCase])),
     mria_ct:cleanup(TestCase),
     snabbkaffe:stop(),
     Config.
@@ -50,7 +52,7 @@ t_create_del_table(_) ->
     try
         mria:start(),
         ok = mria:create_table(kv_tab, [
-                    {ram_copies, [node()]},
+                    {storage, ram_copies},
                     {rlog_shard, test_shard},
                     {record_name, kv_tab},
                     {attributes, record_info(fields, kv_tab)},
@@ -184,6 +186,7 @@ t_rlog_smoke_test(_) ->
 t_transaction_on_replicant(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:stabilize(1000),
@@ -204,6 +207,7 @@ t_transaction_on_replicant(_) ->
 t_abort(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),
@@ -232,6 +236,7 @@ t_core_node_competing_writes(_) ->
     CounterKey = counter,
     NOper = 1000,
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),
@@ -258,6 +263,7 @@ t_core_node_competing_writes(_) ->
 t_rlog_clear_table(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),
@@ -277,6 +283,7 @@ t_rlog_clear_table(_) ->
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),
@@ -313,7 +320,8 @@ t_rlog_dirty_operations(_) ->
 t_local_content(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
-      try
+       #{timetrap => 30000},
+       try
           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
           %% Create the table on all nodes:
           {[ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
@@ -394,6 +402,7 @@ t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
+       #{timetrap => 30000},
        try
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 3
                           , #{?snk_kind := state_change, to := normal}
@@ -419,6 +428,7 @@ t_core_node_down(_) ->
                              , mria_mnesia_test_util:common_env()
                              ),
     ?check_trace(
+       #{timetrap => 30000},
        try
            [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
            {ok, _} = ?block_until(#{ ?snk_kind := mria_rlog_status_change
@@ -492,6 +502,7 @@ t_dirty_reads(_) ->
 t_rlog_schema(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),

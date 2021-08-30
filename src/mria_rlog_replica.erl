@@ -298,9 +298,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                   , agent            = ConnPid
                   , remote_core_node = Node
                   },
-            {Tables, _} = lists:unzip(TableSpecs),
-            mria_rlog_config:load_shard_config(Shard, Tables),
-            ok = mria_rlog_schema:converge(Shard, TableSpecs),
+            post_connect(Shard, TableSpecs),
             {next_state, ?bootstrap, D};
         {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs} ->
             D = #d{ shard            = Shard
@@ -308,9 +306,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                   , remote_core_node = Node
                   , checkpoint       = Checkpoint
                   },
-            {Tables, _} = lists:unzip(TableSpecs),
-            mria_rlog_config:load_shard_config(Shard, Tables),
-            ok = mria_rlog_schema:converge(Shard, TableSpecs),
+            post_connect(Shard, TableSpecs),
             {next_state, ?normal, D};
         {error, Err} ->
             ?tp(debug, "Replicant couldn't connect to the upstream node",
@@ -325,7 +321,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                 , boolean()
                 , node()
                 , pid()
-                , [{mria:table(), mria:table_config()}]
+                , [mria_rlog_schema:entry()]
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
@@ -336,7 +332,7 @@ try_connect(Shard, Checkpoint) ->
                 , boolean()
                 , node()
                 , pid()
-                , [{mria:table(), mria:table_config()}]
+                , [mria_rlog_schema:entry()]
                 }
               | {error, term()}.
 try_connect([], _, _) ->
@@ -442,3 +438,9 @@ set_where_to_read(Node, Shard) ->
         #{ source => Node
          , shard  => Shard
          }).
+
+-spec post_connect(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
+post_connect(Shard, TableSpecs) ->
+    Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
+    mria_rlog_config:load_shard_config(Shard, Tables),
+    ok = mria_rlog_schema:converge(Shard, TableSpecs).
