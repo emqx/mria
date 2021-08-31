@@ -41,7 +41,7 @@ ensure_table(Shard) ->
 
 %% @doc Write a transaction log.
 -spec write(mria_rlog:shard(), mria_rlog_lib:txid(), [mria_rlog_lib:op(),...]) -> ok.
-write(Shard, Key, [_ | _] = Ops) ->
+write(Shard, Key, Ops) ->
     Log = #rlog{ key = Key
                , ops = Ops
                },

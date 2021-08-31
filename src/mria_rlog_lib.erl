@@ -260,7 +260,7 @@ transactional_wrapper(Shard, Fun, Args) ->
                 ensure_no_ops_outside_shard(TxStore, Shard),
                 Key = mria_rlog_lib:make_key(TID),
                 Ops = dig_ops_for_shard(TxStore, Shard),
-                mnesia:write(Shard, #rlog{key = Key, ops = Ops}, write),
+                mria_rlog_tab:write(Shard, Key, Ops),
                 Result
         end,
     mnesia:transaction(TxFun).
