@@ -34,7 +34,7 @@ start(_Type, _Args) ->
     ?tp(notice, "Initializing RLOG schema", #{}),
     mria_rlog_schema:init(),
     ?tp(notice, "Converging schema", #{}),
-    mria_mnesia:init_tables(),
+    mria_mnesia:converge_schema(),
     ?tp(notice, "Starting shards", #{}),
     Sup = mria_sup:start_link(),
     ?tp(notice, "Mria is running", #{}),

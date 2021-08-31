@@ -19,19 +19,12 @@
 -module(mria_rlog_tab).
 
 %% Mnesia bootstrap
--export([mnesia/1, ensure_table/1]).
+-export([ensure_table/1]).
 
 -export([write/3]).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
-
--boot_mnesia({mnesia, [boot]}).
--copy_mnesia({mnesia, [copy]}).
-
-%% @doc Mnesia bootstrap.
-mnesia(_BootType) ->
-    {ok, _} = mria_mnesia_null_storage:register().
 
 %% @doc Create or copy shard table
 ensure_table(Shard) ->

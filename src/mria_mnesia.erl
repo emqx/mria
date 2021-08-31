@@ -27,7 +27,7 @@
 -export([ init/0
 
           %% TODO: remove it
-        , init_tables/0
+        , converge_schema/0
 
         , ensure_stopped/0
         , connect/1
@@ -231,17 +231,13 @@ copy_schema(Node) ->
 
 %% @private
 %% @doc Init mnesia tables.
-init_tables() ->
+converge_schema() ->
     case mria_rlog_schema:create_table_type() of
         create ->
-            create_tables();
+            ok;
         copy ->
             mria_rlog_schema:converge_core()
     end.
-
-%% @doc Create mnesia tables.
-create_tables() ->
-    mria_boot:apply_module_attributes(boot_mnesia).
 
 %% @doc Copy mnesia table.
 -spec(copy_table(Name :: atom()) -> ok).
@@ -294,7 +290,7 @@ init_schema() ->
     end.
 
 %% @doc Wait for mnesia to start, stop or tables ready.
--spec(wait_for(start | stop) -> ok | {error, Reason :: term()}).
+-spec(wait_for(start | stop | tables) -> ok | {error, Reason :: term()}).
 wait_for(start) ->
     case mnesia:system_info(is_running) of
         yes      -> ok;
