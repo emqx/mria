@@ -16,7 +16,7 @@
 
 -module(mria_mnesia_test_util).
 
--export([stabilize/1, wait_shards/1, wait_shards/2, common_env/0,
+-export([stabilize/1, wait_tables/1, common_env/0,
          compare_table_contents/2, wait_full_replication/1,
          wait_full_replication/2]).
 
@@ -37,20 +37,21 @@ stabilize(Timeout) ->
             stabilize(Timeout)
     end.
 
-
-wait_shards(Nodes) ->
-    wait_shards(Nodes, [test_shard]).
-
-wait_shards(Nodes, Shards) ->
-    [begin
-         rpc:async_call(Node, mria_rlog, wait_for_shards, [Shards, infinity]),
-         {ok, _} = ?block_until(#{ ?snk_kind := "Shard fully up"
-                                 , shard     := Shard
-                                 , node      := Node
-                                 })
-     end
-     || Shard <- Shards, Node <- Nodes],
-    ok.
+wait_tables(Nodes) ->
+    [?block_until(#{?snk_kind := mria_ct_cluster_join, node := Node})
+     || Node <- Nodes],
+    Tables = [test_tab, test_bag, mria_helper_tab],
+    {Rep, BadNodes} = rpc:multicall(Nodes, mria, wait_for_tables, [Tables], infinity),
+    case lists:all(fun(A) -> A =:= ok end, Rep) andalso BadNodes =:= [] of
+        true ->
+            ok;
+        false ->
+            ?panic(failed_waiting_for_test_tables,
+                   #{ badnodes => BadNodes
+                    , replies  => Rep
+                    , nodes    => Nodes
+                    })
+    end.
 
 compare_table_contents(_, []) ->
     ok;

@@ -83,9 +83,9 @@ core_nodes() ->
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
 wait_for_shards(Shards0, Timeout) ->
-    Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
     case mria_rlog_config:backend() of
         rlog ->
+            Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
             lists:foreach(fun ensure_shard/1, Shards),
             mria_rlog_status:wait_for_shards(Shards, Timeout);
         mnesia ->

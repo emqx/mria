@@ -51,7 +51,7 @@ prop() ->
        #{timetrap => 10000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
-           ok = mria_mnesia_test_util:wait_shards(Nodes),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
            {History, State, Result} = run_commands(?MODULE, Cmds),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            [check_state(Cmds, State, Node) || Node <- Nodes],

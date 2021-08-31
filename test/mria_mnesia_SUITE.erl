@@ -154,9 +154,8 @@ t_rlog_smoke_test(_) ->
            ?force_ordering(#{?snk_kind := state_change, to := normal}, #{?snk_kind := trans_gen_counter_update, value := 25}),
 
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
-           ok = mria_mnesia_test_util:wait_shards([N1, N2]),
+           ok = mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Generate some transactions:
-           ?tp(notice, "Assuming mria started", #{}),
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, 30]),
            mria_mnesia_test_util:stabilize(1000),
@@ -212,7 +211,7 @@ t_abort(_) ->
        #{timetrap => 30000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            [begin
                 RetMnesia = rpc:call(Node, mria_transaction_gen, abort, [mnesia, AbortKind]),
                 RetMria = rpc:call(Node, mria_transaction_gen, abort, [mria_mnesia, AbortKind]),
@@ -241,7 +240,7 @@ t_core_node_competing_writes(_) ->
        #{timetrap => 30000},
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            spawn(fun() ->
                          rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NOper]),
                          ?tp(n1_counter_done, #{})
@@ -268,7 +267,7 @@ t_rlog_clear_table(_) ->
        #{timetrap => 30000},
        try
            Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            rpc:call(N1, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
@@ -288,7 +287,7 @@ t_rlog_dirty_operations(_) ->
        #{timetrap => 30000},
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, 1, 1}]),
            ok = rpc:call(N2, mria, dirty_write, [{test_tab, 2, 2}]),
            ok = rpc:call(N2, mria, dirty_write, [{test_tab, 3, 3}]),
@@ -478,7 +477,7 @@ t_dirty_reads(_) ->
            %% Delay shard startup:
            ?force_ordering(#{?snk_kind := read1}, #{?snk_kind := state_change, to := local_replay}),
            [N1, N2] = mria_ct:start_cluster(mria_async, Cluster),
-           mria_mnesia_test_util:wait_shards([N1]),
+           mria_mnesia_test_util:wait_tables([N1]),
            %% Insert data:
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
            %% Ensure that the replicant still reads the correct value by doing an RPC to the core node:
@@ -507,7 +506,7 @@ t_rlog_schema(_) ->
        #{timetrap => 30000},
        try
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            %% Add a few new tables to the shard
            [?assertMatch( {[ok, ok], []}
                         , rpc:multicall([N1, N2], mria, create_table,
@@ -595,11 +594,11 @@ do_cluster_benchmark(#{ backend    := Backend
     [#{node := First}|_] = Cluster,
     try
         Nodes = mria_ct:start_cluster(node, Cluster),
-        mria_mnesia_test_util:wait_shards(Nodes),
+        mria_mnesia_test_util:wait_tables(Nodes),
         lists:foldl(
           fun(Node, Cnt) ->
                   mria_ct:start_mria(Node),
-                  mria_mnesia_test_util:wait_shards([Node]),
+                  mria_mnesia_test_util:wait_tables([Node]),
                   mria_mnesia_test_util:stabilize(100),
                   ok = rpc:call(First, mria_transaction_gen, benchmark,
                                 [ResultFile, Config, Cnt]),

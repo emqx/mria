@@ -202,7 +202,9 @@ do_trans_verify(Delay) ->
               case mnesia:all_keys(test_tab) of
                   [] ->
                       %% The replica hasn't got any data yet, ignore.
-                      timer:sleep(Delay);
+                      %% FIXME: https://github.com/emqx/mria/issues/2
+                      timer:sleep(Delay),
+                      true;
                   _ ->
                       Sum = sum_keys(),
                       timer:sleep(Delay),

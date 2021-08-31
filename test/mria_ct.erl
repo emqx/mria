@@ -111,6 +111,7 @@ start_mria(#{node := Node, join_to := JoinTo}) ->
                           , error   => Err
                           })
     end,
+    ?tp(mria_ct_cluster_join, #{node => Node}),
     %% TODO: Create table once only
     rpc:call(Node, mria_transaction_gen, init, []),
     Node.

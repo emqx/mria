@@ -47,7 +47,7 @@ t_agent_restart(_) ->
     ?check_trace(
        try
            Nodes = [N1, _N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            mria_mnesia_test_util:stabilize(1000),
            %% Everything in mria agent will crash
            CrashRef = ?inject_crash( #{?snk_meta := #{domain := [mria, rlog, agent|_]}}
@@ -71,7 +71,7 @@ t_rand_error_injection(_) ->
     ?check_trace(
        try
            Nodes = [N1, _N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            mria_mnesia_test_util:stabilize(1000),
            %% Everything in mria RLOG will crash
            CrashRef = ?inject_crash( #{?snk_meta := #{domain := [mria, rlog|_]}}
@@ -95,7 +95,7 @@ t_sum_verify(_) ->
     ?check_trace(
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            %% Everything in mria RLOG will crash
            ?inject_crash( #{?snk_meta := #{domain := [mria, rlog|_]}}
                         , snabbkaffe_nemesis:random_crash(0.1)

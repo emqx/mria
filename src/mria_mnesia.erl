@@ -53,6 +53,7 @@
         , del_schema_copy/1
         , copy_table/1
         , copy_table/2
+        , wait_for_tables/1
         ]).
 
 -deprecated({copy_table, 1, next_major_release}).
@@ -251,6 +252,21 @@ copy_table(Name, Storage) ->
             mria_rlog_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
         replicant ->
             ?LOG(warning, "Ignoring illegal attempt to create a table copy ~p on replicant node ~p", [Name, node()])
+    end.
+
+-spec wait_for_tables([mria:table()]) -> ok | {error, _Reason} | {timeout, [mria:table()]}.
+wait_for_tables(Tables) ->
+    case mnesia:wait_for_tables(Tables, 30000) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {error, Reason};
+        {timeout, BadTables} ->
+            logger:warning("~p: still waiting for table(s): ~p", [?MODULE, BadTables]),
+            %% lets try to force reconnect all the db_nodes to get schema merged,
+            %% mnesia_controller is smart enough to not force reconnect the node that is already connected.
+            mnesia_controller:connect_nodes(mnesia:system_info(db_nodes)),
+            wait_for_tables(BadTables)
     end.
 
 %% @doc Force to delete schema.

@@ -243,15 +243,14 @@ create_table(Name, TabDef) ->
 
 -spec wait_for_tables([table()]) -> ok | {error, _Reason} | {timeout, [table()]}.
 wait_for_tables(Tables) ->
-    case mnesia:wait_for_tables(Tables, 30000) of
-        ok                   -> ok;
-        {error, Reason}      -> {error, Reason};
-        {timeout, BadTables} ->
-            logger:warning("~p: still waiting for table(s): ~p", [?MODULE, BadTables]),
-            %% lets try to force reconnect all the db_nodes to get schema merged,
-            %% mnesia_controller is smart enough to not force reconnect the node that is already connected.
-            mnesia_controller:connect_nodes(mnesia:system_info(db_nodes)),
-            wait_for_tables(BadTables)
+    case mria_mnesia:wait_for_tables(Tables) of
+        ok ->
+            Shards = lists:usort(lists:map(fun mria_rlog_config:shard_rlookup/1, Tables))
+                        -- [undefined],
+            mria_rlog:wait_for_shards(Shards, infinity),
+            ok;
+        Err ->
+            Err
     end.
 
 %% @doc Create mnesia table (skip RLOG stuff)
