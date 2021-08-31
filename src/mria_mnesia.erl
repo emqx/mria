@@ -107,8 +107,8 @@ join_cluster(Node) when Node =/= node() ->
             mria_rlog_lib:ensure_ok(ensure_started()),
             mria_rlog_lib:ensure_ok(connect(Node)),
             mria_rlog_lib:ensure_ok(copy_schema(node())),
+            mria_rlog_schema:converge_core(),
             %% Copy tables
-            copy_tables(),
             mria_rlog_lib:ensure_ok(wait_for(tables));
         _ ->
             ok
@@ -251,16 +251,12 @@ init_tables() ->
             create_tables();
         false ->
             mria_rlog_schema:init(copy),
-            copy_tables()
+            mria_rlog_schema:converge_core()
     end.
 
 %% @doc Create mnesia tables.
 create_tables() ->
     mria_boot:apply_module_attributes(boot_mnesia).
-
-%% @doc Copy mnesia tables.
-copy_tables() ->
-    mria_boot:apply_module_attributes(copy_mnesia).
 
 %% @doc Copy mnesia table.
 -spec(copy_table(Name :: atom()) -> ok).

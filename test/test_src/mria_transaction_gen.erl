@@ -17,13 +17,10 @@
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
--boot_mnesia({mnesia, [boot]}).
--copy_mnesia({mnesia, [copy]}).
-
 -export([ init/0
+        , create_data/0
         , delete/1
         , abort/2
-        , mnesia/1
         , benchmark/3
         , counter/2
         , counter/3
@@ -36,7 +33,8 @@
 
 -record(test_bag, {key, val}).
 
-mnesia(boot) ->
+init() ->
+    mria_helper_tab:init(),
     ok = mria:create_table(test_tab, [{type, ordered_set},
                                       {rlog_shard, test_shard},
                                       {storage, ram_copies},
@@ -48,17 +46,15 @@ mnesia(boot) ->
                                       {storage, ram_copies},
                                       {record_name, test_bag},
                                       {attributes, record_info(fields, test_bag)}
-                                     ]);
-mnesia(copy) ->
-    ok = mria_mnesia:copy_table(test_tab, ram_copies),
-    ok = mria_mnesia:copy_table(test_bag, ram_copies).
+                                     ]),
+    mria_rlog:wait_for_shards([test_shard], infinity).
 
 verify_trans_sum(N, Delay) ->
     mnesia:wait_for_tables([test_tab], 10000),
     do_trans_gen(),
     verify_trans_sum_loop(N, Delay).
 
-init() ->
+create_data() ->
     mria:transaction(
       test_shard,
       fun() ->

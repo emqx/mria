@@ -155,6 +155,7 @@ converge_core() ->
     %% `create_table', they add us in the list:
     DbNodes = [_, _ | _] = mnesia:system_info(db_nodes), % assert
     true = lists:member(node(), DbNodes),
+    ?tp(info, "Converging RLOG schema", #{}),
     TabDefs = ets:tab2list(?schema),
     lists:foreach(fun ensure_table_copy/1, TabDefs).
 

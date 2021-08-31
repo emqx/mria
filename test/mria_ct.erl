@@ -134,6 +134,7 @@ start_slave(node, Name, Env) ->
 start_slave(mria, Name, Env) ->
     Node = start_slave(node, Name, Env),
     ok = rpc:call(Node, mria, start, []),
+    ok = rpc:call(Node, mria_transaction_gen, init, []),
     Node.
 
 wait_running(Node) ->

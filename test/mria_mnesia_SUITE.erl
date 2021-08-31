@@ -156,7 +156,7 @@ t_rlog_smoke_test(_) ->
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
            mria_mnesia_test_util:wait_shards([N1, N2]),
            %% Generate some transactions:
-           {atomic, _} = rpc:call(N2, mria_transaction_gen, init, []),
+           {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, 30]),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
@@ -190,7 +190,7 @@ t_transaction_on_replicant(_) ->
        try
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:stabilize(1000),
-           {atomic, _} = rpc:call(N2, mria_transaction_gen, init, []),
+           {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000), mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            {atomic, KeyVals} = rpc:call(N2, mria_transaction_gen, ro_read_all_keys, []),
            {atomic, KeyVals} = rpc:call(N1, mria_transaction_gen, ro_read_all_keys, []),
@@ -267,7 +267,7 @@ t_rlog_clear_table(_) ->
        try
            Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_shards(Nodes),
-           rpc:call(N1, mria_transaction_gen, init, []),
+           rpc:call(N1, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ?assertMatch({atomic, ok}, rpc:call(N1, mria, clear_table, [test_tab])),

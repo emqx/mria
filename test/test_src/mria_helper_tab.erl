@@ -18,29 +18,24 @@
 %% special marker tab that we're using for storing test metadata.
 -module(mria_helper_tab).
 
--export([ mnesia/1
+-export([ init/0
         , wait_full_replication/1
         , wait_full_replication/2
         ]).
 
 -define(TABLE, ?MODULE).
 
--boot_mnesia({mnesia, [boot]}).
--copy_mnesia({mnesia, [copy]}).
-
 -record(?TABLE, {key, val}).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
-mnesia(boot) ->
+init() ->
     ok = mria:create_table(?TABLE, [{type, ordered_set},
                                     {rlog_shard, test_shard},
                                     {storage, ram_copies},
                                     {record_name, ?TABLE},
                                     {attributes, record_info(fields, ?TABLE)}
-                                   ]);
-mnesia(copy) ->
-    ok = mria_mnesia:copy_table(?TABLE, ram_copies).
+                                   ]).
 
 wait_full_replication(Cluster) ->
     wait_full_replication(Cluster, infinity).
