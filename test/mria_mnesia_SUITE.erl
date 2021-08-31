@@ -154,8 +154,9 @@ t_rlog_smoke_test(_) ->
            ?force_ordering(#{?snk_kind := state_change, to := normal}, #{?snk_kind := trans_gen_counter_update, value := 25}),
 
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
-           mria_mnesia_test_util:wait_shards([N1, N2]),
+           ok = mria_mnesia_test_util:wait_shards([N1, N2]),
            %% Generate some transactions:
+           ?tp(notice, "Assuming mria started", #{}),
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, 30]),
            mria_mnesia_test_util:stabilize(1000),
@@ -169,7 +170,8 @@ t_rlog_smoke_test(_) ->
            mria_ct:stop_slave(N3),
            Nodes
        after
-           mria_ct:teardown_cluster(Cluster)
+           mria_ct:teardown_cluster(Cluster),
+           ok
        end,
        fun([N1, N2, N3], Trace) ->
                %% Ensure that the nodes assumed designated roles:

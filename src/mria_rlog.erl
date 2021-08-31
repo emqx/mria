@@ -17,9 +17,7 @@
 %% API and management functions for asynchronous Mnesia replication
 -module(mria_rlog).
 
--export([ init/0
-
-        , status/0
+-export([ status/0
 
         , role/0
         , role/1
@@ -47,9 +45,6 @@
 -type shard_config() :: #{ tables := [mria:table()]
                          , match_spec := ets:match_spec()
                          }.
-
-init() ->
-    mria_rlog_config:load_config().
 
 status() ->
     Backend = backend(),

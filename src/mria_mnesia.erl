@@ -24,8 +24,11 @@
 
 
 %% Start and stop mnesia
--export([ start/0
-        , ensure_started/0
+-export([ init/0
+
+          %% TODO: remove it
+        , init_tables/0
+
         , ensure_stopped/0
         , connect/1
         ]).
@@ -58,20 +61,11 @@
 %% Start and init mnesia
 %%--------------------------------------------------------------------
 
-%% @doc Start mnesia database
--spec(start() -> ok | {error, term()}).
-start() ->
+%% @doc Initialize Mnesia
+-spec init() -> ok | {error, _}.
+init() ->
     mria_rlog_lib:ensure_ok(ensure_data_dir()),
     mria_rlog_lib:ensure_ok(init_schema()),
-    ok = mnesia:start(),
-    {ok, _} = mria_mnesia_null_storage:register(),
-    ok = mria_rlog:init(),
-    init_tables(),
-    wait_for(tables).
-
-%% @doc Ensure mnesia started
--spec(ensure_started() -> ok | {error, any()}).
-ensure_started() ->
     ok = mnesia:start(),
     {ok, _} = mria_mnesia_null_storage:register(),
     wait_for(start).
@@ -79,7 +73,8 @@ ensure_started() ->
 %% @doc Ensure mnesia stopped
 -spec(ensure_stopped() -> ok | {error, any()}).
 ensure_stopped() ->
-    stopped = mnesia:stop(), wait_for(stop).
+    stopped = mnesia:stop(),
+    wait_for(stop).
 
 %% @doc Cluster with node.
 -spec(connect(node()) -> ok | {error, any()}).
@@ -90,12 +85,11 @@ connect(Node) ->
         Error        -> Error
     end.
 
-
 %%--------------------------------------------------------------------
 %% Cluster mnesia
 %%--------------------------------------------------------------------
 
-%% @doc Join the mnesia cluster
+%% @doc Add the node to the cluster schema
 -spec(join_cluster(node()) -> ok).
 join_cluster(Node) when Node =/= node() ->
     case {mria_rlog:role(), mria_rlog:role(Node)} of
@@ -104,12 +98,9 @@ join_cluster(Node) when Node =/= node() ->
             mria_rlog_lib:ensure_ok(ensure_stopped()),
             mria_rlog_lib:ensure_ok(delete_schema()),
             %% Start mnesia and cluster to node
-            mria_rlog_lib:ensure_ok(ensure_started()),
+            mria_rlog_lib:ensure_ok(init()),
             mria_rlog_lib:ensure_ok(connect(Node)),
-            mria_rlog_lib:ensure_ok(copy_schema(node())),
-            mria_rlog_schema:converge_core(),
-            %% Copy tables
-            mria_rlog_lib:ensure_ok(wait_for(tables));
+            mria_rlog_lib:ensure_ok(copy_schema(node()));
         _ ->
             ok
     end.
@@ -241,16 +232,10 @@ copy_schema(Node) ->
 %% @private
 %% @doc Init mnesia tables.
 init_tables() ->
-    IsAlone = case mnesia:system_info(extra_db_nodes) of
-                  []    -> true;
-                  [_|_] -> false
-              end,
-    case (mria_rlog:role() =:= replicant) orelse IsAlone of
-        true ->
-            mria_rlog_schema:init(boot),
+    case mria_rlog_schema:create_table_type() of
+        create ->
             create_tables();
-        false ->
-            mria_rlog_schema:init(copy),
+        copy ->
             mria_rlog_schema:converge_core()
     end.
 
@@ -309,7 +294,7 @@ init_schema() ->
     end.
 
 %% @doc Wait for mnesia to start, stop or tables ready.
--spec(wait_for(start | stop | tables) -> ok | {error, Reason :: term()}).
+-spec(wait_for(start | stop) -> ok | {error, Reason :: term()}).
 wait_for(start) ->
     case mnesia:system_info(is_running) of
         yes      -> ok;
@@ -323,10 +308,7 @@ wait_for(stop) ->
         yes      -> {error, mnesia_unexpectedly_running};
         starting -> {error, mnesia_unexpectedly_starting};
         stopping -> timer:sleep(1000), wait_for(stop)
-    end;
-wait_for(tables) ->
-    Tables = mnesia:system_info(local_tables),
-    mria:wait_for_tables(Tables).
+    end.
 
 %% @private
 %% @doc Is running db node.

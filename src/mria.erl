@@ -104,18 +104,7 @@
 
 -spec(start() -> ok).
 start() ->
-    ?tp(info, "Starting mria", #{}),
-    application:load(mria),
-    case mria_mnesia:start() of
-        ok -> ok;
-        {error, {timeout, Tables}} ->
-            logger:error("Mnesia wait_for_tables timeout: ~p", [Tables]),
-            ok;
-        {error, Reason} ->
-            error(Reason)
-    end,
     {ok, _Apps} = application:ensure_all_started(mria),
-    ?tp(info, "Mria is running", #{}),
     ok.
 
 -spec(stop() -> ok).
@@ -158,8 +147,34 @@ info() ->
 %%--------------------------------------------------------------------
 
 %% @doc Join the cluster
--spec(join(node()) -> ok | ignore | {error, term()}).
-join(Node) -> mria_cluster:join(Node).
+-spec join(node()) -> ok | ignore | {error, term()}.
+join(Node) when Node =:= node() ->
+    ignore;
+join(Node) when is_atom(Node) ->
+    case {mria_rlog:role(), mria_mnesia:is_node_in_cluster(Node), mria_node:is_running(Node)} of
+        {replicant, _, _} ->
+            ok;
+        {core, false, true} ->
+            case mria_rlog:role(Node) of
+                core ->
+                    ?tp(notice, "Mria is restarting to join the core cluster",
+                        #{ seed => Node
+                         }),
+                    stop(),
+                    ok = mria_mnesia:join_cluster(Node),
+                    start(),
+                    ?tp(notice, "Mria has joined the core cluster",
+                        #{ seed   => Node
+                         , status => info()
+                         });
+                replicant ->
+                    ignore
+            end;
+        {core, false, false} ->
+            {error, {node_down, Node}};
+        {core, true, _} ->
+            {error, {already_in_cluster, Node}}
+    end.
 
 %% @doc Leave from Cluster.
 -spec(leave() -> ok | {error, term()}).

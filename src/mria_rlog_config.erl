@@ -23,6 +23,7 @@
         , strict_mode/0
 
         , load_config/0
+        , erase_all_config/0
 
           %% Shard config:
         , load_shard_config/2
@@ -79,7 +80,6 @@ strict_mode() ->
 
 -spec load_config() -> ok.
 load_config() ->
-    erase_all_config(),
     copy_from_env(rlog_rpc_module),
     copy_from_env(db_backend),
     copy_from_env(node_role),
@@ -149,6 +149,8 @@ erase_all_config() ->
                                    persistent_term:erase(Key);
                                ?shard_config(_) ->
                                    persistent_term:erase(Key);
+                               ?mria(_) ->
+                                   persistent_term:erase(Key);
                                _ ->
                                    ok
                            end
@@ -188,6 +190,16 @@ erase_shard_config_test() ->
         ok = load_shard_config(foo, [foo_tab1, foo_tab2])
     after
         erase_shard_config(foo),
+        %% Check that erase_all_config function restores the status quo:
+        ?assertEqual(PersTerms, lists:sort(persistent_term:get()))
+    end.
+
+erase_global_config_test() ->
+    PersTerms = lists:sort(persistent_term:get()),
+    try
+        ok = load_config()
+    after
+        erase_all_config(),
         %% Check that erase_all_config function restores the status quo:
         ?assertEqual(PersTerms, lists:sort(persistent_term:get()))
     end.

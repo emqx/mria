@@ -20,15 +20,29 @@
 
 -export([start/2, stop/1]).
 
+-include_lib("snabbkaffe/include/trace.hrl").
+
 %%================================================================================
 %% API funcions
 %%================================================================================
 
 start(_Type, _Args) ->
-    mria_sup:start_link().
+    ?tp(notice, "Starting mria", #{}),
+    mria_rlog_config:load_config(),
+    ?tp(notice, "Starting mnesia", #{}),
+    mria_mnesia:init(),
+    ?tp(notice, "Initializing RLOG schema", #{}),
+    mria_rlog_schema:init(),
+    ?tp(notice, "Converging schema", #{}),
+    mria_mnesia:init_tables(),
+    ?tp(notice, "Starting shards", #{}),
+    Sup = mria_sup:start_link(),
+    ?tp(notice, "Mria is running", #{}),
+    Sup.
 
 stop(_State) ->
-	ok.
+    mria_rlog_config:erase_all_config(),
+    ?tp(notice, "Mria is stopped", #{}).
 
 %%================================================================================
 %% Internal funcions

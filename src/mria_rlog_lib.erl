@@ -35,6 +35,8 @@
 
         , ensure_ok/1
         , ensure_tab/1
+
+        , shutdown_process/1
         ]).
 
 %% Internal exports
@@ -307,6 +309,20 @@ ensure_tab({atomic, ok})                             -> ok;
 ensure_tab({aborted, {already_exists, _Name}})       -> ok;
 ensure_tab({aborted, {already_exists, _Name, _Node}})-> ok;
 ensure_tab({aborted, Error})                         -> Error.
+
+-spec shutdown_process(atom() | pid()) -> ok.
+shutdown_process(Name) when is_atom(Name) ->
+    case whereis(Name) of
+        undefined -> ok;
+        Pid       -> shutdown_process(Pid)
+    end;
+shutdown_process(Pid) when is_pid(Pid) ->
+    Ref = monitor(process, Pid),
+    exit(Pid, shutdown),
+    receive
+        {'DOWN', Ref, _, _, _} ->
+            ok
+    end.
 
 %%================================================================================
 %% Internal

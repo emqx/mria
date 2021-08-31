@@ -18,16 +18,23 @@
 
 -behaviour(supervisor).
 
--export([start_link/0]).
+-export([start_link/0, stop/0, is_running/0]).
 
 -export([init/1]).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+stop() ->
+    mria_rlog_lib:shutdown_process(?MODULE).
+
+is_running() ->
+    is_pid(whereis(?MODULE)).
+
 init([]) ->
     {ok, {{one_for_all, 0, 3600},
           [child(mria_membership, worker),
+           child(mria_node_monitor, worker),
            child(mria_rlog_top_sup, supervisor)
           ]}}.
 

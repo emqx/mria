@@ -18,7 +18,7 @@
 -module(mria_rlog_schema).
 
 %% API:
--export([ init/1
+-export([ init/0
         , add_entry/1
         , tables_of_shard/1
         , shard_of_table/1
@@ -27,6 +27,8 @@
 
         , converge_replicant/2
         , converge_core/0
+
+        , create_table_type/0
         ]).
 
 -include("mria_rlog.hrl").
@@ -96,21 +98,13 @@ add_entry(TabDef) ->
     end.
 
 %% @doc Create the internal schema table if needed
-init(boot) ->
-    ?tp(debug, rlog_schema_init,
-        #{ type => boot
-         }),
+init() ->
+    ?tp(debug, rlog_schema_init, #{}),
     ok = mria:create_table_internal(?schema, ram_copies,
                                     [{type, ordered_set},
                                      {record_name, ?schema},
                                      {attributes, record_info(fields, ?schema)}
                                     ]),
-    mria:wait_for_tables([?schema]),
-    ok;
-init(copy) ->
-    ?tp(debug, rlog_schema_init,
-        #{ type => copy
-         }),
     ok = mria_mnesia:copy_table(?schema, ram_copies),
     mria:wait_for_tables([?schema]),
     ok.
@@ -165,6 +159,18 @@ converge_core() ->
 converge_replicant(_Shard, TableSpecs) ->
     %% TODO: Check shard
     lists:foreach(fun ensure_table/1, TableSpecs).
+
+%% @doc How to create mnesia tables on the node?
+-spec create_table_type() -> create | copy.
+create_table_type() ->
+    IsAlone = case mnesia:system_info(extra_db_nodes) of
+                  []    -> true;
+                  [_|_] -> false
+              end,
+    case (mria_rlog:role() =:= replicant) orelse IsAlone of
+        true  -> create;
+        false -> copy
+    end.
 
 %%================================================================================
 %% Internal functions

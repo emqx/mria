@@ -92,7 +92,6 @@ start_cluster(mria_async, Specs) ->
 teardown_cluster(Specs) ->
     Nodes = [I || #{node := I} <- Specs],
     [rpc:call(I, mria, stop, []) || I <- Nodes],
-    [rpc:call(I, mnesia, stop, []) || I <- Nodes],
     [ok = stop_slave(I) || I <- Nodes],
     ok.
 
@@ -104,9 +103,16 @@ start_slave(NodeOrMria, Name) when is_atom(Name) ->
 start_mria(#{node := Node, join_to := JoinTo}) ->
     ok = rpc:call(Node, mria, start, []),
     case rpc:call(Node, mria, join, [JoinTo]) of
-        ok -> ok;
-        ignore -> ok
+        ok     -> ok;
+        ignore -> ok;
+        Err    -> ?panic(failed_to_join_cluster,
+                         #{ node    => Node
+                          , join_to => JoinTo
+                          , error   => Err
+                          })
     end,
+    %% TODO: Create table once only
+    rpc:call(Node, mria_transaction_gen, init, []),
     Node.
 
 write(Record) ->
