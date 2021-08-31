@@ -25,7 +25,8 @@
         , table_specs_of_shard/1
         , shards/0
 
-        , converge/2
+        , converge_replicant/2
+        , converge_core/0
         ]).
 
 -include("mria_rlog.hrl").
@@ -145,9 +146,22 @@ shards() ->
     {atomic, Shards} = mnesia:transaction(fun mnesia:select/2, [?schema, [MS]], infinity),
     lists:usort(Shards).
 
+%% @doc Ensure that a core node that freshly joined the cluster has
+%% copies of all the tables
+-spec converge_core() -> ok.
+converge_core() ->
+    %% Assert that we've already joined the cluster, and the rest of
+    %% the nodes know about us, so when any of them calls
+    %% `create_table', they add us in the list:
+    DbNodes = [_, _ | _] = mnesia:system_info(db_nodes), % assert
+    true = lists:member(node(), DbNodes),
+    TabDefs = ets:tab2list(?schema),
+    lists:foreach(fun ensure_table_copy/1, TabDefs).
+
+
 %% @doc Ensure that the replicant has the same tables as the upstream
--spec converge(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
-converge(_Shard, TableSpecs) ->
+-spec converge_replicant(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
+converge_replicant(_Shard, TableSpecs) ->
     %% TODO: Check shard
     lists:foreach(fun ensure_table/1, TableSpecs).
 
@@ -176,3 +190,7 @@ do_add_table(TabDef = #?schema{shard = Shard, mnesia_table = Table}) ->
 -spec ensure_table(mria_rlog_schema:entry()) -> ok.
 ensure_table(#?schema{mnesia_table = Table, storage = Storage, config = Config}) ->
     ok = mria:create_table_internal(Table, Storage, Config).
+
+-spec ensure_table_copy(mria_rlog_schema:entry()) -> ok.
+ensure_table_copy(#?schema{mnesia_table = Table, storage = Storage}) ->
+    mria_mnesia:copy_table(Table, Storage).

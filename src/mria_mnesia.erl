@@ -267,11 +267,11 @@ copy_tables() ->
 copy_table(Name) ->
     copy_table(Name, ram_copies).
 
--spec(copy_table(Name:: atom(), ram_copies | disc_copies | null_copies) -> ok).
-copy_table(Name, RamOrDisc) ->
+-spec(copy_table(Name:: atom(), mria:storage()) -> ok).
+copy_table(Name, Storage) ->
     case mria_rlog:role() of
         core ->
-            mria_rlog_lib:ensure_tab(mnesia:add_table_copy(Name, node(), RamOrDisc));
+            mria_rlog_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
         replicant ->
             ?LOG(warning, "Ignoring illegal attempt to create a table copy ~p on replicant node ~p", [Name, node()])
     end.

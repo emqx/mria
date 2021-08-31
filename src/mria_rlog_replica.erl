@@ -443,4 +443,4 @@ set_where_to_read(Node, Shard) ->
 post_connect(Shard, TableSpecs) ->
     Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
     mria_rlog_config:load_shard_config(Shard, Tables),
-    ok = mria_rlog_schema:converge(Shard, TableSpecs).
+    ok = mria_rlog_schema:converge_replicant(Shard, TableSpecs).
