@@ -26,7 +26,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 stop() ->
-    mria_rlog_lib:shutdown_process(?MODULE).
+    mria_lib:shutdown_process(?MODULE).
 
 is_running() ->
     is_pid(whereis(?MODULE)).
@@ -35,7 +35,7 @@ init([]) ->
     {ok, {{one_for_all, 0, 3600},
           [child(mria_membership, worker),
            child(mria_node_monitor, worker),
-           child(mria_rlog_top_sup, supervisor)
+           child(mria_top_sup, supervisor)
           ]}}.
 
 child(Mod, worker) ->

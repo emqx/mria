@@ -76,13 +76,13 @@ start_link(Parent, Shard) ->
 %% server is lost or delayed due to network congestion.
 -spec probe(node(), mria_rlog:shard()) -> boolean().
 probe(Node, Shard) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) =:= true.
+    mria_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) =:= true.
 
--spec subscribe(mria_rlog:shard(), mria_rlog_lib:subscriber(), checkpoint()) ->
+-spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint()) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [mria_rlog_schema:entry()]
+          , [mria_schema:entry()]
           }.
 subscribe(Shard, Subscriber, Checkpoint) ->
     gen_server:call(Shard, {subscribe, Subscriber, Checkpoint}, infinity).
@@ -91,7 +91,7 @@ subscribe(Shard, Subscriber, Checkpoint) ->
                                                | {error, term()}.
 bootstrap_me(RemoteNode, Shard) ->
     Me = {node(), self()},
-    case mria_rlog_lib:rpc_call(RemoteNode, ?MODULE, do_bootstrap, [Shard, Me]) of
+    case mria_lib:rpc_call(RemoteNode, ?MODULE, do_bootstrap, [Shard, Me]) of
         {ok, Pid} -> {ok, Pid};
         Err       -> {error, Err}
     end.
@@ -110,7 +110,7 @@ init({Parent, Shard}) ->
 handle_info({mnesia_table_event, {write, Record, ActivityId}}, St) ->
     handle_mnesia_event(Record, ActivityId, St);
 handle_info({'DOWN', _MRef, process, Pid, _Info}, St) ->
-    mria_rlog_status:notify_agent_disconnect(Pid),
+    mria_status:notify_agent_disconnect(Pid),
     {noreply, St};
 handle_info(Info, St) ->
     ?tp(warning, "Received unknown event",
@@ -121,11 +121,11 @@ handle_info(Info, St) ->
 handle_continue(post_init, {Parent, Shard}) ->
     ok = mria_rlog_tab:ensure_table(Shard),
     Tables = process_schema(Shard),
-    mria_rlog_config:load_shard_config(Shard, Tables),
+    mria_config:load_shard_config(Shard, Tables),
     AgentSup = mria_rlog_shard_sup:start_agent_sup(Parent, Shard),
     BootstrapperSup = mria_rlog_shard_sup:start_bootstrapper_sup(Parent, Shard),
     mria_mnesia:wait_for_tables([Shard|Tables]),
-    mria_rlog_status:notify_shard_up(Shard, self()),
+    mria_status:notify_shard_up(Shard, self()),
     ?tp(notice, "Shard fully up",
         #{ node  => node()
          , shard => Shard
@@ -154,8 +154,8 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
                                                   ),
     Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
     monitor(process, Pid),
-    mria_rlog_status:notify_agent_connect(Shard, mria_rlog_lib:subscriber_node(Subscriber), Pid),
-    TableSpecs = mria_rlog_schema:table_specs_of_shard(Shard),
+    mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
+    TableSpecs = mria_schema:table_specs_of_shard(Shard),
     {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->
     Pid = maybe_start_child(State#s.bootstrapper_sup, [Subscriber]),
@@ -182,12 +182,12 @@ needs_bootstrap(_, Replay, _) ->
     {true, Replay}.
 
 %% needs_bootstrap(BootstrapThreshold, Replay, Checkpoint) ->
-%%     {BootstrapDeadline, _} = mria_rlog_lib:make_key_in_past(BootstrapThreshold),
+%%     {BootstrapDeadline, _} = mria_lib:make_key_in_past(BootstrapThreshold),
 %%     case Checkpoint of
 %%         {TS, _Node} when TS > BootstrapDeadline ->
 %%             {false, TS - Replay};
 %%         _ ->
-%%             {ReplaySince, _} = mria_rlog_lib:make_key_in_past(Replay),
+%%             {ReplaySince, _} = mria_lib:make_key_in_past(Replay),
 %%             {true, ReplaySince}
 %%     end.
 
@@ -203,7 +203,7 @@ maybe_start_child(Supervisor, Args) ->
 process_schema(Shard) ->
     ok = mria_mnesia:wait_for_tables([?schema]),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),
-    Tables = mria_rlog_schema:tables_of_shard(Shard),
+    Tables = mria_schema:tables_of_shard(Shard),
     Tables.
 
 handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, ActivityId, St0) ->
@@ -215,8 +215,8 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
                  , new_table   => NewTab
                  , activity_id => ActivityId
                  }),
-            Tables = mria_rlog_schema:tables_of_shard(Shard),
-            mria_rlog_config:load_shard_config(Shard, Tables),
+            Tables = mria_schema:tables_of_shard(Shard),
+            mria_config:load_shard_config(Shard, Tables),
             %% Shut down all the downstream connections by restarting the supervisors:
             AgentSup = mria_rlog_shard_sup:restart_agent_sup(Parent),
             BootstrapperSup = mria_rlog_shard_sup:restart_bootstrapper_sup(Parent),
@@ -231,7 +231,7 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
 %% Internal exports (gen_rpc)
 %%================================================================================
 
--spec do_bootstrap(mria_rlog:shard(), mria_rlog_lib:subscriber()) -> {ok, pid()}.
+-spec do_bootstrap(mria_rlog:shard(), mria_lib:subscriber()) -> {ok, pid()}.
 do_bootstrap(Shard, Subscriber) ->
     gen_server:call(Shard, {bootstrap, Subscriber}, infinity).
 

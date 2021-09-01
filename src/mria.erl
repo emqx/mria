@@ -232,7 +232,7 @@ create_table(Name, TabDef) ->
                                     , storage      = Storage
                                     , config       = MnesiaTabDef
                                     },
-                    mria_rlog_schema:add_entry(Entry);
+                    mria_schema:add_entry(Entry);
                 Err ->
                     Err
             end;
@@ -245,7 +245,7 @@ create_table(Name, TabDef) ->
 wait_for_tables(Tables) ->
     case mria_mnesia:wait_for_tables(Tables) of
         ok ->
-            Shards = lists:usort(lists:map(fun mria_rlog_config:shard_rlookup/1, Tables))
+            Shards = lists:usort(lists:map(fun mria_config:shard_rlookup/1, Tables))
                         -- [undefined],
             mria_rlog:wait_for_shards(Shards, infinity),
             ok;
@@ -259,31 +259,31 @@ wait_for_tables(Tables) ->
 create_table_internal(Name, Storage, Params) ->
     %% Note: it's impossible to check storage type due to possiblity
     %% of registering custom backends
-    ClusterNodes = case mria_rlog_config:role() of
+    ClusterNodes = case mria_config:role() of
                        core      -> mnesia:system_info(db_nodes);
                        replicant -> [node()]
                    end,
     TabDef = [{Storage, ClusterNodes}|Params],
-    mria_rlog_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
+    mria_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->
-    mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]);
+    mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
 ro_transaction(Shard, Fun) ->
     case mria_rlog:role() of
         core ->
-            mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]);
+            mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
         replicant ->
             ?tp(mria_ro_transaction, #{role => replicant}),
-            case mria_rlog_status:upstream(Shard) of
+            case mria_status:upstream(Shard) of
                 {ok, AgentPid} ->
-                    Ret = mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]),
+                    Ret = mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]),
                     %% Now we check that the agent pid is still the
                     %% same, meaning the replicant node haven't gone
                     %% through bootstrapping process while running the
                     %% transaction and it didn't have a chance to
                     %% observe the stale writes.
-                    case mria_rlog_status:upstream(Shard) of
+                    case mria_status:upstream(Shard) of
                         {ok, AgentPid} ->
                             Ret;
                         _ ->
@@ -299,7 +299,7 @@ ro_transaction(Shard, Fun) ->
 
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
 transaction(Shard, Fun, Args) ->
-    mria_rlog_lib:call_backend_rw_trans(Shard, transaction, [Fun, Args]).
+    mria_lib:call_backend_rw_trans(Shard, transaction, [Fun, Args]).
 
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
@@ -307,8 +307,8 @@ transaction(Shard, Fun) ->
 
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
-    Shard = mria_rlog_config:shard_rlookup(Table),
-    mria_rlog_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
+    Shard = mria_config:shard_rlookup(Table),
+    mria_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
 
 -spec dirty_write(tuple()) -> ok.
 dirty_write(Record) ->
@@ -316,11 +316,11 @@ dirty_write(Record) ->
 
 -spec dirty_write(mria:table(), tuple()) -> ok.
 dirty_write(Tab, Record) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
+    mria_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
 
 -spec dirty_delete(mria:table(), term()) -> ok.
 dirty_delete(Tab, Key) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_delete, Tab, [Key]).
+    mria_lib:call_backend_rw_dirty(dirty_delete, Tab, [Key]).
 
 -spec dirty_delete({mria:table(), term()}) -> ok.
 dirty_delete({Tab, Key}) ->
@@ -328,7 +328,7 @@ dirty_delete({Tab, Key}) ->
 
 -spec dirty_delete_object(mria:table(), tuple()) -> ok.
 dirty_delete_object(Tab, Record) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
+    mria_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
 
 -spec dirty_delete_object(tuple()) -> ok.
 dirty_delete_object(Record) ->
@@ -340,8 +340,8 @@ dirty_delete_object(Record) ->
 
 -spec ro_trans_rpc(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_trans_rpc(Shard, Fun) ->
-    {ok, Core} = mria_rlog_status:get_core_node(Shard, 5000),
-    case mria_rlog_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
+    {ok, Core} = mria_status:get_core_node(Shard, 5000),
+    case mria_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
         {badrpc, Err} ->
             ?tp(error, ro_trans_badrpc,
                 #{ core   => Core

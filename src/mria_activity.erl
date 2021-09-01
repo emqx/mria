@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% This module contains helper functions that run inside mria_rlog:transaction
--module(mria_rlog_activity).
+-module(mria_activity).
 
 -include("mria.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -66,7 +66,7 @@ unwrap_mnesia_ret({aborted, Ret}) ->
     mnesia:abort(Ret).
 
 assert_ro() ->
-    case mria_rlog_config:strict_mode() of
+    case mria_config:strict_mode() of
         true  -> do_assert_ro();
         false -> ok
     end.

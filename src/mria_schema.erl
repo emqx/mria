@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% Functions related to the management of the RLOG schema
--module(mria_rlog_schema).
+-module(mria_schema).
 
 %% API:
 -export([ init/0
@@ -90,7 +90,7 @@
 %%
 %% Currently there is no requirement to implement this, so we can get
 %% away with managing each shard separately
--spec add_entry(mria_rlog_schema:entry()) -> ok.
+-spec add_entry(mria_schema:entry()) -> ok.
 add_entry(TabDef) ->
     case mnesia:transaction(fun do_add_table/1, [TabDef], infinity) of
         {atomic, ok}   -> ok;
@@ -116,9 +116,9 @@ tables_of_shard(Shard) ->
 
 %% @doc Return the list of tables that belong to the shard and their
 %% properties:
--spec table_specs_of_shard(mria_rlog:shard()) -> [mria_rlog_schema:entry()].
+-spec table_specs_of_shard(mria_rlog:shard()) -> [mria_schema:entry()].
 table_specs_of_shard(Shard) ->
-    %%core = mria_rlog_config:role(), % assert
+    %%core = mria_config:role(), % assert
     Pattern = #?schema{mnesia_table = '_', shard = Shard, storage = '_', config = '_'},
     {atomic, Tuples} = mnesia:transaction(fun mnesia:match_object/1, [Pattern], infinity),
     Tuples.
@@ -155,7 +155,7 @@ converge_core() ->
 
 
 %% @doc Ensure that the replicant has the same tables as the upstream
--spec converge_replicant(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
+-spec converge_replicant(mria_rlog:shard(), [mria_schema:entry()]) -> ok.
 converge_replicant(_Shard, TableSpecs) ->
     %% TODO: Check shard
     lists:foreach(fun ensure_table/1, TableSpecs).
@@ -176,7 +176,7 @@ create_table_type() ->
 %% Internal functions
 %%================================================================================
 
--spec do_add_table(mria_rlog_schema:entry()) -> ok.
+-spec do_add_table(mria_schema:entry()) -> ok.
 do_add_table(TabDef = #?schema{shard = Shard, mnesia_table = Table}) ->
     case mnesia:wread({?schema, Table}) of
         [] ->
@@ -194,10 +194,10 @@ do_add_table(TabDef = #?schema{shard = Shard, mnesia_table = Table}) ->
             error(bad_schema)
     end.
 
--spec ensure_table(mria_rlog_schema:entry()) -> ok.
+-spec ensure_table(mria_schema:entry()) -> ok.
 ensure_table(#?schema{mnesia_table = Table, storage = Storage, config = Config}) ->
     ok = mria:create_table_internal(Table, Storage, Config).
 
--spec ensure_table_copy(mria_rlog_schema:entry()) -> ok.
+-spec ensure_table_copy(mria_schema:entry()) -> ok.
 ensure_table_copy(#?schema{mnesia_table = Table, storage = Storage}) ->
     mria_mnesia:copy_table(Table, Storage).

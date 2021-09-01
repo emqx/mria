@@ -16,7 +16,7 @@
 
 %% Top level supervisor for the RLOG tree, that starts the persistent
 %% processes.
--module(mria_rlog_top_sup).
+-module(mria_top_sup).
 
 -behaviour(supervisor).
 
@@ -59,16 +59,16 @@ init(replicant) ->
 %%================================================================================
 
 status_mgr() ->
-    #{ id => mria_rlog_status
-     , start => {mria_rlog_status, start_link, []}
+    #{ id => mria_status
+     , start => {mria_status, start_link, []}
      , restart => permanent
      , shutdown => 5000
      , type => worker
      }.
 
 core_node_lb() ->
-    #{ id => mria_rlog_lb
-     , start => {mria_rlog_lb, start_link, []}
+    #{ id => mria_lb
+     , start => {mria_lb, start_link, []}
      , restart => permanent
      , shutdown => 5000
      , type => worker

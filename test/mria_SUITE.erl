@@ -433,7 +433,7 @@ t_core_node_down(_) ->
        #{timetrap => 30000},
        try
            [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
-           {ok, _} = ?block_until(#{ ?snk_kind := mria_rlog_status_change
+           {ok, _} = ?block_until(#{ ?snk_kind := mria_status_change
                                    , status := up
                                    , tag := core_node
                                    }),
@@ -441,7 +441,7 @@ t_core_node_down(_) ->
            {_, {ok, _}} =
                ?wait_async_action(
                   [rpc:call(I, application, stop, [mria]) || I <- [N1, N2]],
-                  #{ ?snk_kind := mria_rlog_status_change
+                  #{ ?snk_kind := mria_status_change
                    , status    := down
                    , tag       := core_node
                    }),
@@ -449,7 +449,7 @@ t_core_node_down(_) ->
            {_, {ok, _}} =
                ?wait_async_action(
                   [rpc:call(I, application, start, [mria]) || I <- [N1, N2]],
-                  #{ ?snk_kind := mria_rlog_status_change
+                  #{ ?snk_kind := mria_status_change
                    , status    := up
                    , tag       := core_node
                    }),
@@ -457,7 +457,7 @@ t_core_node_down(_) ->
            {_, {ok, _}} =
                ?wait_async_action(
                   [mria_ct:stop_slave(I) || I <- [N1, N2]],
-                  #{ ?snk_kind := mria_rlog_status_change
+                  #{ ?snk_kind := mria_status_change
                    , status    := down
                    , tag       := core_node
                    })

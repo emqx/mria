@@ -5,4 +5,4 @@
 
 shuffle_test() ->
     ?FORALL(L, list(),
-            ?assertEqual(lists:sort(L), list:sort(mria_rlog_lib:shuffle(L)))).
+            ?assertEqual(lists:sort(L), list:sort(mria_lib:shuffle(L)))).

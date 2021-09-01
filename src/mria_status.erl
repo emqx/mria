@@ -16,7 +16,7 @@
 
 %% @doc This module holds status of the RLOG replicas and manages
 %% event subscribers.
--module(mria_rlog_status).
+-module(mria_status).
 
 -behaviour(gen_event).
 
@@ -206,7 +206,7 @@ objects_up(Tag) ->
 
 -spec shards_down() -> [mria_rlog:shard()].
 shards_down() ->
-    mria_rlog_schema:shards() -- shards_up().
+    mria_schema:shards() -- shards_up().
 
 -spec get_shard_stats(mria_rlog:shard()) -> map().
 get_shard_stats(Shard) ->
@@ -286,11 +286,11 @@ handle_event(Event, State = #s{ref = Ref, subscriber = Sub}) ->
 -spec wait_objects(atom(), [A], timeout()) -> ok | {timeout, [A]}.
 wait_objects(Tag, Objects, Timeout) ->
     ERef = subscribe_events(),
-    TRef = mria_rlog_lib:send_after(Timeout, self(), {ERef, timeout}),
+    TRef = mria_lib:send_after(Timeout, self(), {ERef, timeout}),
     %% Exclude shards that are up, since they are not going to send any events:
     DownObjects = Objects -- objects_up(Tag),
     Ret = do_wait_objects(Tag, ERef, DownObjects),
-    mria_rlog_lib:cancel_timer(TRef),
+    mria_lib:cancel_timer(TRef),
     unsubscribe_events(ERef),
     Ret.
 
@@ -346,7 +346,7 @@ do_notify_up(Tag, Object, Value) ->
     ets:insert(?replica_tab, {Key, Value}),
     case New of
         true ->
-            ?tp(mria_rlog_status_change,
+            ?tp(mria_status_change,
                 #{ status => up
                  , tag    => Tag
                  , key    => Object
@@ -362,7 +362,7 @@ do_notify_up(Tag, Object, Value) ->
 do_notify_down(Tag, Object) ->
     Key = {Tag, Object},
     ets:delete(?replica_tab, Key),
-    ?tp(mria_rlog_status_change,
+    ?tp(mria_status_change,
         #{ status => down
          , key    => Object
          , tag    => Tag

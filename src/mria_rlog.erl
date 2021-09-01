@@ -56,10 +56,10 @@ status() ->
         {mnesia, _} ->
             Info0;
         {rlog, replicant} ->
-            Stats = [{I, mria_rlog_status:get_shard_stats(I)}
-                     || I <- mria_rlog_schema:shards()],
-            Info0#{ shards_in_sync => mria_rlog_status:shards_up()
-                  , shards_down    => mria_rlog_status:shards_down()
+            Stats = [{I, mria_status:get_shard_stats(I)}
+                     || I <- mria_schema:shards()],
+            Info0#{ shards_in_sync => mria_status:shards_up()
+                  , shards_down    => mria_status:shards_down()
                   , shard_stats    => maps:from_list(Stats)
                   };
         {rlog, core} ->
@@ -68,14 +68,14 @@ status() ->
 
 -spec role() -> mria_rlog:role().
 role() ->
-    mria_rlog_config:role().
+    mria_config:role().
 
 -spec role(node()) -> mria_rlog:role().
 role(Node) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, role, []).
+    mria_lib:rpc_call(Node, ?MODULE, role, []).
 
 backend() ->
-    mria_rlog_config:backend().
+    mria_config:backend().
 
 -spec core_nodes() -> [node()].
 core_nodes() ->
@@ -83,11 +83,11 @@ core_nodes() ->
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
 wait_for_shards(Shards0, Timeout) ->
-    case mria_rlog_config:backend() of
+    case mria_config:backend() of
         rlog ->
             Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
             lists:foreach(fun ensure_shard/1, Shards),
-            mria_rlog_status:wait_for_shards(Shards, Timeout);
+            mria_status:wait_for_shards(Shards, Timeout);
         mnesia ->
             ok
     end.
@@ -105,7 +105,7 @@ ensure_shard(Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [mria_rlog_schema:entry()]
+          , [mria_schema:entry()]
           }
         | {badrpc | badtcp, term()}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
@@ -113,7 +113,7 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
         true ->
             MyNode = node(),
             Args = [Shard, {MyNode, Subscriber}, Checkpoint],
-            mria_rlog_lib:rpc_call(RemoteNode, mria_rlog_server, subscribe, Args);
+            mria_lib:rpc_call(RemoteNode, mria_rlog_server, subscribe, Args);
         false ->
             {badrpc, probe_failed}
     end.

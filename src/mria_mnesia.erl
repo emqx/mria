@@ -65,8 +65,8 @@
 %% @doc Initialize Mnesia
 -spec init() -> ok | {error, _}.
 init() ->
-    mria_rlog_lib:ensure_ok(ensure_data_dir()),
-    mria_rlog_lib:ensure_ok(init_schema()),
+    mria_lib:ensure_ok(ensure_data_dir()),
+    mria_lib:ensure_ok(init_schema()),
     ok = mnesia:start(),
     {ok, _} = mria_mnesia_null_storage:register(),
     wait_for(start).
@@ -96,12 +96,12 @@ join_cluster(Node) when Node =/= node() ->
     case {mria_rlog:role(), mria_rlog:role(Node)} of
         {core, core} ->
             %% Stop mnesia and delete schema first
-            mria_rlog_lib:ensure_ok(ensure_stopped()),
-            mria_rlog_lib:ensure_ok(delete_schema()),
+            mria_lib:ensure_ok(ensure_stopped()),
+            mria_lib:ensure_ok(delete_schema()),
             %% Start mnesia and cluster to node
-            mria_rlog_lib:ensure_ok(init()),
-            mria_rlog_lib:ensure_ok(connect(Node)),
-            mria_rlog_lib:ensure_ok(copy_schema(node()));
+            mria_lib:ensure_ok(init()),
+            mria_lib:ensure_ok(connect(Node)),
+            mria_lib:ensure_ok(copy_schema(node()));
         _ ->
             ok
     end.
@@ -129,14 +129,14 @@ leave_cluster() ->
 remove_from_cluster(Node) when Node =/= node() ->
     case {is_node_in_cluster(Node), is_running_db_node(Node)} of
         {true, true} ->
-            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, ensure_stopped, [])),
+            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, ensure_stopped, [])),
             mnesia_lib:del(extra_db_nodes, Node),
-            mria_rlog_lib:ensure_ok(del_schema_copy(Node)),
-            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
+            mria_lib:ensure_ok(del_schema_copy(Node)),
+            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
         {true, false} ->
             mnesia_lib:del(extra_db_nodes, Node),
-            mria_rlog_lib:ensure_ok(del_schema_copy(Node));
-            %mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
+            mria_lib:ensure_ok(del_schema_copy(Node));
+            %mria_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
         {false, _} ->
             {error, node_not_in_cluster}
     end.
@@ -184,14 +184,14 @@ running_nodes() ->
     case mria_rlog:role() of
         core ->
             CoreNodes = mnesia:system_info(running_db_nodes),
-            {Replicants0, _} = rpc:multicall(CoreNodes, mria_rlog_status, replicants, []),
+            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, []),
             Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
             lists:usort(CoreNodes ++ Replicants);
         replicant ->
-            case mria_rlog_status:shards_up() of
+            case mria_status:shards_up() of
                 [Shard|_] ->
-                    {ok, CoreNode} = mria_rlog_status:upstream_node(Shard),
-                    case mria_rlog_lib:rpc_call(CoreNode, ?MODULE, running_nodes, []) of
+                    {ok, CoreNode} = mria_status:upstream_node(Shard),
+                    case mria_lib:rpc_call(CoreNode, ?MODULE, running_nodes, []) of
                         {badrpc, _} -> [];
                         {badtcp, _} -> [];
                         Result      -> Result
@@ -233,11 +233,11 @@ copy_schema(Node) ->
 %% @private
 %% @doc Init mnesia tables.
 converge_schema() ->
-    case mria_rlog_schema:create_table_type() of
+    case mria_schema:create_table_type() of
         create ->
             ok;
         copy ->
-            mria_rlog_schema:converge_core()
+            mria_schema:converge_core()
     end.
 
 %% @doc Copy mnesia table.
@@ -249,7 +249,7 @@ copy_table(Name) ->
 copy_table(Name, Storage) ->
     case mria_rlog:role() of
         core ->
-            mria_rlog_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
+            mria_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
         replicant ->
             ?LOG(warning, "Ignoring illegal attempt to create a table copy ~p on replicant node ~p", [Name, node()])
     end.
@@ -334,10 +334,10 @@ is_running_db_node(Node) ->
 leave_cluster(Node) when Node =/= node() ->
     case is_running_db_node(Node) of
         true ->
-            mria_rlog_lib:ensure_ok(ensure_stopped()),
-            mria_rlog_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
-            mria_rlog_lib:ensure_ok(delete_schema());
-            %%mria_rlog_lib:ensure_ok(start()); %% restart?
+            mria_lib:ensure_ok(ensure_stopped()),
+            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
+            mria_lib:ensure_ok(delete_schema());
+            %%mria_lib:ensure_ok(start()); %% restart?
         false ->
             {error, {node_not_running, Node}}
     end.

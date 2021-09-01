@@ -141,19 +141,19 @@ terminate(_Reason, _State, #d{}) ->
 %%================================================================================
 
 %% This function is called by the remote core node.
--spec push_tlog_entry(mria_rlog_lib:subscriber(), mria_rlog_lib:tlog_entry()) -> ok.
+-spec push_tlog_entry(mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
 push_tlog_entry({Node, Pid}, Batch) ->
     %% TODO: this should be a cast, but gen_rpc doesn't guarantee the
     %% ordering of cast messages. In the production code this will be
     %% horrible!
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
+    mria_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
 %% @private Consume transactions from the core node
--spec handle_tlog_entry(state(), mria_rlog_lib:tlog_entry(), data()) -> fsm_result().
+-spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
 handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
@@ -166,9 +166,9 @@ handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
          , txid        => TXID
          , transaction => Transaction
          }),
-    Checkpoint = mria_rlog_lib:txid_to_checkpoint(TXID),
-    mria_rlog_lib:import_batch(transaction, Transaction),
-    mria_rlog_status:notify_replicant_import_trans(Shard, Checkpoint),
+    Checkpoint = mria_lib:txid_to_checkpoint(TXID),
+    mria_lib:import_batch(transaction, Transaction),
+    mria_status:notify_replicant_import_trans(Shard, Checkpoint),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     , checkpoint       = Checkpoint
                     }};
@@ -220,10 +220,10 @@ initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote}) ->
     %% Disable local reads before starting bootstrap:
     set_where_to_read(Remote, Shard),
     %% Discard all data of the shard:
-    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    #{tables := Tables} = mria_config:shard_config(Shard),
     [ok = clear_table(Tab) || Tab <- Tables],
     %% Do bootstrap:
-    {ok, Pid} = mria_rlog_bootstrapper:start_link_client(Shard, Remote, self()),
+    {ok, Pid} = mria_bootstrapper:start_link_client(Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
     ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
     ReplayqExtraOpts = application:get_env(mria, rlog_replayq_options, #{}),
@@ -268,8 +268,8 @@ initiate_local_replay(_D) ->
 -spec replay_local(data()) -> fsm_result().
 replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
     {Q, AckRef, Items} = replayq:pop(Q0, #{}),
-    mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
-    mria_rlog_lib:import_batch(dirty, Items),
+    mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    mria_lib:import_batch(dirty, Items),
     ok = replayq:ack(Q, AckRef),
     case replayq:is_empty(Q) of
         true ->
@@ -283,7 +283,7 @@ replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
 
 -spec initiate_reconnect(data()) -> fsm_result().
 initiate_reconnect(#d{shard = Shard}) ->
-    mria_rlog_status:notify_shard_down(Shard),
+    mria_status:notify_shard_down(Shard),
     {keep_state_and_data, [{timeout, 0, ?reconnect}]}.
 
 %% @private Try connecting to a core node
@@ -321,18 +321,18 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                 , boolean()
                 , node()
                 , pid()
-                , [mria_rlog_schema:entry()]
+                , [mria_schema:entry()]
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
-    try_connect(mria_rlog_lib:shuffle(mria_rlog:core_nodes()), Shard, Checkpoint).
+    try_connect(mria_lib:shuffle(mria_rlog:core_nodes()), Shard, Checkpoint).
 
 -spec try_connect([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
                 { ok
                 , boolean()
                 , node()
                 , pid()
-                , [mria_rlog_schema:entry()]
+                , [mria_schema:entry()]
                 }
               | {error, term()}.
 try_connect([], _, _) ->
@@ -353,15 +353,15 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
             try_connect(Rest, Shard, Checkpoint)
     end.
 
--spec buffer_tlog_ops(mria_rlog_lib:tx(), data()) -> data().
+-spec buffer_tlog_ops(mria_lib:tx(), data()) -> data().
 buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
     Q = replayq:append(Q0, Transaction),
-    mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D#d{replayq = Q}.
 
 -spec handle_normal(data()) -> ok.
 handle_normal(D = #d{shard = Shard, agent = Agent}) ->
-    mria_rlog_status:notify_shard_up(Shard, Agent),
+    mria_status:notify_shard_up(Shard, Agent),
     %% Now we can enable local reads:
     set_where_to_read(node(), Shard),
     ?tp(notice, "Shard fully up",
@@ -393,7 +393,7 @@ handle_state_trans(OldState, State, Data) ->
         #{ from => OldState
          , to => State
          }),
-    mria_rlog_status:notify_replicant_state(Data#d.shard, State),
+    mria_status:notify_replicant_state(Data#d.shard, State),
     keep_state_and_data.
 
 -spec forget_tmp_worker(data()) -> ok.
@@ -404,7 +404,7 @@ forget_tmp_worker(#d{tmp_worker = Pid}) ->
     after 0 -> ok
     end.
 
--spec do_push_tlog_entry(pid(), mria_rlog_lib:tlog_entry()) -> ok.
+-spec do_push_tlog_entry(pid(), mria_lib:tlog_entry()) -> ok.
 do_push_tlog_entry(Pid, Batch) ->
     ?tp(receive_tlog_entry,
         #{ entry => Batch
@@ -422,7 +422,7 @@ clear_table(Table) ->
 %% implementation of `mnesia:dirty_rpc')
 -spec set_where_to_read(node(), mria_rlog:shard()) -> ok.
 set_where_to_read(Node, Shard) ->
-    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    #{tables := Tables} = mria_config:shard_config(Shard),
     lists:foreach(
       fun(Tab) ->
               Key = {Tab, where_to_read},
@@ -439,8 +439,8 @@ set_where_to_read(Node, Shard) ->
          , shard  => Shard
          }).
 
--spec post_connect(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
+-spec post_connect(mria_rlog:shard(), [mria_schema:entry()]) -> ok.
 post_connect(Shard, TableSpecs) ->
     Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
-    mria_rlog_config:load_shard_config(Shard, Tables),
-    ok = mria_rlog_schema:converge_replicant(Shard, TableSpecs).
+    mria_config:load_shard_config(Shard, Tables),
+    ok = mria_schema:converge_replicant(Shard, TableSpecs).

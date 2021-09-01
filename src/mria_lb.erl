@@ -16,7 +16,7 @@
 
 %% @doc This server runs on the replicant and periodically checks the
 %% status of core nodes in case we need to RPC to one of them.
--module(mria_rlog_lb).
+-module(mria_lb).
 
 -behaviour(gen_server).
 
@@ -85,7 +85,7 @@ terminate(_Reason, St) ->
 %%================================================================================
 
 do_update() ->
-    [do_update(Shard) || Shard <- mria_rlog_schema:shards()],
+    [do_update(Shard) || Shard <- mria_schema:shards()],
     Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
     erlang:send_after(Interval, self(), ?update).
 
@@ -96,9 +96,9 @@ do_update(Shard) ->
     Resp = lists:sort([I || {ok, I} <- Resp0]),
     case Resp of
         [] ->
-            mria_rlog_status:notify_core_node_down(Shard);
+            mria_status:notify_core_node_down(Shard);
         [{_Load, _Rand, Core}|_] ->
-            mria_rlog_status:notify_core_node_up(Shard, Core)
+            mria_status:notify_core_node_up(Shard, Core)
     end.
 
 %%================================================================================
@@ -111,7 +111,7 @@ core_node_weight(Shard) ->
         undefined ->
             undefined;
         _Pid ->
-            NAgents = length(mria_rlog_status:agents()),
+            NAgents = length(mria_status:agents()),
             %% TODO: Add OLP check
             Load = 1.0 * NAgents,
             %% The return values will be lexicographically sorted. Load will

@@ -16,7 +16,7 @@
 
 %% @doc This module implements both bootstrap server and client
 
--module(mria_rlog_bootstrapper).
+-module(mria_bootstrapper).
 
 -behavior(gen_server).
 
@@ -48,7 +48,7 @@
 
 -record(server,
         { shard       :: mria_rlog:shard()
-        , subscriber  :: mria_rlog_lib:subscriber()
+        , subscriber  :: mria_lib:subscriber()
         , key_queue   :: replayq:q() | undefined
         , tables      :: [mria:table()]
         }).
@@ -64,7 +64,7 @@
 %%================================================================================
 
 %% @doc Start bootstrapper server
--spec start_link(mria_rlog:shard(), mria_rlog_lib:subscriber()) -> {ok, pid()}.
+-spec start_link(mria_rlog:shard(), mria_lib:subscriber()) -> {ok, pid()}.
 start_link(Shard, Subscriber) ->
     gen_server:start_link(?MODULE, {server, Shard, Subscriber}, []).
 
@@ -93,7 +93,7 @@ init({server, Shard, Subscriber}) ->
     logger:set_process_metadata(#{ domain => [mria, rlog, bootstrapper, server]
                                  , shard  => Shard
                                  }),
-    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    #{tables := Tables} = mria_config:shard_config(Shard),
     ?tp(info, rlog_bootstrapper_start,
         #{ shard     => Shard
          , subscribe => Subscriber
@@ -111,7 +111,7 @@ init({client, Shard, RemoteNode, Parent}) ->
     logger:set_process_metadata(#{ domain => [mria, rlog, bootstrapper, client]
                                  , shard  => Shard
                                  }),
-    mria_rlog_status:notify_replicant_bootstrap_start(Shard),
+    mria_status:notify_replicant_bootstrap_start(Shard),
     {ok, Pid} = mria_rlog_server:bootstrap_me(RemoteNode, Shard),
     {ok, #client{ parent     = Parent
                 , shard      = Shard
@@ -132,11 +132,11 @@ handle_call({complete, Server, Checkpoint}, From, St = #client{server = Server, 
     ?tp(info, shard_bootstrap_complete, #{}),
     Parent ! {bootstrap_complete, self(), Checkpoint},
     gen_server:reply(From, ok),
-    mria_rlog_status:notify_replicant_bootstrap_complete(Shard),
+    mria_status:notify_replicant_bootstrap_complete(Shard),
     {stop, normal, St};
 handle_call({batch, {Server, Table, Records}}, _From, St = #client{server = Server, shard = Shard}) ->
     handle_batch(Table, Records),
-    mria_rlog_status:notify_replicant_bootstrap_import(Shard),
+    mria_status:notify_replicant_bootstrap_import(Shard),
     {reply, ok, St};
 handle_call(Call, _From, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
@@ -154,19 +154,19 @@ terminate(_Reason, St = #client{}) ->
 %% Internal functions
 %%================================================================================
 
--spec push_batch(mria_rlog_lib:subscriber(), batch()) -> ok | {badrpc, _}.
+-spec push_batch(mria_lib:subscriber(), batch()) -> ok | {badrpc, _}.
 push_batch({Node, Pid}, Batch = {_, _, _}) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_push_batch, [Pid, Batch]).
+    mria_lib:rpc_call(Node, ?MODULE, do_push_batch, [Pid, Batch]).
 
--spec complete(mria_rlog_lib:subscriber(), pid(), mria_rlog_server:checkpoint()) -> ok.
+-spec complete(mria_lib:subscriber(), pid(), mria_rlog_server:checkpoint()) -> ok.
 complete({Node, Pid}, Server, Checkpoint) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
+    mria_lib:rpc_call(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
 handle_batch(Table, Records) ->
     lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
 
 start_table_traverse(St = #server{tables = [], subscriber = Subscriber}) ->
-    _ = complete(Subscriber, self(), mria_rlog_lib:approx_checkpoint()),
+    _ = complete(Subscriber, self(), mria_lib:approx_checkpoint()),
     {stop, normal, St};
 start_table_traverse(St0 = #server{ shard = Shard
                                   , tables = [Table|_Rest]

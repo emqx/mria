@@ -28,11 +28,11 @@
 
 start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{}),
-    mria_rlog_config:load_config(),
+    mria_config:load_config(),
     ?tp(notice, "Starting mnesia", #{}),
     mria_mnesia:init(),
     ?tp(notice, "Initializing RLOG schema", #{}),
-    mria_rlog_schema:init(),
+    mria_schema:init(),
     ?tp(notice, "Converging schema", #{}),
     mria_mnesia:converge_schema(),
     ?tp(notice, "Starting shards", #{}),
@@ -41,7 +41,7 @@ start(_Type, _Args) ->
     Sup.
 
 stop(_State) ->
-    mria_rlog_config:erase_all_config(),
+    mria_config:erase_all_config(),
     ?tp(notice, "Mria is stopped", #{}).
 
 %%================================================================================
