@@ -6,10 +6,10 @@
         , ops :: mria_lib:tx()
         }).
 
--define(schema, mria_rlog_schema).
+-define(schema, mria_schema).
 
 %% Note to self: don't forget to update all the match specs in
-%% `mria_rlog_schema' module when changing fields in this record
+%% `mria_schema' module when changing fields in this record
 -record(?schema,
         { mnesia_table
         , shard

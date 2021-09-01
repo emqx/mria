@@ -232,7 +232,7 @@ create_table(Name, TabDef) ->
                                     , storage      = Storage
                                     , config       = MnesiaTabDef
                                     },
-                    mria_rlog_schema:add_entry(Entry);
+                    mria_schema:add_entry(Entry);
                 Err ->
                     Err
             end;

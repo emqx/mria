@@ -233,11 +233,11 @@ copy_schema(Node) ->
 %% @private
 %% @doc Init mnesia tables.
 converge_schema() ->
-    case mria_rlog_schema:create_table_type() of
+    case mria_schema:create_table_type() of
         create ->
             ok;
         copy ->
-            mria_rlog_schema:converge_core()
+            mria_schema:converge_core()
     end.
 
 %% @doc Copy mnesia table.

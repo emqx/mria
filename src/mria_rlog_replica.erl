@@ -321,7 +321,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                 , boolean()
                 , node()
                 , pid()
-                , [mria_rlog_schema:entry()]
+                , [mria_schema:entry()]
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
@@ -332,7 +332,7 @@ try_connect(Shard, Checkpoint) ->
                 , boolean()
                 , node()
                 , pid()
-                , [mria_rlog_schema:entry()]
+                , [mria_schema:entry()]
                 }
               | {error, term()}.
 try_connect([], _, _) ->
@@ -439,8 +439,8 @@ set_where_to_read(Node, Shard) ->
          , shard  => Shard
          }).
 
--spec post_connect(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
+-spec post_connect(mria_rlog:shard(), [mria_schema:entry()]) -> ok.
 post_connect(Shard, TableSpecs) ->
     Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
     mria_config:load_shard_config(Shard, Tables),
-    ok = mria_rlog_schema:converge_replicant(Shard, TableSpecs).
+    ok = mria_schema:converge_replicant(Shard, TableSpecs).

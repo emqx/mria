@@ -82,7 +82,7 @@ probe(Node, Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [mria_rlog_schema:entry()]
+          , [mria_schema:entry()]
           }.
 subscribe(Shard, Subscriber, Checkpoint) ->
     gen_server:call(Shard, {subscribe, Subscriber, Checkpoint}, infinity).
@@ -155,7 +155,7 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
     Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
     monitor(process, Pid),
     mria_rlog_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
-    TableSpecs = mria_rlog_schema:table_specs_of_shard(Shard),
+    TableSpecs = mria_schema:table_specs_of_shard(Shard),
     {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->
     Pid = maybe_start_child(State#s.bootstrapper_sup, [Subscriber]),
@@ -203,7 +203,7 @@ maybe_start_child(Supervisor, Args) ->
 process_schema(Shard) ->
     ok = mria_mnesia:wait_for_tables([?schema]),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),
-    Tables = mria_rlog_schema:tables_of_shard(Shard),
+    Tables = mria_schema:tables_of_shard(Shard),
     Tables.
 
 handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, ActivityId, St0) ->
@@ -215,7 +215,7 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
                  , new_table   => NewTab
                  , activity_id => ActivityId
                  }),
-            Tables = mria_rlog_schema:tables_of_shard(Shard),
+            Tables = mria_schema:tables_of_shard(Shard),
             mria_config:load_shard_config(Shard, Tables),
             %% Shut down all the downstream connections by restarting the supervisors:
             AgentSup = mria_rlog_shard_sup:restart_agent_sup(Parent),

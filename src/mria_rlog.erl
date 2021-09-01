@@ -57,7 +57,7 @@ status() ->
             Info0;
         {rlog, replicant} ->
             Stats = [{I, mria_rlog_status:get_shard_stats(I)}
-                     || I <- mria_rlog_schema:shards()],
+                     || I <- mria_schema:shards()],
             Info0#{ shards_in_sync => mria_rlog_status:shards_up()
                   , shards_down    => mria_rlog_status:shards_down()
                   , shard_stats    => maps:from_list(Stats)
@@ -105,7 +105,7 @@ ensure_shard(Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [mria_rlog_schema:entry()]
+          , [mria_schema:entry()]
           }
         | {badrpc | badtcp, term()}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->

@@ -32,7 +32,7 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting mnesia", #{}),
     mria_mnesia:init(),
     ?tp(notice, "Initializing RLOG schema", #{}),
-    mria_rlog_schema:init(),
+    mria_schema:init(),
     ?tp(notice, "Converging schema", #{}),
     mria_mnesia:converge_schema(),
     ?tp(notice, "Starting shards", #{}),

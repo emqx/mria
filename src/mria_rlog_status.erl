@@ -206,7 +206,7 @@ objects_up(Tag) ->
 
 -spec shards_down() -> [mria_rlog:shard()].
 shards_down() ->
-    mria_rlog_schema:shards() -- shards_up().
+    mria_schema:shards() -- shards_up().
 
 -spec get_shard_stats(mria_rlog:shard()) -> map().
 get_shard_stats(Shard) ->
