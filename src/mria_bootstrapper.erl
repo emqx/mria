@@ -16,7 +16,7 @@
 
 %% @doc This module implements both bootstrap server and client
 
--module(mria_rlog_bootstrapper).
+-module(mria_bootstrapper).
 
 -behavior(gen_server).
 

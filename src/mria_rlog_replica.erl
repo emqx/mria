@@ -223,7 +223,7 @@ initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote}) ->
     #{tables := Tables} = mria_config:shard_config(Shard),
     [ok = clear_table(Tab) || Tab <- Tables],
     %% Do bootstrap:
-    {ok, Pid} = mria_rlog_bootstrapper:start_link_client(Shard, Remote, self()),
+    {ok, Pid} = mria_bootstrapper:start_link_client(Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
     ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
     ReplayqExtraOpts = application:get_env(mria, rlog_replayq_options, #{}),

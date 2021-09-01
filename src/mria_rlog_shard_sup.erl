@@ -66,7 +66,7 @@ init([shard, Shard]) ->
 init([agent, Shard]) ->
     init_simple_sup(mria_rlog_agent, Shard);
 init([bootstrapper, Shard]) ->
-    init_simple_sup(mria_rlog_bootstrapper, Shard).
+    init_simple_sup(mria_bootstrapper, Shard).
 
 %%================================================================================
 %% Internal exports
