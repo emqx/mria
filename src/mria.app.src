@@ -8,7 +8,7 @@
     mria_cluster_sup,
     mria_node_monitor,
     mria_rlog_server,
-    mria_rlog_lb,
+    mria_lb,
     mria_rlog_sup
    ]},
   {applications,

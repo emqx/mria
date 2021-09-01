@@ -16,7 +16,7 @@
 
 %% @doc This server runs on the replicant and periodically checks the
 %% status of core nodes in case we need to RPC to one of them.
--module(mria_rlog_lb).
+-module(mria_lb).
 
 -behaviour(gen_server).
 

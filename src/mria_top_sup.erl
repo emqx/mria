@@ -67,8 +67,8 @@ status_mgr() ->
      }.
 
 core_node_lb() ->
-    #{ id => mria_rlog_lb
-     , start => {mria_rlog_lb, start_link, []}
+    #{ id => mria_lb
+     , start => {mria_lb, start_link, []}
      , restart => permanent
      , shutdown => 5000
      , type => worker
