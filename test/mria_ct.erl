@@ -102,6 +102,9 @@ start_slave(NodeOrMria, Name) when is_atom(Name) ->
 
 start_mria(#{node := Node, join_to := JoinTo}) ->
     ok = rpc:call(Node, mria, start, []),
+    %% Emulate start of the business apps:
+    rpc:call(Node, mria_transaction_gen, init, []),
+    %% Join the cluster if needed:
     case rpc:call(Node, mria, join, [JoinTo]) of
         ok     -> ok;
         ignore -> ok;
@@ -112,8 +115,6 @@ start_mria(#{node := Node, join_to := JoinTo}) ->
                           })
     end,
     ?tp(mria_ct_cluster_join, #{node => Node}),
-    %% TODO: Create table once only
-    rpc:call(Node, mria_transaction_gen, init, []),
     Node.
 
 write(Record) ->

@@ -38,6 +38,7 @@ stabilize(Timeout) ->
     end.
 
 wait_tables(Nodes) ->
+    ?tp(mria_test_util_waiting_for_tables, #{nodes => Nodes}),
     [?block_until(#{?snk_kind := mria_ct_cluster_join, node := Node})
      || Node <- Nodes],
     Tables = [test_tab, test_bag, mria_helper_tab],

@@ -256,10 +256,13 @@ copy_table(Name, Storage) ->
 
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason} | {timeout, [mria:table()]}.
 wait_for_tables(Tables) ->
+    ?tp(mria_wait_for_tables, #{tables => Tables}),
     case mnesia:wait_for_tables(Tables, 30000) of
         ok ->
+            ?tp(mria_wait_for_tables_done, #{result => ok}),
             ok;
         {error, Reason} ->
+            ?tp(mria_wait_for_tables_done, #{result => {error, Reason}}),
             {error, Reason};
         {timeout, BadTables} ->
             logger:warning("~p: still waiting for table(s): ~p", [?MODULE, BadTables]),
