@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% Test database consistency with random transactions
--module(mria_proper_SUITE).
+-module(mria_proper_suite).
 
 -compile(export_all).
 -compile(nowarn_export_all).
