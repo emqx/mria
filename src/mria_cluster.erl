@@ -77,7 +77,9 @@ join(Node) when is_atom(Node) ->
 leave() ->
     case mria_mnesia:running_nodes() -- [node()] of
         [_|_] ->
-            prepare(leave), ok = mria_mnesia:leave_cluster(), reboot();
+            prepare(leave),
+            ok = mria_mnesia:leave_cluster(),
+            reboot();
         [] ->
             {error, node_not_in_cluster}
     end.
