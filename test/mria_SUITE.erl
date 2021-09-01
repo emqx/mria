@@ -14,7 +14,8 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(mria_mnesia_SUITE).
+%% @doc Smoke tests for all major flows
+-module(mria_SUITE).
 
 -compile(export_all).
 -compile(nowarn_export_all).
@@ -35,10 +36,12 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
-init_per_testcase(_TestCase, Config) ->
+init_per_testcase(TestCase, Config) ->
+    logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
     Config.
 
 end_per_testcase(TestCase, Config) ->
+    logger:notice(asciiart:visible($%, "Complete ~p", [TestCase])),
     mria_ct:cleanup(TestCase),
     snabbkaffe:stop(),
     Config.
@@ -50,7 +53,7 @@ t_create_del_table(_) ->
     try
         mria:start(),
         ok = mria:create_table(kv_tab, [
-                    {ram_copies, [node()]},
+                    {storage, ram_copies},
                     {rlog_shard, test_shard},
                     {record_name, kv_tab},
                     {attributes, record_info(fields, kv_tab)},
@@ -152,9 +155,9 @@ t_rlog_smoke_test(_) ->
            ?force_ordering(#{?snk_kind := state_change, to := normal}, #{?snk_kind := trans_gen_counter_update, value := 25}),
 
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
-           mria_mnesia_test_util:wait_shards([N1, N2]),
+           ok = mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Generate some transactions:
-           {atomic, _} = rpc:call(N2, mria_transaction_gen, init, []),
+           {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, 30]),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
@@ -167,7 +170,8 @@ t_rlog_smoke_test(_) ->
            mria_ct:stop_slave(N3),
            Nodes
        after
-           mria_ct:teardown_cluster(Cluster)
+           mria_ct:teardown_cluster(Cluster),
+           ok
        end,
        fun([N1, N2, N3], Trace) ->
                %% Ensure that the nodes assumed designated roles:
@@ -184,10 +188,11 @@ t_rlog_smoke_test(_) ->
 t_transaction_on_replicant(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:stabilize(1000),
-           {atomic, _} = rpc:call(N2, mria_transaction_gen, init, []),
+           {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000), mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            {atomic, KeyVals} = rpc:call(N2, mria_transaction_gen, ro_read_all_keys, []),
            {atomic, KeyVals} = rpc:call(N1, mria_transaction_gen, ro_read_all_keys, []),
@@ -204,9 +209,10 @@ t_transaction_on_replicant(_) ->
 t_abort(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            [begin
                 RetMnesia = rpc:call(Node, mria_transaction_gen, abort, [mnesia, AbortKind]),
                 RetMria = rpc:call(Node, mria_transaction_gen, abort, [mria_mnesia, AbortKind]),
@@ -232,9 +238,10 @@ t_core_node_competing_writes(_) ->
     CounterKey = counter,
     NOper = 1000,
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            spawn(fun() ->
                          rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NOper]),
                          ?tp(n1_counter_done, #{})
@@ -258,10 +265,11 @@ t_core_node_competing_writes(_) ->
 t_rlog_clear_table(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
-           rpc:call(N1, mria_transaction_gen, init, []),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           rpc:call(N1, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ?assertMatch({atomic, ok}, rpc:call(N1, mria, clear_table, [test_tab])),
@@ -277,9 +285,10 @@ t_rlog_clear_table(_) ->
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, 1, 1}]),
            ok = rpc:call(N2, mria, dirty_write, [{test_tab, 2, 2}]),
            ok = rpc:call(N2, mria, dirty_write, [{test_tab, 3, 3}]),
@@ -313,7 +322,8 @@ t_rlog_dirty_operations(_) ->
 t_local_content(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
-      try
+       #{timetrap => 30000},
+       try
           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
           %% Create the table on all nodes:
           {[ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
@@ -394,6 +404,7 @@ t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
+       #{timetrap => 30000},
        try
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 3
                           , #{?snk_kind := state_change, to := normal}
@@ -419,6 +430,7 @@ t_core_node_down(_) ->
                              , mria_mnesia_test_util:common_env()
                              ),
     ?check_trace(
+       #{timetrap => 30000},
        try
            [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
            {ok, _} = ?block_until(#{ ?snk_kind := mria_rlog_status_change
@@ -466,7 +478,7 @@ t_dirty_reads(_) ->
            %% Delay shard startup:
            ?force_ordering(#{?snk_kind := read1}, #{?snk_kind := state_change, to := local_replay}),
            [N1, N2] = mria_ct:start_cluster(mria_async, Cluster),
-           mria_mnesia_test_util:wait_shards([N1]),
+           mria_mnesia_test_util:wait_tables([N1]),
            %% Insert data:
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
            %% Ensure that the replicant still reads the correct value by doing an RPC to the core node:
@@ -492,9 +504,10 @@ t_dirty_reads(_) ->
 t_rlog_schema(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
+       #{timetrap => 30000},
        try
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            %% Add a few new tables to the shard
            [?assertMatch( {[ok, ok], []}
                         , rpc:multicall([N1, N2], mria, create_table,
@@ -582,11 +595,11 @@ do_cluster_benchmark(#{ backend    := Backend
     [#{node := First}|_] = Cluster,
     try
         Nodes = mria_ct:start_cluster(node, Cluster),
-        mria_mnesia_test_util:wait_shards(Nodes),
+        mria_mnesia_test_util:wait_tables(Nodes),
         lists:foldl(
           fun(Node, Cnt) ->
                   mria_ct:start_mria(Node),
-                  mria_mnesia_test_util:wait_shards([Node]),
+                  mria_mnesia_test_util:wait_tables([Node]),
                   mria_mnesia_test_util:stabilize(100),
                   ok = rpc:call(First, mria_transaction_gen, benchmark,
                                 [ResultFile, Config, Cnt]),

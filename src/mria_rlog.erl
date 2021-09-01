@@ -17,9 +17,7 @@
 %% API and management functions for asynchronous Mnesia replication
 -module(mria_rlog).
 
--export([ init/0
-
-        , status/0
+-export([ status/0
 
         , role/0
         , role/1
@@ -47,9 +45,6 @@
 -type shard_config() :: #{ tables := [mria:table()]
                          , match_spec := ets:match_spec()
                          }.
-
-init() ->
-    mria_rlog_config:load_config().
 
 status() ->
     Backend = backend(),
@@ -88,9 +83,9 @@ core_nodes() ->
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
 wait_for_shards(Shards0, Timeout) ->
-    Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
     case mria_rlog_config:backend() of
         rlog ->
+            Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
             lists:foreach(fun ensure_shard/1, Shards),
             mria_rlog_status:wait_for_shards(Shards, Timeout);
         mnesia ->
@@ -110,7 +105,7 @@ ensure_shard(Shard) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
-          , [{mria:table(), mria:table_config()}]
+          , [mria_rlog_schema:entry()]
           }
         | {badrpc | badtcp, term()}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->

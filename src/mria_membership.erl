@@ -175,7 +175,7 @@ ping(Node, Member) ->
 ping(Node, _Member, 0) ->
     ?LOG(error, "Failed to ping ~s~n", [Node]);
 ping(Node, Member, Retries) ->
-    case mria_node:is_running(Node, mria) of
+    case mria_node:is_running(Node) of
         true  -> cast(Node, {ping, Member});
         false -> timer:sleep(1000),
                  ping(Node, Member, Retries -1)

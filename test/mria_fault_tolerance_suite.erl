@@ -14,9 +14,11 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
+%% Random error injection suite.
+%%
 %% Tests that use error injection should go here, to avoid polluting
 %% the logs and scaring people
--module(mria_mnesia_error_injection_SUITE).
+-module(mria_fault_tolerance_suite).
 
 -compile(export_all).
 -compile(nowarn_export_all).
@@ -45,9 +47,10 @@ t_agent_restart(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     CounterKey = counter,
     ?check_trace(
+       #{timetrap => 60000},
        try
            Nodes = [N1, _N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            mria_mnesia_test_util:stabilize(1000),
            %% Everything in mria agent will crash
            CrashRef = ?inject_crash( #{?snk_meta := #{domain := [mria, rlog, agent|_]}}
@@ -69,9 +72,10 @@ t_rand_error_injection(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     CounterKey = counter,
     ?check_trace(
+       #{timetrap => 60000},
        try
            Nodes = [N1, _N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            mria_mnesia_test_util:stabilize(1000),
            %% Everything in mria RLOG will crash
            CrashRef = ?inject_crash( #{?snk_meta := #{domain := [mria, rlog|_]}}
@@ -93,9 +97,10 @@ t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
+       #{timetrap => 60000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_shards(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
            %% Everything in mria RLOG will crash
            ?inject_crash( #{?snk_meta := #{domain := [mria, rlog|_]}}
                         , snabbkaffe_nemesis:random_crash(0.1)

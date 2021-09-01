@@ -262,7 +262,7 @@ notify_replicant_bootstrap_import(Shard) ->
 %%================================================================================
 
 init([Ref, Subscriber]) ->
-    logger:set_process_metadata(#{domain => [mria, rlog, event_mgr]}),
+    logger:set_process_metadata(#{domain => [mria, event_mgr]}),
     ?tp(start_event_monitor,
         #{ reference  => Ref
          , subscriber => Subscriber

@@ -16,22 +16,38 @@ jobs:
         # - name: Check versions
         #   run: |
         #     ./git-tag.sh dummy --dryrun
-        - name: Run tests
+        - name: Compile
           run: |
-            make eunit
-            make ct
-            make cover
+            make
+
+        - name: Smoke test
+          run: |
+            make smoke-test
+
+        - name: Fault-tolerance tests
+          run: |
+            make ct-fault-tolerance
+
+        - name: Consistency tests
+          run: |
+            make ct-consistency
+
+        - name: Concuerror tests
+          run : |
             make concuerror_test
+
         - name: Coveralls
           env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           run: |
               make coveralls
+
         - uses: actions/upload-artifact@v1
           if: always()
           with:
             name: logs
             path: _build/test/logs
+
         - uses: actions/upload-artifact@v1
           with:
             name: cover

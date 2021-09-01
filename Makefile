@@ -4,11 +4,11 @@ REBAR := rebar3
 
 CT_NODE_NAME = ct@127.0.0.1
 
-.PHONY: all
-all: compile
-
 compile:
 	$(REBAR) do compile, dialyzer, xref
+
+.PHONY: all
+all: compile test
 
 .PHONY: clean
 clean: distclean
@@ -25,9 +25,20 @@ xref:
 eunit: compile
 	$(REBAR) eunit verbose=true
 
-.PHONY: ct
-ct: compile
+.PHONY: test
+test: smoke-test ct-consistency ct-fault-tolerance cover
+
+.PHONY: smoke-test
+smoke-test:
 	$(REBAR) do eunit, ct -v --readable=false --name $(CT_NODE_NAME)
+
+.PHONY: ct-consistency
+ct-consistency:
+	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite mria_proper_suite
+
+.PHONY: ct-fault-tolerance
+ct-fault-tolerance:
+	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite mria_fault_tolerance_suite
 
 .PHONY: ct-suite
 ct-suite: compile
@@ -37,7 +48,7 @@ else
 	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite $(SUITE)
 endif
 
-cover:
+cover: | smoke-test ct-consistency ct-fault-tolerance
 	$(REBAR) cover
 
 .PHONY: coveralls

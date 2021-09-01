@@ -172,7 +172,7 @@ handle_info(confirm_partition, State = #state{partitions = []}) ->
 
 handle_info(confirm_partition, State = #state{partitions = Partitions}) ->
     Leader = mria_membership:leader(),
-    case mria_node:is_running(Leader, mria) of
+    case mria_node:is_running(Leader) of
         true  -> cast(Leader, {report_partition, node()});
         false -> ?LOG(critical, "Leader is down, cannot autoheal the partitions: ~p", [Partitions])
     end,

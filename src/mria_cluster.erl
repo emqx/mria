@@ -54,7 +54,7 @@ status(Node) -> mria_mnesia:cluster_status(Node).
 join(Node) when Node =:= node() ->
     ignore;
 join(Node) when is_atom(Node) ->
-    case {mria_rlog:role(), mria_mnesia:is_node_in_cluster(Node), mria_node:is_running(Node, mria)} of
+    case {mria_rlog:role(), mria_mnesia:is_node_in_cluster(Node), mria_node:is_running(Node)} of
         {replicant, _, _} ->
             ok;
         {core, false, true} ->
@@ -108,7 +108,7 @@ force_leave(Node) ->
 heal(shutdown) ->
     prepare(heal), mria_mnesia:ensure_stopped();
 heal(reboot) ->
-    mria_mnesia:ensure_started(), reboot().
+    mria_mnesia:init(), reboot().
 
 %% @doc Prepare to join or leave the cluster.
 -spec(prepare(join | leave | heal) -> ok | {error, term()}).

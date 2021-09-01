@@ -36,11 +36,6 @@
         , callback/2
         ]).
 
-%% Node API
--export([ is_aliving/1
-        , is_running/2
-        ]).
-
 %% Database API
 -export([ ro_transaction/2
         , transaction/3
@@ -59,7 +54,9 @@
         , local_content_shard/0
 
         , create_table/2
-        , create_table_internal/2
+        , wait_for_tables/1
+
+        , create_table_internal/3
         ]).
 
 -define(IS_MON_TYPE(T), T == membership orelse T == partition).
@@ -72,11 +69,14 @@
                    partitions    := list(node())
                   }).
 
+-type storage() :: ram_copies | disc_copies | disc_only_copies | null_copies | atom().
+
 -export_type([info_key/0, infos/0]).
 
 -export_type([ t_result/1
              , backend/0
              , table/0
+             , storage/0
              , table_config/0
              ]).
 
@@ -104,18 +104,7 @@
 
 -spec(start() -> ok).
 start() ->
-    ?tp(info, "Starting mria", #{}),
-    application:load(mria),
-    case mria_mnesia:start() of
-        ok -> ok;
-        {error, {timeout, Tables}} ->
-            logger:error("Mnesia wait_for_tables timeout: ~p", [Tables]),
-            ok;
-        {error, Reason} ->
-            error(Reason)
-    end,
     {ok, _Apps} = application:ensure_all_started(mria),
-    ?tp(info, "Mria is running", #{}),
     ok.
 
 -spec(stop() -> ok).
@@ -158,8 +147,34 @@ info() ->
 %%--------------------------------------------------------------------
 
 %% @doc Join the cluster
--spec(join(node()) -> ok | ignore | {error, term()}).
-join(Node) -> mria_cluster:join(Node).
+-spec join(node()) -> ok | ignore | {error, term()}.
+join(Node) when Node =:= node() ->
+    ignore;
+join(Node) when is_atom(Node) ->
+    case {mria_rlog:role(), mria_mnesia:is_node_in_cluster(Node), mria_node:is_running(Node)} of
+        {replicant, _, _} ->
+            ok;
+        {core, false, true} ->
+            case mria_rlog:role(Node) of
+                core ->
+                    ?tp(notice, "Mria is restarting to join the core cluster",
+                        #{ seed => Node
+                         }),
+                    stop(),
+                    ok = mria_mnesia:join_cluster(Node),
+                    start(),
+                    ?tp(notice, "Mria has joined the core cluster",
+                        #{ seed   => Node
+                         , status => info()
+                         });
+                replicant ->
+                    ignore
+            end;
+        {core, false, false} ->
+            {error, {node_down, Node}};
+        {core, true, _} ->
+            {error, {already_in_cluster, Node}}
+    end.
 
 %% @doc Leave from Cluster.
 -spec(leave() -> ok | {error, term()}).
@@ -184,49 +199,40 @@ callback(Name, Fun) ->
     apply(application, set_env, [mria, {callback, Name}, Fun]).
 
 %%--------------------------------------------------------------------
-%% Node API
+%% Transaction API
 %%--------------------------------------------------------------------
-
-%% @doc Is node aliving?
--spec(is_aliving(node()) -> boolean()).
-is_aliving(Node) ->
-    mria_node:is_aliving(Node).
-
-%% @doc Is the application running?
--spec(is_running(node(), atom()) -> boolean()).
-is_running(Node, App) ->
-    mria_node:is_running(Node, App).
-
 
 local_content_shard() ->
     ?LOCAL_CONTENT_SHARD.
 
-%%--------------------------------------------------------------------
-%% Transaction API
-%%--------------------------------------------------------------------
-
-%% @doc Create mnesia table.
--spec(create_table(Name:: table(), TabDef :: list()) -> ok | {error, any()}).
+%% @doc Create a table.
+-spec(create_table(table(), Options :: list()) -> ok | {error, any()}).
 create_table(Name, TabDef) ->
     ?tp(debug, mria_mnesia_create_table,
         #{ name    => Name
          , options => TabDef
          }),
-    MnesiaTabDef = lists:keydelete(rlog_shard, 1, TabDef),
+    Storage = proplists:get_value(storage, TabDef, ram_copies),
+    MnesiaTabDef = lists:keydelete(rlog_shard, 1, lists:keydelete(storage, 1, TabDef)),
     case {proplists:get_value(rlog_shard, TabDef, ?LOCAL_CONTENT_SHARD),
           proplists:get_value(local_content, TabDef, false)} of
         {?LOCAL_CONTENT_SHARD, true} ->
             %% Local content table:
-            create_table_internal(Name, MnesiaTabDef);
+            create_table_internal(Name, Storage, MnesiaTabDef);
         {?LOCAL_CONTENT_SHARD, false} ->
             ?LOG(critical, "Table ~p doesn't belong to any shard", [Name]),
             error(badarg);
         {Shard, false} ->
-            case create_table_internal(Name, MnesiaTabDef) of
+            case create_table_internal(Name, Storage, MnesiaTabDef) of
                 ok ->
                     %% It's important to add the table to the shard
                     %% _after_ we actually create it:
-                    mria_rlog_schema:add_table(Shard, Name, MnesiaTabDef);
+                    Entry = #?schema{ mnesia_table = Name
+                                    , shard        = Shard
+                                    , storage      = Storage
+                                    , config       = MnesiaTabDef
+                                    },
+                    mria_rlog_schema:add_entry(Entry);
                 Err ->
                     Err
             end;
@@ -235,9 +241,29 @@ create_table(Name, TabDef) ->
             error(badarg)
     end.
 
+-spec wait_for_tables([table()]) -> ok | {error, _Reason} | {timeout, [table()]}.
+wait_for_tables(Tables) ->
+    case mria_mnesia:wait_for_tables(Tables) of
+        ok ->
+            Shards = lists:usort(lists:map(fun mria_rlog_config:shard_rlookup/1, Tables))
+                        -- [undefined],
+            mria_rlog:wait_for_shards(Shards, infinity),
+            ok;
+        Err ->
+            Err
+    end.
+
 %% @doc Create mnesia table (skip RLOG stuff)
--spec(create_table_internal(Name:: atom(), TabDef :: list()) -> ok | {error, any()}).
-create_table_internal(Name, TabDef) ->
+-spec(create_table_internal(table(), storage(), TabDef :: list()) ->
+             ok | {error, any()}).
+create_table_internal(Name, Storage, Params) ->
+    %% Note: it's impossible to check storage type due to possiblity
+    %% of registering custom backends
+    ClusterNodes = case mria_rlog_config:role() of
+                       core      -> mnesia:system_info(db_nodes);
+                       replicant -> [node()]
+                   end,
+    TabDef = [{Storage, ClusterNodes}|Params],
     mria_rlog_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).

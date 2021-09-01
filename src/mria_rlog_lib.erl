@@ -35,6 +35,8 @@
 
         , ensure_ok/1
         , ensure_tab/1
+
+        , shutdown_process/1
         ]).
 
 %% Internal exports
@@ -251,6 +253,7 @@ call_backend_rw_dirty(Function, Table, Args) ->
 -spec transactional_wrapper(mria_rlog:shard(), atom(), list()) -> mria:t_result(term()).
 transactional_wrapper(Shard, Fun, Args) ->
     ensure_no_transaction(),
+    mria_rlog:wait_for_shards([Shard], infinity),
     TxFun =
         fun() ->
                 Result = apply(mria_rlog_activity, Fun, Args),
@@ -258,7 +261,7 @@ transactional_wrapper(Shard, Fun, Args) ->
                 ensure_no_ops_outside_shard(TxStore, Shard),
                 Key = mria_rlog_lib:make_key(TID),
                 Ops = dig_ops_for_shard(TxStore, Shard),
-                mnesia:write(Shard, #rlog{key = Key, ops = Ops}, write),
+                mria_rlog_tab:write(Shard, Key, Ops),
                 Result
         end,
     mnesia:transaction(TxFun).
@@ -307,6 +310,20 @@ ensure_tab({atomic, ok})                             -> ok;
 ensure_tab({aborted, {already_exists, _Name}})       -> ok;
 ensure_tab({aborted, {already_exists, _Name, _Node}})-> ok;
 ensure_tab({aborted, Error})                         -> Error.
+
+-spec shutdown_process(atom() | pid()) -> ok.
+shutdown_process(Name) when is_atom(Name) ->
+    case whereis(Name) of
+        undefined -> ok;
+        Pid       -> shutdown_process(Pid)
+    end;
+shutdown_process(Pid) when is_pid(Pid) ->
+    Ref = monitor(process, Pid),
+    exit(Pid, shutdown),
+    receive
+        {'DOWN', Ref, _, _, _} ->
+            ok
+    end.
 
 %%================================================================================
 %% Internal
