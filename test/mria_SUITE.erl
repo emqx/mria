@@ -14,7 +14,8 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(mria_mnesia_SUITE).
+%% @doc Smoke tests for all major flows
+-module(mria_SUITE).
 
 -compile(export_all).
 -compile(nowarn_export_all).

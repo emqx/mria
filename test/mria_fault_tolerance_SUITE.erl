@@ -14,9 +14,11 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
+%% Random error injection suite.
+%%
 %% Tests that use error injection should go here, to avoid polluting
 %% the logs and scaring people
--module(mria_mnesia_error_injection_SUITE).
+-module(mria_fault_tolerance_SUITE).
 
 -compile(export_all).
 -compile(nowarn_export_all).

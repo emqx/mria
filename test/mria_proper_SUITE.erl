@@ -13,7 +13,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%--------------------------------------------------------------------
--module(mria_mnesia_proper_SUITE).
+
+%% Test database consistency with random transactions
+-module(mria_proper_SUITE).
 
 -compile(export_all).
 -compile(nowarn_export_all).
