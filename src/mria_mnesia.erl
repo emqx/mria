@@ -184,13 +184,13 @@ running_nodes() ->
     case mria_rlog:role() of
         core ->
             CoreNodes = mnesia:system_info(running_db_nodes),
-            {Replicants0, _} = rpc:multicall(CoreNodes, mria_rlog_status, replicants, []),
+            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, []),
             Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
             lists:usort(CoreNodes ++ Replicants);
         replicant ->
-            case mria_rlog_status:shards_up() of
+            case mria_status:shards_up() of
                 [Shard|_] ->
-                    {ok, CoreNode} = mria_rlog_status:upstream_node(Shard),
+                    {ok, CoreNode} = mria_status:upstream_node(Shard),
                     case mria_lib:rpc_call(CoreNode, ?MODULE, running_nodes, []) of
                         {badrpc, _} -> [];
                         {badtcp, _} -> [];

@@ -110,7 +110,7 @@ init({Parent, Shard}) ->
 handle_info({mnesia_table_event, {write, Record, ActivityId}}, St) ->
     handle_mnesia_event(Record, ActivityId, St);
 handle_info({'DOWN', _MRef, process, Pid, _Info}, St) ->
-    mria_rlog_status:notify_agent_disconnect(Pid),
+    mria_status:notify_agent_disconnect(Pid),
     {noreply, St};
 handle_info(Info, St) ->
     ?tp(warning, "Received unknown event",
@@ -125,7 +125,7 @@ handle_continue(post_init, {Parent, Shard}) ->
     AgentSup = mria_rlog_shard_sup:start_agent_sup(Parent, Shard),
     BootstrapperSup = mria_rlog_shard_sup:start_bootstrapper_sup(Parent, Shard),
     mria_mnesia:wait_for_tables([Shard|Tables]),
-    mria_rlog_status:notify_shard_up(Shard, self()),
+    mria_status:notify_shard_up(Shard, self()),
     ?tp(notice, "Shard fully up",
         #{ node  => node()
          , shard => Shard
@@ -154,7 +154,7 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
                                                   ),
     Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
     monitor(process, Pid),
-    mria_rlog_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
+    mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
     TableSpecs = mria_schema:table_specs_of_shard(Shard),
     {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->

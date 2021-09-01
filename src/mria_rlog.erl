@@ -56,10 +56,10 @@ status() ->
         {mnesia, _} ->
             Info0;
         {rlog, replicant} ->
-            Stats = [{I, mria_rlog_status:get_shard_stats(I)}
+            Stats = [{I, mria_status:get_shard_stats(I)}
                      || I <- mria_schema:shards()],
-            Info0#{ shards_in_sync => mria_rlog_status:shards_up()
-                  , shards_down    => mria_rlog_status:shards_down()
+            Info0#{ shards_in_sync => mria_status:shards_up()
+                  , shards_down    => mria_status:shards_down()
                   , shard_stats    => maps:from_list(Stats)
                   };
         {rlog, core} ->
@@ -87,7 +87,7 @@ wait_for_shards(Shards0, Timeout) ->
         rlog ->
             Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
             lists:foreach(fun ensure_shard/1, Shards),
-            mria_rlog_status:wait_for_shards(Shards, Timeout);
+            mria_status:wait_for_shards(Shards, Timeout);
         mnesia ->
             ok
     end.

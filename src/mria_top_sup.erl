@@ -59,8 +59,8 @@ init(replicant) ->
 %%================================================================================
 
 status_mgr() ->
-    #{ id => mria_rlog_status
-     , start => {mria_rlog_status, start_link, []}
+    #{ id => mria_status
+     , start => {mria_status, start_link, []}
      , restart => permanent
      , shutdown => 5000
      , type => worker

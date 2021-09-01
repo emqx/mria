@@ -16,7 +16,7 @@
 
 %% @doc This module holds status of the RLOG replicas and manages
 %% event subscribers.
--module(mria_rlog_status).
+-module(mria_status).
 
 -behaviour(gen_event).
 
@@ -346,7 +346,7 @@ do_notify_up(Tag, Object, Value) ->
     ets:insert(?replica_tab, {Key, Value}),
     case New of
         true ->
-            ?tp(mria_rlog_status_change,
+            ?tp(mria_status_change,
                 #{ status => up
                  , tag    => Tag
                  , key    => Object
@@ -362,7 +362,7 @@ do_notify_up(Tag, Object, Value) ->
 do_notify_down(Tag, Object) ->
     Key = {Tag, Object},
     ets:delete(?replica_tab, Key),
-    ?tp(mria_rlog_status_change,
+    ?tp(mria_status_change,
         #{ status => down
          , key    => Object
          , tag    => Tag

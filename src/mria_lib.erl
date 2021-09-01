@@ -331,7 +331,7 @@ shutdown_process(Pid) when is_pid(Pid) ->
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->
-    case mria_rlog_status:get_core_node(Shard, 5000) of
+    case mria_status:get_core_node(Shard, 5000) of
         {ok, Node} -> Node;
         timeout    -> error(transaction_timeout)
     end.

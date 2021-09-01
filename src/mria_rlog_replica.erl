@@ -168,7 +168,7 @@ handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
          }),
     Checkpoint = mria_lib:txid_to_checkpoint(TXID),
     mria_lib:import_batch(transaction, Transaction),
-    mria_rlog_status:notify_replicant_import_trans(Shard, Checkpoint),
+    mria_status:notify_replicant_import_trans(Shard, Checkpoint),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     , checkpoint       = Checkpoint
                     }};
@@ -268,7 +268,7 @@ initiate_local_replay(_D) ->
 -spec replay_local(data()) -> fsm_result().
 replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
     {Q, AckRef, Items} = replayq:pop(Q0, #{}),
-    mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     mria_lib:import_batch(dirty, Items),
     ok = replayq:ack(Q, AckRef),
     case replayq:is_empty(Q) of
@@ -283,7 +283,7 @@ replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
 
 -spec initiate_reconnect(data()) -> fsm_result().
 initiate_reconnect(#d{shard = Shard}) ->
-    mria_rlog_status:notify_shard_down(Shard),
+    mria_status:notify_shard_down(Shard),
     {keep_state_and_data, [{timeout, 0, ?reconnect}]}.
 
 %% @private Try connecting to a core node
@@ -356,12 +356,12 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
 -spec buffer_tlog_ops(mria_lib:tx(), data()) -> data().
 buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
     Q = replayq:append(Q0, Transaction),
-    mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D#d{replayq = Q}.
 
 -spec handle_normal(data()) -> ok.
 handle_normal(D = #d{shard = Shard, agent = Agent}) ->
-    mria_rlog_status:notify_shard_up(Shard, Agent),
+    mria_status:notify_shard_up(Shard, Agent),
     %% Now we can enable local reads:
     set_where_to_read(node(), Shard),
     ?tp(notice, "Shard fully up",
@@ -393,7 +393,7 @@ handle_state_trans(OldState, State, Data) ->
         #{ from => OldState
          , to => State
          }),
-    mria_rlog_status:notify_replicant_state(Data#d.shard, State),
+    mria_status:notify_replicant_state(Data#d.shard, State),
     keep_state_and_data.
 
 -spec forget_tmp_worker(data()) -> ok.

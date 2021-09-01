@@ -96,9 +96,9 @@ do_update(Shard) ->
     Resp = lists:sort([I || {ok, I} <- Resp0]),
     case Resp of
         [] ->
-            mria_rlog_status:notify_core_node_down(Shard);
+            mria_status:notify_core_node_down(Shard);
         [{_Load, _Rand, Core}|_] ->
-            mria_rlog_status:notify_core_node_up(Shard, Core)
+            mria_status:notify_core_node_up(Shard, Core)
     end.
 
 %%================================================================================
@@ -111,7 +111,7 @@ core_node_weight(Shard) ->
         undefined ->
             undefined;
         _Pid ->
-            NAgents = length(mria_rlog_status:agents()),
+            NAgents = length(mria_status:agents()),
             %% TODO: Add OLP check
             Load = 1.0 * NAgents,
             %% The return values will be lexicographically sorted. Load will

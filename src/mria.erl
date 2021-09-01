@@ -275,7 +275,7 @@ ro_transaction(Shard, Fun) ->
             mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
         replicant ->
             ?tp(mria_ro_transaction, #{role => replicant}),
-            case mria_rlog_status:upstream(Shard) of
+            case mria_status:upstream(Shard) of
                 {ok, AgentPid} ->
                     Ret = mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]),
                     %% Now we check that the agent pid is still the
@@ -283,7 +283,7 @@ ro_transaction(Shard, Fun) ->
                     %% through bootstrapping process while running the
                     %% transaction and it didn't have a chance to
                     %% observe the stale writes.
-                    case mria_rlog_status:upstream(Shard) of
+                    case mria_status:upstream(Shard) of
                         {ok, AgentPid} ->
                             Ret;
                         _ ->
@@ -340,7 +340,7 @@ dirty_delete_object(Record) ->
 
 -spec ro_trans_rpc(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_trans_rpc(Shard, Fun) ->
-    {ok, Core} = mria_rlog_status:get_core_node(Shard, 5000),
+    {ok, Core} = mria_status:get_core_node(Shard, 5000),
     case mria_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
         {badrpc, Err} ->
             ?tp(error, ro_trans_badrpc,
