@@ -286,11 +286,11 @@ handle_event(Event, State = #s{ref = Ref, subscriber = Sub}) ->
 -spec wait_objects(atom(), [A], timeout()) -> ok | {timeout, [A]}.
 wait_objects(Tag, Objects, Timeout) ->
     ERef = subscribe_events(),
-    TRef = mria_rlog_lib:send_after(Timeout, self(), {ERef, timeout}),
+    TRef = mria_lib:send_after(Timeout, self(), {ERef, timeout}),
     %% Exclude shards that are up, since they are not going to send any events:
     DownObjects = Objects -- objects_up(Tag),
     Ret = do_wait_objects(Tag, ERef, DownObjects),
-    mria_rlog_lib:cancel_timer(TRef),
+    mria_lib:cancel_timer(TRef),
     unsubscribe_events(ERef),
     Ret.
 

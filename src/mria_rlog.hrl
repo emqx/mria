@@ -2,8 +2,8 @@
 -define(MRIA_RLOG_HRL, true).
 
 -record(rlog,
-        { key :: mria_rlog_lib:txid()
-        , ops :: mria_rlog_lib:tx()
+        { key :: mria_lib:txid()
+        , ops :: mria_lib:tx()
         }).
 
 -define(schema, mria_rlog_schema).

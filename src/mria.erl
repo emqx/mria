@@ -264,7 +264,7 @@ create_table_internal(Name, Storage, Params) ->
                        replicant -> [node()]
                    end,
     TabDef = [{Storage, ClusterNodes}|Params],
-    mria_rlog_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
+    mria_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->
@@ -299,7 +299,7 @@ ro_transaction(Shard, Fun) ->
 
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
 transaction(Shard, Fun, Args) ->
-    mria_rlog_lib:call_backend_rw_trans(Shard, transaction, [Fun, Args]).
+    mria_lib:call_backend_rw_trans(Shard, transaction, [Fun, Args]).
 
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
@@ -308,7 +308,7 @@ transaction(Shard, Fun) ->
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
     Shard = mria_config:shard_rlookup(Table),
-    mria_rlog_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
+    mria_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
 
 -spec dirty_write(tuple()) -> ok.
 dirty_write(Record) ->
@@ -316,11 +316,11 @@ dirty_write(Record) ->
 
 -spec dirty_write(mria:table(), tuple()) -> ok.
 dirty_write(Tab, Record) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
+    mria_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
 
 -spec dirty_delete(mria:table(), term()) -> ok.
 dirty_delete(Tab, Key) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_delete, Tab, [Key]).
+    mria_lib:call_backend_rw_dirty(dirty_delete, Tab, [Key]).
 
 -spec dirty_delete({mria:table(), term()}) -> ok.
 dirty_delete({Tab, Key}) ->
@@ -328,7 +328,7 @@ dirty_delete({Tab, Key}) ->
 
 -spec dirty_delete_object(mria:table(), tuple()) -> ok.
 dirty_delete_object(Tab, Record) ->
-    mria_rlog_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
+    mria_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
 
 -spec dirty_delete_object(tuple()) -> ok.
 dirty_delete_object(Record) ->
@@ -341,7 +341,7 @@ dirty_delete_object(Record) ->
 -spec ro_trans_rpc(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_trans_rpc(Shard, Fun) ->
     {ok, Core} = mria_rlog_status:get_core_node(Shard, 5000),
-    case mria_rlog_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
+    case mria_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
         {badrpc, Err} ->
             ?tp(error, ro_trans_badrpc,
                 #{ core   => Core

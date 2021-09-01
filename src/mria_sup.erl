@@ -26,7 +26,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 stop() ->
-    mria_rlog_lib:shutdown_process(?MODULE).
+    mria_lib:shutdown_process(?MODULE).
 
 is_running() ->
     is_pid(whereis(?MODULE)).

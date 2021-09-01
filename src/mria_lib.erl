@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% Internal functions
--module(mria_rlog_lib).
+-module(mria_lib).
 
 -export([ approx_checkpoint/0
         , txid_to_checkpoint/1
@@ -92,7 +92,7 @@
 approx_checkpoint() ->
     erlang:system_time(millisecond).
 
--spec txid_to_checkpoint(mria_rlog_lib:txid()) -> mria_rlog_server:checkpoint().
+-spec txid_to_checkpoint(mria_lib:txid()) -> mria_rlog_server:checkpoint().
 txid_to_checkpoint({Checkpoint, _}) ->
     Checkpoint.
 
@@ -101,14 +101,14 @@ txid_to_checkpoint({Checkpoint, _}) ->
 %% it is a tuple of a timestamp (ts) and the node id (node_id), where
 %% ts is at millisecond precision to ensure it is locally monotonic and
 %% unique, and transaction pid, should ensure global uniqueness.
--spec make_key(mria_rlog_lib:mnesia_tid() | undefined) -> mria_rlog_lib:txid().
+-spec make_key(mria_lib:mnesia_tid() | undefined) -> mria_lib:txid().
 make_key(#tid{pid = Pid}) ->
     {approx_checkpoint(), Pid};
 make_key(undefined) ->
     %% This is a dirty operation
     {approx_checkpoint(), make_ref()}.
 
-%% -spec make_key_in_past(integer()) -> mria_rlog_lib:txid().
+%% -spec make_key_in_past(integer()) -> mria_lib:txid().
 %% make_key_in_past(Dt) ->
 %%     {TS, Node} = make_key(),
 %%     {TS - Dt, Node}.
@@ -224,7 +224,7 @@ call_backend_rw_trans(Shard, Function, Args) ->
             transactional_wrapper(Shard, Function, Args);
         {rlog, replicant, _} ->
             Core = find_upstream_node(Shard),
-            mria_rlog_lib:rpc_call(Core, ?MODULE, transactional_wrapper, [Shard, Function, Args])
+            mria_lib:rpc_call(Core, ?MODULE, transactional_wrapper, [Shard, Function, Args])
     end.
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
@@ -243,8 +243,8 @@ call_backend_rw_dirty(Function, Table, Args) ->
                 false ->
                     %% Run dirty operation via RPC:
                     Core = find_upstream_node(Shard),
-                    mria_rlog_lib:rpc_call(Core, ?MODULE, dirty_wrapper,
-                                           [Shard, Function, Table, Args])
+                    mria_lib:rpc_call(Core, ?MODULE, dirty_wrapper,
+                                      [Shard, Function, Table, Args])
             end
     end.
 
@@ -259,7 +259,7 @@ transactional_wrapper(Shard, Fun, Args) ->
                 Result = apply(mria_activity, Fun, Args),
                 {TID, TxStore} = get_internals(),
                 ensure_no_ops_outside_shard(TxStore, Shard),
-                Key = mria_rlog_lib:make_key(TID),
+                Key = mria_lib:make_key(TID),
                 Ops = dig_ops_for_shard(TxStore, Shard),
                 mria_rlog_tab:write(Shard, Key, Ops),
                 Result
@@ -289,12 +289,12 @@ dirty_wrapper(Shard, Fun, Table, Args) ->
             %% This may look extremely inconsistent, and it is. But so
             %% are dirty operations in mnesia...
             OP = {dirty, Fun, [Table|Args]},
-            Key = mria_rlog_lib:make_key(undefined),
+            Key = mria_lib:make_key(undefined),
             mnesia:dirty_write(Shard, #rlog{key = Key, ops = OP}),
             Ret
     end.
 
--spec get_internals() -> {mria_rlog_lib:mnesia_tid(), ets:tab()}.
+-spec get_internals() -> {mria_lib:mnesia_tid(), ets:tab()}.
 get_internals() ->
     case mnesia:get_activity_id() of
         {_, TID, #tidstore{store = TxStore}} ->

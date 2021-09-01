@@ -72,7 +72,7 @@ role() ->
 
 -spec role(node()) -> mria_rlog:role().
 role(Node) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, role, []).
+    mria_lib:rpc_call(Node, ?MODULE, role, []).
 
 backend() ->
     mria_config:backend().
@@ -113,7 +113,7 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
         true ->
             MyNode = node(),
             Args = [Shard, {MyNode, Subscriber}, Checkpoint],
-            mria_rlog_lib:rpc_call(RemoteNode, mria_rlog_server, subscribe, Args);
+            mria_lib:rpc_call(RemoteNode, mria_rlog_server, subscribe, Args);
         false ->
             {badrpc, probe_failed}
     end.

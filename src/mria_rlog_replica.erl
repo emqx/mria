@@ -141,19 +141,19 @@ terminate(_Reason, _State, #d{}) ->
 %%================================================================================
 
 %% This function is called by the remote core node.
--spec push_tlog_entry(mria_rlog_lib:subscriber(), mria_rlog_lib:tlog_entry()) -> ok.
+-spec push_tlog_entry(mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
 push_tlog_entry({Node, Pid}, Batch) ->
     %% TODO: this should be a cast, but gen_rpc doesn't guarantee the
     %% ordering of cast messages. In the production code this will be
     %% horrible!
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
+    mria_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
 %% @private Consume transactions from the core node
--spec handle_tlog_entry(state(), mria_rlog_lib:tlog_entry(), data()) -> fsm_result().
+-spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
 handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
@@ -166,8 +166,8 @@ handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
          , txid        => TXID
          , transaction => Transaction
          }),
-    Checkpoint = mria_rlog_lib:txid_to_checkpoint(TXID),
-    mria_rlog_lib:import_batch(transaction, Transaction),
+    Checkpoint = mria_lib:txid_to_checkpoint(TXID),
+    mria_lib:import_batch(transaction, Transaction),
     mria_rlog_status:notify_replicant_import_trans(Shard, Checkpoint),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     , checkpoint       = Checkpoint
@@ -269,7 +269,7 @@ initiate_local_replay(_D) ->
 replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
     {Q, AckRef, Items} = replayq:pop(Q0, #{}),
     mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
-    mria_rlog_lib:import_batch(dirty, Items),
+    mria_lib:import_batch(dirty, Items),
     ok = replayq:ack(Q, AckRef),
     case replayq:is_empty(Q) of
         true ->
@@ -325,7 +325,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
-    try_connect(mria_rlog_lib:shuffle(mria_rlog:core_nodes()), Shard, Checkpoint).
+    try_connect(mria_lib:shuffle(mria_rlog:core_nodes()), Shard, Checkpoint).
 
 -spec try_connect([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
                 { ok
@@ -353,7 +353,7 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
             try_connect(Rest, Shard, Checkpoint)
     end.
 
--spec buffer_tlog_ops(mria_rlog_lib:tx(), data()) -> data().
+-spec buffer_tlog_ops(mria_lib:tx(), data()) -> data().
 buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
     Q = replayq:append(Q0, Transaction),
     mria_rlog_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
@@ -404,7 +404,7 @@ forget_tmp_worker(#d{tmp_worker = Pid}) ->
     after 0 -> ok
     end.
 
--spec do_push_tlog_entry(pid(), mria_rlog_lib:tlog_entry()) -> ok.
+-spec do_push_tlog_entry(pid(), mria_lib:tlog_entry()) -> ok.
 do_push_tlog_entry(Pid, Batch) ->
     ?tp(receive_tlog_entry,
         #{ entry => Batch

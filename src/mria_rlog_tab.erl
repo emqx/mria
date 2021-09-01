@@ -40,7 +40,7 @@ ensure_table(Shard) ->
     ok = mria_mnesia:copy_table(Shard, null_copies).
 
 %% @doc Write a transaction log.
--spec write(mria_rlog:shard(), mria_rlog_lib:txid(), [mria_rlog_lib:op(),...]) -> ok.
+-spec write(mria_rlog:shard(), mria_lib:txid(), [mria_lib:op(),...]) -> ok.
 write(Shard, Key, Ops) ->
     Log = #rlog{ key = Key
                , ops = Ops

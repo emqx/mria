@@ -76,9 +76,9 @@ start_link(Parent, Shard) ->
 %% server is lost or delayed due to network congestion.
 -spec probe(node(), mria_rlog:shard()) -> boolean().
 probe(Node, Shard) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) =:= true.
+    mria_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) =:= true.
 
--spec subscribe(mria_rlog:shard(), mria_rlog_lib:subscriber(), checkpoint()) ->
+-spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint()) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
@@ -91,7 +91,7 @@ subscribe(Shard, Subscriber, Checkpoint) ->
                                                | {error, term()}.
 bootstrap_me(RemoteNode, Shard) ->
     Me = {node(), self()},
-    case mria_rlog_lib:rpc_call(RemoteNode, ?MODULE, do_bootstrap, [Shard, Me]) of
+    case mria_lib:rpc_call(RemoteNode, ?MODULE, do_bootstrap, [Shard, Me]) of
         {ok, Pid} -> {ok, Pid};
         Err       -> {error, Err}
     end.
@@ -154,7 +154,7 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
                                                   ),
     Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
     monitor(process, Pid),
-    mria_rlog_status:notify_agent_connect(Shard, mria_rlog_lib:subscriber_node(Subscriber), Pid),
+    mria_rlog_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
     TableSpecs = mria_rlog_schema:table_specs_of_shard(Shard),
     {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->
@@ -182,12 +182,12 @@ needs_bootstrap(_, Replay, _) ->
     {true, Replay}.
 
 %% needs_bootstrap(BootstrapThreshold, Replay, Checkpoint) ->
-%%     {BootstrapDeadline, _} = mria_rlog_lib:make_key_in_past(BootstrapThreshold),
+%%     {BootstrapDeadline, _} = mria_lib:make_key_in_past(BootstrapThreshold),
 %%     case Checkpoint of
 %%         {TS, _Node} when TS > BootstrapDeadline ->
 %%             {false, TS - Replay};
 %%         _ ->
-%%             {ReplaySince, _} = mria_rlog_lib:make_key_in_past(Replay),
+%%             {ReplaySince, _} = mria_lib:make_key_in_past(Replay),
 %%             {true, ReplaySince}
 %%     end.
 
@@ -231,7 +231,7 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
 %% Internal exports (gen_rpc)
 %%================================================================================
 
--spec do_bootstrap(mria_rlog:shard(), mria_rlog_lib:subscriber()) -> {ok, pid()}.
+-spec do_bootstrap(mria_rlog:shard(), mria_lib:subscriber()) -> {ok, pid()}.
 do_bootstrap(Shard, Subscriber) ->
     gen_server:call(Shard, {bootstrap, Subscriber}, infinity).
 

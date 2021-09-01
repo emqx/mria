@@ -48,7 +48,7 @@
 
 -record(server,
         { shard       :: mria_rlog:shard()
-        , subscriber  :: mria_rlog_lib:subscriber()
+        , subscriber  :: mria_lib:subscriber()
         , key_queue   :: replayq:q() | undefined
         , tables      :: [mria:table()]
         }).
@@ -64,7 +64,7 @@
 %%================================================================================
 
 %% @doc Start bootstrapper server
--spec start_link(mria_rlog:shard(), mria_rlog_lib:subscriber()) -> {ok, pid()}.
+-spec start_link(mria_rlog:shard(), mria_lib:subscriber()) -> {ok, pid()}.
 start_link(Shard, Subscriber) ->
     gen_server:start_link(?MODULE, {server, Shard, Subscriber}, []).
 
@@ -154,19 +154,19 @@ terminate(_Reason, St = #client{}) ->
 %% Internal functions
 %%================================================================================
 
--spec push_batch(mria_rlog_lib:subscriber(), batch()) -> ok | {badrpc, _}.
+-spec push_batch(mria_lib:subscriber(), batch()) -> ok | {badrpc, _}.
 push_batch({Node, Pid}, Batch = {_, _, _}) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_push_batch, [Pid, Batch]).
+    mria_lib:rpc_call(Node, ?MODULE, do_push_batch, [Pid, Batch]).
 
--spec complete(mria_rlog_lib:subscriber(), pid(), mria_rlog_server:checkpoint()) -> ok.
+-spec complete(mria_lib:subscriber(), pid(), mria_rlog_server:checkpoint()) -> ok.
 complete({Node, Pid}, Server, Checkpoint) ->
-    mria_rlog_lib:rpc_call(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
+    mria_lib:rpc_call(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
 handle_batch(Table, Records) ->
     lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
 
 start_table_traverse(St = #server{tables = [], subscriber = Subscriber}) ->
-    _ = complete(Subscriber, self(), mria_rlog_lib:approx_checkpoint()),
+    _ = complete(Subscriber, self(), mria_lib:approx_checkpoint()),
     {stop, normal, St};
 start_table_traverse(St0 = #server{ shard = Shard
                                   , tables = [Table|_Rest]

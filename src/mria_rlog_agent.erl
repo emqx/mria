@@ -41,7 +41,7 @@
 
 -record(d,
         { shard                :: mria_rlog:shard()
-        , subscriber           :: mria_rlog_lib:subscriber()
+        , subscriber           :: mria_lib:subscriber()
         , seqno          = 0   :: integer()
         }).
 
@@ -72,7 +72,7 @@ stop(Pid) ->
 
 callback_mode() -> [handle_event_function, state_enter].
 
--spec init({mria_rlog:shard(), mria_rlog_lib:subscriber(), mria_rlog_lib:txid()}) -> {ok, state(), data()}.
+-spec init({mria_rlog:shard(), mria_lib:subscriber(), mria_lib:txid()}) -> {ok, state(), data()}.
 init({Shard, Subscriber, _ReplaySince}) ->
     logger:update_process_metadata(#{ domain     => [mria, rlog, agent]
                                     , shard      => Shard
@@ -132,7 +132,7 @@ handle_state_trans(_OldState, _State, _Data) ->
          }),
     keep_state_and_data.
 
--spec handle_mnesia_event(mria_rlog_lib:rlog(), term(), data()) -> fsm_result().
+-spec handle_mnesia_event(mria_lib:rlog(), term(), data()) -> fsm_result().
 handle_mnesia_event({Shard, TXID, Ops}, _ActivityId, D = #d{shard = Shard}) ->
     SeqNo = D#d.seqno,
     ?tp(rlog_realtime_op,
