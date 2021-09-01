@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% This module contains helper functions that run inside mria_rlog:transaction
--module(mria_rlog_activity).
+-module(mria_activity).
 
 -include("mria.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").

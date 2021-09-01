@@ -268,16 +268,16 @@ create_table_internal(Name, Storage, Params) ->
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->
-    mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]);
+    mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
 ro_transaction(Shard, Fun) ->
     case mria_rlog:role() of
         core ->
-            mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]);
+            mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
         replicant ->
             ?tp(mria_ro_transaction, #{role => replicant}),
             case mria_rlog_status:upstream(Shard) of
                 {ok, AgentPid} ->
-                    Ret = mnesia:transaction(fun mria_rlog_activity:ro_transaction/1, [Fun]),
+                    Ret = mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]),
                     %% Now we check that the agent pid is still the
                     %% same, meaning the replicant node haven't gone
                     %% through bootstrapping process while running the

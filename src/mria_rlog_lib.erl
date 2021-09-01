@@ -156,7 +156,7 @@ import_op(Op) ->
         {{Tab, _K}, Record, delete_object} ->
             mnesia:delete_object(Tab, Record, write);
         {{Tab, _K}, '_', clear_table} ->
-            mria_rlog_activity:clear_table(Tab)
+            mria_activity:clear_table(Tab)
     end.
 
 -spec import_op_dirty(op()) -> ok.
@@ -256,7 +256,7 @@ transactional_wrapper(Shard, Fun, Args) ->
     mria_rlog:wait_for_shards([Shard], infinity),
     TxFun =
         fun() ->
-                Result = apply(mria_rlog_activity, Fun, Args),
+                Result = apply(mria_activity, Fun, Args),
                 {TID, TxStore} = get_internals(),
                 ensure_no_ops_outside_shard(TxStore, Shard),
                 Key = mria_rlog_lib:make_key(TID),
@@ -271,7 +271,7 @@ local_transactional_wrapper(Activity, Args) ->
     ensure_no_transaction(),
     TxFun =
         fun() ->
-                Result = apply(mria_rlog_activity, Activity, Args),
+                Result = apply(mria_activity, Activity, Args),
                 {_TID, TxStore} = get_internals(),
                 ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
                 Result
