@@ -66,7 +66,7 @@ unwrap_mnesia_ret({aborted, Ret}) ->
     mnesia:abort(Ret).
 
 assert_ro() ->
-    case mria_rlog_config:strict_mode() of
+    case mria_config:strict_mode() of
         true  -> do_assert_ro();
         false -> ok
     end.

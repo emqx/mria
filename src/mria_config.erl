@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% @doc Functions for accessing the RLOG configuration
--module(mria_rlog_config).
+-module(mria_config).
 
 -export([ role/0
         , backend/0

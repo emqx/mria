@@ -93,7 +93,7 @@ init({server, Shard, Subscriber}) ->
     logger:set_process_metadata(#{ domain => [mria, rlog, bootstrapper, server]
                                  , shard  => Shard
                                  }),
-    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    #{tables := Tables} = mria_config:shard_config(Shard),
     ?tp(info, rlog_bootstrapper_start,
         #{ shard     => Shard
          , subscribe => Subscriber

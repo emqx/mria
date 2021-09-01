@@ -68,14 +68,14 @@ status() ->
 
 -spec role() -> mria_rlog:role().
 role() ->
-    mria_rlog_config:role().
+    mria_config:role().
 
 -spec role(node()) -> mria_rlog:role().
 role(Node) ->
     mria_rlog_lib:rpc_call(Node, ?MODULE, role, []).
 
 backend() ->
-    mria_rlog_config:backend().
+    mria_config:backend().
 
 -spec core_nodes() -> [node()].
 core_nodes() ->
@@ -83,7 +83,7 @@ core_nodes() ->
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
 wait_for_shards(Shards0, Timeout) ->
-    case mria_rlog_config:backend() of
+    case mria_config:backend() of
         rlog ->
             Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
             lists:foreach(fun ensure_shard/1, Shards),

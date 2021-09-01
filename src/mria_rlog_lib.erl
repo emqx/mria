@@ -176,13 +176,13 @@ import_op_dirty({{Tab, _K}, Record, write}) ->
 %% @doc Do an RPC call
 -spec rpc_call(node(), module(), atom(), list()) -> term().
 rpc_call(Node, Module, Function, Args) ->
-    Mod = mria_rlog_config:rpc_module(),
+    Mod = mria_config:rpc_module(),
     apply(Mod, call, [Node, Module, Function, Args]).
 
 %% @doc Do an RPC cast
 -spec rpc_cast(node(), module(), atom(), list()) -> term().
 rpc_cast(Node, Module, Function, Args) ->
-    Mod = mria_rlog_config:rpc_module(),
+    Mod = mria_config:rpc_module(),
     apply(Mod, cast, [Node, Module, Function, Args]).
 
 %%================================================================================
@@ -235,7 +235,7 @@ call_backend_rw_dirty(Function, Table, Args) ->
             Role = core, %% Assert
             apply(mnesia, Function, [Table|Args]);
         rlog ->
-            Shard = mria_rlog_config:shard_rlookup(Table),
+            Shard = mria_config:shard_rlookup(Table),
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
@@ -337,7 +337,7 @@ find_upstream_node(Shard) ->
     end.
 
 dig_ops_for_shard(TxStore, Shard) ->
-    #{match_spec := MS} = mria_rlog_config:shard_config(Shard),
+    #{match_spec := MS} = mria_config:shard_config(Shard),
     ets:select(TxStore, MS).
 
 ensure_no_transaction() ->
@@ -347,7 +347,7 @@ ensure_no_transaction() ->
     end.
 
 ensure_no_ops_outside_shard(TxStore, Shard) ->
-    case mria_rlog_config:strict_mode() of
+    case mria_config:strict_mode() of
         true  -> do_ensure_no_ops_outside_shard(TxStore, Shard);
         false -> ok
     end.
@@ -355,7 +355,7 @@ ensure_no_ops_outside_shard(TxStore, Shard) ->
 do_ensure_no_ops_outside_shard(TxStore, Shard) ->
     Tables = ets:match(TxStore, {{'$1', '_'}, '_', '_'}),
     lists:foreach( fun([Table]) ->
-                           case mria_rlog_config:shard_rlookup(Table) =:= Shard of
+                           case mria_config:shard_rlookup(Table) =:= Shard of
                                true  -> ok;
                                false -> mnesia:abort({invalid_transaction, Table, Shard})
                            end

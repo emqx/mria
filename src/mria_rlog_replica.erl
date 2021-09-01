@@ -220,7 +220,7 @@ initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote}) ->
     %% Disable local reads before starting bootstrap:
     set_where_to_read(Remote, Shard),
     %% Discard all data of the shard:
-    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    #{tables := Tables} = mria_config:shard_config(Shard),
     [ok = clear_table(Tab) || Tab <- Tables],
     %% Do bootstrap:
     {ok, Pid} = mria_rlog_bootstrapper:start_link_client(Shard, Remote, self()),
@@ -422,7 +422,7 @@ clear_table(Table) ->
 %% implementation of `mnesia:dirty_rpc')
 -spec set_where_to_read(node(), mria_rlog:shard()) -> ok.
 set_where_to_read(Node, Shard) ->
-    #{tables := Tables} = mria_rlog_config:shard_config(Shard),
+    #{tables := Tables} = mria_config:shard_config(Shard),
     lists:foreach(
       fun(Tab) ->
               Key = {Tab, where_to_read},
@@ -442,5 +442,5 @@ set_where_to_read(Node, Shard) ->
 -spec post_connect(mria_rlog:shard(), [mria_rlog_schema:entry()]) -> ok.
 post_connect(Shard, TableSpecs) ->
     Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
-    mria_rlog_config:load_shard_config(Shard, Tables),
+    mria_config:load_shard_config(Shard, Tables),
     ok = mria_rlog_schema:converge_replicant(Shard, TableSpecs).

@@ -245,7 +245,7 @@ create_table(Name, TabDef) ->
 wait_for_tables(Tables) ->
     case mria_mnesia:wait_for_tables(Tables) of
         ok ->
-            Shards = lists:usort(lists:map(fun mria_rlog_config:shard_rlookup/1, Tables))
+            Shards = lists:usort(lists:map(fun mria_config:shard_rlookup/1, Tables))
                         -- [undefined],
             mria_rlog:wait_for_shards(Shards, infinity),
             ok;
@@ -259,7 +259,7 @@ wait_for_tables(Tables) ->
 create_table_internal(Name, Storage, Params) ->
     %% Note: it's impossible to check storage type due to possiblity
     %% of registering custom backends
-    ClusterNodes = case mria_rlog_config:role() of
+    ClusterNodes = case mria_config:role() of
                        core      -> mnesia:system_info(db_nodes);
                        replicant -> [node()]
                    end,
@@ -307,7 +307,7 @@ transaction(Shard, Fun) ->
 
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
-    Shard = mria_rlog_config:shard_rlookup(Table),
+    Shard = mria_config:shard_rlookup(Table),
     mria_rlog_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
 
 -spec dirty_write(tuple()) -> ok.

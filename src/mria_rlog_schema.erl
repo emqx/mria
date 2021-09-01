@@ -118,7 +118,7 @@ tables_of_shard(Shard) ->
 %% properties:
 -spec table_specs_of_shard(mria_rlog:shard()) -> [mria_rlog_schema:entry()].
 table_specs_of_shard(Shard) ->
-    %%core = mria_rlog_config:role(), % assert
+    %%core = mria_config:role(), % assert
     Pattern = #?schema{mnesia_table = '_', shard = Shard, storage = '_', config = '_'},
     {atomic, Tuples} = mnesia:transaction(fun mnesia:match_object/1, [Pattern], infinity),
     Tuples.

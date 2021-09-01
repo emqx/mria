@@ -121,7 +121,7 @@ handle_info(Info, St) ->
 handle_continue(post_init, {Parent, Shard}) ->
     ok = mria_rlog_tab:ensure_table(Shard),
     Tables = process_schema(Shard),
-    mria_rlog_config:load_shard_config(Shard, Tables),
+    mria_config:load_shard_config(Shard, Tables),
     AgentSup = mria_rlog_shard_sup:start_agent_sup(Parent, Shard),
     BootstrapperSup = mria_rlog_shard_sup:start_bootstrapper_sup(Parent, Shard),
     mria_mnesia:wait_for_tables([Shard|Tables]),
@@ -216,7 +216,7 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
                  , activity_id => ActivityId
                  }),
             Tables = mria_rlog_schema:tables_of_shard(Shard),
-            mria_rlog_config:load_shard_config(Shard, Tables),
+            mria_config:load_shard_config(Shard, Tables),
             %% Shut down all the downstream connections by restarting the supervisors:
             AgentSup = mria_rlog_shard_sup:restart_agent_sup(Parent),
             BootstrapperSup = mria_rlog_shard_sup:restart_bootstrapper_sup(Parent),

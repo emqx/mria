@@ -28,7 +28,7 @@
 
 start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{}),
-    mria_rlog_config:load_config(),
+    mria_config:load_config(),
     ?tp(notice, "Starting mnesia", #{}),
     mria_mnesia:init(),
     ?tp(notice, "Initializing RLOG schema", #{}),
@@ -41,7 +41,7 @@ start(_Type, _Args) ->
     Sup.
 
 stop(_State) ->
-    mria_rlog_config:erase_all_config(),
+    mria_config:erase_all_config(),
     ?tp(notice, "Mria is stopped", #{}).
 
 %%================================================================================
