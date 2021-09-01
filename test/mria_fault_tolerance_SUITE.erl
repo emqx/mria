@@ -47,6 +47,7 @@ t_agent_restart(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     CounterKey = counter,
     ?check_trace(
+       #{timetrap => 60000},
        try
            Nodes = [N1, _N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
@@ -71,6 +72,7 @@ t_rand_error_injection(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     CounterKey = counter,
     ?check_trace(
+       #{timetrap => 60000},
        try
            Nodes = [N1, _N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
@@ -95,6 +97,7 @@ t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
+       #{timetrap => 60000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
