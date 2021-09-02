@@ -46,9 +46,6 @@ end_per_testcase(TestCase, Config) ->
     snabbkaffe:stop(),
     Config.
 
-t_data_dir(_) ->
-    mria_mnesia:data_dir().
-
 t_create_del_table(_) ->
     try
         mria:start(),

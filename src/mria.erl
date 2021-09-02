@@ -155,21 +155,7 @@ join(Node) when is_atom(Node) ->
         {replicant, _, _} ->
             ok;
         {core, false, true} ->
-            case mria_rlog:role(Node) of
-                core ->
-                    ?tp(notice, "Mria is restarting to join the core cluster",
-                        #{ seed => Node
-                         }),
-                    stop(),
-                    ok = mria_mnesia:join_cluster(Node),
-                    start(),
-                    ?tp(notice, "Mria has joined the core cluster",
-                        #{ seed   => Node
-                         , status => info()
-                         });
-                replicant ->
-                    ignore
-            end;
+            do_join(Node);
         {core, false, false} ->
             {error, {node_down, Node}};
         {core, true, _} ->
@@ -357,3 +343,19 @@ ro_trans_rpc(Shard, Fun) ->
         Ans ->
             Ans
     end.
+
+-spec do_join(node()) -> ok | ignore | {error, _}.
+do_join(Node) ->
+  case mria_rlog:role(Node) of
+      core ->
+          ?tp(notice, "Mria is restarting to join the core cluster", #{seed => Node}),
+          stop(),
+          ok = mria_mnesia:join_cluster(Node),
+          start(),
+          ?tp(notice, "Mria has joined the core cluster",
+              #{ seed   => Node
+               , status => info()
+               });
+      replicant ->
+          ignore
+  end.
