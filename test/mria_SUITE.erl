@@ -46,9 +46,6 @@ end_per_testcase(TestCase, Config) ->
     snabbkaffe:stop(),
     Config.
 
-t_data_dir(_) ->
-    mria_mnesia:data_dir().
-
 t_create_del_table(_) ->
     try
         mria:start(),
@@ -160,6 +157,8 @@ t_rlog_smoke_test(_) ->
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, 30]),
            mria_mnesia_test_util:stabilize(1000),
+           %% Check status:
+           [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            %% Create a delete transaction, to see if deletes are propagated too:
            K = rpc:call(N2, mnesia, dirty_first, [test_tab]),
@@ -167,6 +166,8 @@ t_rlog_smoke_test(_) ->
            mria_mnesia_test_util:stabilize(1000),
            [] = rpc:call(N2, mnesia, dirty_read, [test_tab, K]),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           %% Check status:
+           [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
            mria_ct:stop_slave(N3),
            Nodes
        after

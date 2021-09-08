@@ -5,10 +5,10 @@
   {registered,
    [mria_sup,
     mria_membership,
-    mria_cluster_sup,
     mria_node_monitor,
     mria_rlog_server,
     mria_lb,
+    mria_top_sup,
     mria_rlog_sup
    ]},
   {applications,

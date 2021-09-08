@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -14,24 +14,28 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(mria_node).
+-module(mria_autoclean_SUITE).
 
-%% Node API
--export([ is_aliving/1
-        , is_running/1
-        ]).
+-compile(export_all).
+-compile(nowarn_export_all).
 
-%% @doc Is the node aliving?
--spec(is_aliving(node()) -> boolean()).
-is_aliving(Node) when Node =:= node() ->
-    true;
-is_aliving(Node) ->
-    lists:member(Node, nodes()) orelse net_adm:ping(Node) =:= pong.
+all() ->
+    [t_autoclean].
 
-%% @doc Is the application running?
--spec is_running(node()) -> boolean().
-is_running(Node) ->
-    case rpc:call(Node, mria_sup, is_running, []) of
-        {badrpc, _} -> false;
-        Result -> Result
+init_per_suite(Config) ->
+    Config.
+
+end_per_suite(_Config) ->
+    ok.
+
+t_autoclean(_) ->
+    Cluster = mria_ct:cluster([core, core], [{mria, cluster_autoclean, 1000}]),
+    try
+        [N0, N1] = mria_ct:start_cluster(mria, Cluster),
+        [N0, N1] = rpc:call(N0, mria, info, [running_nodes]),
+        mria_ct:stop_slave(N1),
+        ok = timer:sleep(2000),
+        [N0] = rpc:call(N0, mria, info, [running_nodes])
+    after
+        mria_ct:teardown_cluster(Cluster)
     end.

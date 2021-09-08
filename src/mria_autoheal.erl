@@ -24,9 +24,11 @@
 
 -record(autoheal, {delay, role, proc, timer}).
 
--type(autoheal() :: #autoheal{}).
+-type autoheal() :: #autoheal{}.
 
 -export_type([autoheal/0]).
+
+-include_lib("snabbkaffe/include/trace.hrl").
 
 -define(DEFAULT_DELAY, 15000).
 -define(LOG(Level, Format, Args),
@@ -34,12 +36,15 @@
 
 init() ->
     case enabled() of
-        {true, Delay} -> #autoheal{delay = Delay};
-        false -> undefined
+        {true, Delay} ->
+            ?tp("Starting autoheal", #{delay => Delay}),
+            #autoheal{delay = Delay};
+        false ->
+            undefined
     end.
 
 enabled() ->
-    case mria:env(cluster_autoheal, true) of
+    case application:get_env(mria, cluster_autoheal, true) of
         false -> false;
         true  -> {true, ?DEFAULT_DELAY};
         Delay when is_integer(Delay) ->
@@ -134,22 +139,20 @@ heal_partition([{Nodes, []}|_]) ->
 heal_partition([{Majority, Minority}, {Minority, Majority}]) ->
     reboot_minority(Minority);
 heal_partition(SplitView) ->
-    ?LOG(critical, "Cannot heal the partitions: ~p", [SplitView]),
+    ?tp(critical, "Cannot heal the partition", #{split_view => SplitView}),
     error({unknown_splitview, SplitView}).
 
 reboot_minority(Minority) ->
-    lists:foreach(fun shutdown/1, Minority),
-    timer:sleep(rand:uniform(1000) + 100),
-    lists:foreach(fun reboot/1, Minority),
+    ?tp(info, "Rebooting minority", #{nodes => Minority}),
+    lists:foreach(fun rejoin/1, Minority),
     Minority.
 
-shutdown(Node) ->
-    Ret = rpc:call(Node, mria_cluster, heal, [shutdown]),
-    ?LOG(critical, "Shutdown ~s for autoheal: ~p", [Node, Ret]).
-
-reboot(Node) ->
-    Ret = rpc:call(Node, mria_cluster, heal, [reboot]),
-    ?LOG(critical, "Reboot ~s for autoheal: ~p", [Node, Ret]).
+rejoin(Node) ->
+    Ret = rpc:call(Node, mria, join, [node(), heal]),
+    ?tp(critical, "Rejoin for autoheal",
+        #{ node   => Node
+         , return => Ret
+         }).
 
 ensure_cancel_timer(undefined) ->
     ok;

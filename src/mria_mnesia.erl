@@ -24,11 +24,10 @@
 
 
 %% Start and stop mnesia
--export([ init/0
+-export([ %% TODO: remove it
+          converge_schema/0
 
-          %% TODO: remove it
-        , converge_schema/0
-
+        , ensure_started/0
         , ensure_stopped/0
         , connect/1
         ]).
@@ -47,7 +46,7 @@
         ]).
 
 %% Dir, schema and tables
--export([ data_dir/0
+-export([ ensure_schema/0
         , copy_schema/1
         , delete_schema/0
         , del_schema_copy/1
@@ -63,10 +62,13 @@
 %%--------------------------------------------------------------------
 
 %% @doc Initialize Mnesia
--spec init() -> ok | {error, _}.
-init() ->
+-spec ensure_schema() -> ok | {error, _}.
+ensure_schema() ->
     mria_lib:ensure_ok(ensure_data_dir()),
-    mria_lib:ensure_ok(init_schema()),
+    mria_lib:ensure_ok(init_schema()).
+
+%% @doc Ensure started
+ensure_started() ->
     ok = mnesia:start(),
     {ok, _} = mria_mnesia_null_storage:register(),
     wait_for(start).
@@ -91,7 +93,7 @@ connect(Node) ->
 %%--------------------------------------------------------------------
 
 %% @doc Add the node to the cluster schema
--spec(join_cluster(node()) -> ok).
+-spec join_cluster(node()) -> ok.
 join_cluster(Node) when Node =/= node() ->
     case {mria_rlog:role(), mria_rlog:role(Node)} of
         {core, core} ->
@@ -99,7 +101,7 @@ join_cluster(Node) when Node =/= node() ->
             mria_lib:ensure_ok(ensure_stopped()),
             mria_lib:ensure_ok(delete_schema()),
             %% Start mnesia and cluster to node
-            mria_lib:ensure_ok(init()),
+            mria_lib:ensure_ok(ensure_started()),
             mria_lib:ensure_ok(connect(Node)),
             mria_lib:ensure_ok(copy_schema(node()));
         _ ->
@@ -216,10 +218,6 @@ is_node_in_cluster(Node) ->
 %% Dir and Schema
 %%--------------------------------------------------------------------
 
-%% @doc Data dir
--spec(data_dir() -> string()).
-data_dir() -> mnesia:system_info(directory).
-
 %% @doc Copy schema.
 copy_schema(Node) ->
     case mnesia:change_table_copy_type(schema, Node, disc_copies) of
@@ -274,7 +272,7 @@ wait_for_tables(Tables) ->
 
 %% @doc Force to delete schema.
 delete_schema() ->
-    mnesia:delete_schema([node()]).
+    ok = mnesia:delete_schema([node()]).
 
 %% @doc Delete schema copy
 del_schema_copy(Node) ->
@@ -286,6 +284,10 @@ del_schema_copy(Node) ->
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
+
+%% @doc Data dir
+-spec(data_dir() -> string()).
+data_dir() -> mnesia:system_info(directory).
 
 %% @private
 ensure_data_dir() ->

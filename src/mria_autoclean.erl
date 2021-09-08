@@ -27,7 +27,7 @@
 -export_type([autoclean/0]).
 
 init() ->
-    case mria:env(cluster_autoclean) of
+    case application:get_env(mria, cluster_autoclean) of
         {ok, Expiry} -> timer_backoff(#autoclean{expiry = Expiry});
         undefined    -> undefined
     end.
@@ -42,7 +42,7 @@ check(State = #autoclean{expiry = Expiry}) ->
 
 maybe_clean(#member{node = Node, ltime = LTime}, Expiry) ->
     case expired(LTime, Expiry) of
-        true  -> mria_cluster:force_leave(Node);
+        true  -> mria:force_leave(Node);
         false -> ok
     end.
 

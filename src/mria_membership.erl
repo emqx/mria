@@ -163,7 +163,12 @@ monitor(Type, PidOrFun, OnOff) ->
 
 -spec(announce(join | leave | heal | {force_leave, node()}) -> ok).
 announce(Action) ->
-    call({announce, Action}).
+    case mria_config:role() of
+        core ->
+            call({announce, Action});
+        replicant ->
+            ok
+    end.
 
 -spec(ping(node(), member()) -> ok).
 ping(Node, Member) ->
