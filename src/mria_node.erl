@@ -19,7 +19,6 @@
 %% Node API
 -export([ is_aliving/1
         , is_running/1
-        , parse_name/1
         ]).
 
 %% @doc Is the node aliving?
@@ -36,15 +35,3 @@ is_running(Node) ->
         {badrpc, _} -> false;
         Result -> Result
     end.
-
-%% @doc Parse node name.
--spec(parse_name(string()) -> atom()).
-parse_name(Name) when is_list(Name) ->
-    case string:tokens(Name, "@") of
-        [_Node, _Host] -> list_to_atom(Name);
-        _              -> with_host(Name)
-    end.
-
-with_host(Name) ->
-    [_, Host] = string:tokens(atom_to_list(node()), "@"),
-    list_to_atom(lists:concat([Name, "@", Host])).

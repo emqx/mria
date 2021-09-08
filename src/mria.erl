@@ -61,13 +61,14 @@
 
 -define(IS_MON_TYPE(T), T == membership orelse T == partition).
 
--type(info_key() :: members | running_nodes | stopped_nodes | partitions).
+-type info_key() :: members | running_nodes | stopped_nodes | partitions | rlog.
 
--type(infos() :: #{members       := list(member()),
+-type infos() :: #{members       := list(member()),
                    running_nodes := list(node()),
                    stopped_nodes := list(node()),
-                   partitions    := list(node())
-                  }).
+                   partitions    := list(node()),
+                   rlog          := map()
+                  }.
 
 -type storage() :: ram_copies | disc_copies | disc_only_copies | null_copies | atom().
 
