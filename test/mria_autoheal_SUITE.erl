@@ -22,32 +22,37 @@
 -include_lib("snabbkaffe/include/ct_boilerplate.hrl").
 
 t_autoheal(Config) when is_list(Config) ->
-    Cluster = mria_ct:cluster([core, core, core], [{cluster_autoheal, true}]),
-    try
-        [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-        %% Simulate netsplit
-        true = rpc:cast(N3, net_kernel, disconnect, [N1]),
-        true = rpc:cast(N3, net_kernel, disconnect, [N2]),
-        ok = timer:sleep(1000),
-        %% SplitView: {[N1,N2], [N3]}
-        [N1,N2] = rpc:call(N1, mria, info, [running_nodes]),
-        [N3] = rpc:call(N1, mria, info, [stopped_nodes]),
-        [N1,N2] = rpc:call(N2, mria, info, [running_nodes]),
-        [N3] = rpc:call(N2, mria, info, [stopped_nodes]),
-        [N3] = rpc:call(N3, mria, info, [running_nodes]),
-        [N1,N2] = rpc:call(N3, mria, info, [stopped_nodes]),
-        true = rpc:cast(N3, net_kernel, connect_node, [N1]),
-        true = rpc:cast(N3, net_kernel, connect_node, [N2]),
-        %% Wait for autoheal
-        ?retry(1000, 20,
-               begin
-                   [N1,N2,N3] = rpc:call(N1, mria, info, [running_nodes]),
-                   [N1,N2,N3] = rpc:call(N2, mria, info, [running_nodes]),
-                   [N1,N2,N3] = rpc:call(N3, mria, info, [running_nodes])
-               end),
-        rpc:call(N1, mria, leave, []),
-        rpc:call(N2, mria, leave, []),
-        rpc:call(N3, mria, leave, [])
-    after
-        ok = mria_ct:teardown_cluster(Cluster)
-    end.
+    Cluster = mria_ct:cluster([core, core, core], [{mria, cluster_autoheal, 200}]),
+    ?check_trace(
+       #{timetrap => 25000},
+       try
+           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           %% Simulate netsplit
+           true = rpc:cast(N3, net_kernel, disconnect, [N1]),
+           true = rpc:cast(N3, net_kernel, disconnect, [N2]),
+           ok = timer:sleep(1000),
+           %% SplitView: {[N1,N2], [N3]}
+           [N1,N2] = rpc:call(N1, mria, info, [running_nodes]),
+           [N3] = rpc:call(N1, mria, info, [stopped_nodes]),
+           [N1,N2] = rpc:call(N2, mria, info, [running_nodes]),
+           [N3] = rpc:call(N2, mria, info, [stopped_nodes]),
+           [N3] = rpc:call(N3, mria, info, [running_nodes]),
+           [N1,N2] = rpc:call(N3, mria, info, [stopped_nodes]),
+           true = rpc:cast(N3, net_kernel, connect_node, [N1]),
+           true = rpc:cast(N3, net_kernel, connect_node, [N2]),
+           %% Wait for autoheal
+           ?retry(1000, 20,
+                  begin
+                      [N1,N2,N3] = rpc:call(N1, mria, info, [running_nodes]),
+                      [N1,N2,N3] = rpc:call(N2, mria, info, [running_nodes]),
+                      [N1,N2,N3] = rpc:call(N3, mria, info, [running_nodes])
+                  end),
+           rpc:call(N1, mria, leave, []),
+           rpc:call(N2, mria, leave, []),
+           rpc:call(N3, mria, leave, [])
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       fun(_, _) ->
+               true
+       end).

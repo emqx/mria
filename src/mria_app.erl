@@ -39,6 +39,7 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting shards", #{}),
     Sup = mria_sup:start_link(),
     ?tp(notice, "Mria is running", #{}),
+    mria_lib:exec_callback_async(start),
     Sup.
 
 stop(_State) ->

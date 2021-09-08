@@ -37,6 +37,8 @@
         , ensure_tab/1
 
         , shutdown_process/1
+        , exec_callback/1
+        , exec_callback_async/1
         ]).
 
 %% Internal exports
@@ -324,6 +326,30 @@ shutdown_process(Pid) when is_pid(Pid) ->
         {'DOWN', Ref, _, _, _} ->
             ok
     end.
+
+-spec exec_callback(mria_config:callback()) -> ok.
+exec_callback(Name) ->
+    ?tp(mria_exec_callback, #{type => Name}),
+    case mria_config:callback(Name) of
+        {ok, Fun} ->
+            try
+                Fun()
+            catch
+                EC:Err:Stack ->
+                    ?tp(error, "Mria callback crashed",
+                        #{ callback   => Name
+                         , EC         => Err
+                         , stacktrace => Stack
+                         })
+            end;
+        undefined ->
+            ok
+    end.
+
+-spec exec_callback_async(mria_config:callback()) -> ok.
+exec_callback_async(Name) ->
+    proc_lib:spawn(?MODULE, exec_callback, [Name]),
+    ok.
 
 %%================================================================================
 %% Internal

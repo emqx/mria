@@ -17,23 +17,23 @@
 -module(mria).
 
 %% Start/Stop
--export([start/0, stop/0]).
-
-%% Env
--export([env/1, env/2]).
+-export([ start/0
+        , stop/1
+        , stop/0
+        ]).
 
 %% Info
 -export([info/0, info/1]).
 
 %% Cluster API
 -export([ join/1
+        , join/2
         , leave/0
         , force_leave/1
         ]).
 
 %% Register callback
--export([ callback/1
-        , callback/2
+-export([ register_callback/2
         ]).
 
 %% Database API
@@ -71,6 +71,10 @@
 
 -type storage() :: ram_copies | disc_copies | disc_only_copies | null_copies | atom().
 
+-type join_reason() :: join | heal.
+
+-type stop_reason() :: heal | stop.
+
 -export_type([info_key/0, infos/0]).
 
 -export_type([ t_result/1
@@ -78,6 +82,7 @@
              , table/0
              , storage/0
              , table_config/0
+             , join_reason/0
              ]).
 
 -include("mria.hrl").
@@ -97,50 +102,44 @@
 
 -type table_config() :: list().
 
-
 %%--------------------------------------------------------------------
 %% Start/Stop
 %%--------------------------------------------------------------------
 
--spec(start() -> ok).
+-spec start() -> ok.
 start() ->
     {ok, _Apps} = application:ensure_all_started(mria),
     ok.
 
--spec(stop() -> ok).
+-spec stop() -> ok.
 stop() ->
+    stop(stop).
+
+-spec stop(stop_reason()) -> ok.
+stop(Reason) ->
+    Reason =:= heal andalso mria_membership:announce(Reason),
+    %% We cannot run stop callback in `mria_app', since we don't want
+    %% to block application controller:
+    mria_lib:exec_callback(stop),
     application:stop(mria).
-
-%%--------------------------------------------------------------------
-%% Env
-%%--------------------------------------------------------------------
-
-
-%% TODO: Remove after annotation is gone
--spec(env(atom() | {callback, atom()}) -> undefined | {ok, term()}).
-env(Key) ->
-    %% TODO: hack, using apply to trick dialyzer.
-    apply(application, get_env, [mria, Key]).
-
--spec(env(atom() | {callback, atom()}, term()) -> term()).
-env(Key, Default) ->
-    application:get_env(mria, Key, Default).
 
 %%--------------------------------------------------------------------
 %% Info
 %%--------------------------------------------------------------------
 
--spec(info(info_key()) -> term()).
+-spec info(info_key()) -> term().
 info(Key) ->
     maps:get(Key, info()).
 
--spec(info() -> infos()).
+-spec info() -> infos().
 info() ->
-    ClusterInfo = mria_cluster:info(),
+    ClusterInfo = mria_mnesia:cluster_info(),
     Partitions = mria_node_monitor:partitions(),
-    maps:merge(ClusterInfo, #{members    => mria_membership:members(),
-                              partitions => Partitions
-                             }).
+    maps:merge(ClusterInfo,
+               #{ members    => mria_membership:members()
+                , partitions => Partitions
+                , rlog       => mria_rlog:status()
+                }).
 
 %%--------------------------------------------------------------------
 %% Cluster API
@@ -148,41 +147,66 @@ info() ->
 
 %% @doc Join the cluster
 -spec join(node()) -> ok | ignore | {error, term()}.
-join(Node) when Node =:= node() ->
+join(Node) ->
+    join(Node, join).
+
+%% @doc Join the cluster
+-spec join(node(), join_reason()) -> ok | ignore | {error, term()}.
+join(Node, _) when Node =:= node() ->
     ignore;
-join(Node) when is_atom(Node) ->
-    case {mria_rlog:role(), mria_mnesia:is_node_in_cluster(Node), mria_node:is_running(Node)} of
+join(Node, Reason) when is_atom(Node) ->
+    %% When `Reason =:= heal' the node should rejoin regardless of
+    %% what mnesia thinks:
+    IsInCluster = mria_mnesia:is_node_in_cluster(Node) andalso Reason =/= heal,
+    case {mria_rlog:role(), IsInCluster, mria_node:is_running(Node)} of
         {replicant, _, _} ->
             ok;
         {core, false, true} ->
-            do_join(Node);
+            do_join(Node, Reason);
         {core, false, false} ->
             {error, {node_down, Node}};
         {core, true, _} ->
             {error, {already_in_cluster, Node}}
     end.
 
-%% @doc Leave from Cluster.
--spec(leave() -> ok | {error, term()}).
-leave() -> mria_cluster:leave().
+%% @doc Leave from cluster
+-spec leave() -> ok | {error, term()}.
+leave() ->
+    case mria_mnesia:running_nodes() -- [node()] of
+        [_|_] ->
+            mria_membership:announce(leave),
+            ok = mria_mnesia:leave_cluster(),
+            stop(),
+            start();
+        [] ->
+            {error, node_not_in_cluster}
+    end.
 
 %% @doc Force a node leave from cluster.
--spec(force_leave(node()) -> ok | ignore | {error, term()}).
-force_leave(Node) -> mria_cluster:force_leave(Node).
+-spec force_leave(node()) -> ok | ignore | {error, term()}.
+force_leave(Node) when Node =:= node() ->
+    ignore;
+force_leave(Node) ->
+    case mria_mnesia:is_node_in_cluster(Node)
+         andalso rpc:call(Node, ?MODULE, leave, []) of
+        ok ->
+            mria_mnesia:remove_from_cluster(Node);
+        false ->
+            {error, node_not_in_cluster};
+        {badrpc, nodedown} ->
+            mria_membership:announce({force_leave, Node}),
+            mria_mnesia:remove_from_cluster(Node);
+        {badrpc, Reason} ->
+            {error, Reason}
+    end.
 
 %%--------------------------------------------------------------------
 %% Register callback
 %%--------------------------------------------------------------------
-%% TODO: Drop this
--spec callback(atom()) -> undefined | {ok, function()}.
-callback(Name) ->
-    env({callback, Name}).
 
--spec(callback(atom(), function()) -> ok).
-callback(Name, Fun) ->
-    %% TODO: hack, using apply to trick dialyzer.
-    %% Using a tuple as a key of the application environment "works", but it violates the spec
-    apply(application, set_env, [mria, {callback, Name}, Fun]).
+-spec register_callback(mria_config:callback(), function()) -> ok.
+register_callback(Name, Fun) ->
+    mria_config:register_callback(Name, Fun).
 
 %%--------------------------------------------------------------------
 %% Transaction API
@@ -344,11 +368,12 @@ ro_trans_rpc(Shard, Fun) ->
             Ans
     end.
 
--spec do_join(node()) -> ok | ignore | {error, _}.
-do_join(Node) ->
+-spec do_join(node(), join_reason()) -> ok | ignore | {error, _}.
+do_join(Node, Reason) ->
   case mria_rlog:role(Node) of
       core ->
           ?tp(notice, "Mria is restarting to join the core cluster", #{seed => Node}),
+          mria_membership:announce(Reason),
           stop(),
           ok = mria_mnesia:join_cluster(Node),
           start(),

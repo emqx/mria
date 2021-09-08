@@ -30,6 +30,10 @@
         , erase_shard_config/1
         , shard_rlookup/1
         , shard_config/1
+
+          %% Callbacks
+        , register_callback/2
+        , callback/1
         ]).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
@@ -38,6 +42,12 @@
 %%================================================================================
 %% Type declarations
 %%================================================================================
+
+-type callback() :: start
+                  | stop
+                  | {start | stop, mria_rlog:shard()}.
+
+-export_type([callback/0]).
 
 %%================================================================================
 %% Persistent term keys
@@ -88,7 +98,6 @@ load_config() ->
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
 load_shard_config(Shard, Tables) ->
-    %% erase_shard_config(Shard),
     ?tp(notice, "Setting RLOG shard config",
         #{ shard => Shard
          , tables => Tables
@@ -98,6 +107,14 @@ load_shard_config(Shard, Tables) ->
               , match_spec => make_shard_match_spec(Tables)
               },
     ok = persistent_term:put(?shard_config(Shard), Config).
+
+-spec register_callback(mria_config:callback(), function()) -> ok.
+register_callback(Name, Fun) ->
+    apply(application, set_env, [mria, {callback, Name}, Fun]).
+
+-spec callback(mria_config:callback()) -> {ok, function()} | undefined.
+callback(Name) ->
+    apply(application, get_env, [mria, {callback, Name}]).
 
 %%================================================================================
 %% Internal

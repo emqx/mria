@@ -93,7 +93,7 @@ connect(Node) ->
 %%--------------------------------------------------------------------
 
 %% @doc Add the node to the cluster schema
--spec(join_cluster(node()) -> ok).
+-spec join_cluster(node()) -> ok.
 join_cluster(Node) when Node =/= node() ->
     case {mria_rlog:role(), mria_rlog:role(Node)} of
         {core, core} ->

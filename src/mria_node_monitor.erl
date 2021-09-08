@@ -19,6 +19,7 @@
 -behaviour(gen_server).
 
 -include("mria.hrl").
+-include_lib("snabbkaffe/include/trace.hrl").
 
 %% API
 -export([start_link/0, stop/0]).
@@ -45,8 +46,6 @@
          }).
 
 -define(SERVER, ?MODULE).
--define(LOG(Level, Format, Args),
-        logger:Level("Mria(Monitor): " ++ Format, Args)).
 
 %% @doc Start the node monitor.
 -spec(start_link() -> {ok, pid()} | {error, term()}).
@@ -73,6 +72,7 @@ run_after(Delay, Msg) ->
 
 init([]) ->
     process_flag(trap_exit, true),
+    logger:update_process_metadata(#{domain => [mria, node_monitor]}),
     rand:seed(exsplus, erlang:timestamp()),
     net_kernel:monitor_nodes(true, [{node_type, visible}, nodedown_reason]),
     {ok, _} = mnesia:subscribe(system),
@@ -87,14 +87,17 @@ handle_call(partitions, _From, State = #state{partitions = Partitions}) ->
     {reply, Partitions, State};
 
 handle_call(Req, _From, State) ->
-    ?LOG(error, "Unexpected call: ~p", [Req]),
+    logger:warning("Unexpected call: ~p", [Req]),
     {reply, ignore, State}.
 
 handle_cast({heartbeat, _FromNode}, State) ->
     {noreply, State};
 
 handle_cast({suspect, FromNode, TargetNode}, State) ->
-    ?LOG(info, "Suspect from ~s: ~s~n", [FromNode, TargetNode]),
+    ?tp(info, mria_monitor_suspect,
+        #{ from_node   => FromNode
+         , target_node => TargetNode
+         }),
     spawn(fun() ->
             Status = case net_adm:ping(TargetNode) of
                          pong -> up;
@@ -105,7 +108,10 @@ handle_cast({suspect, FromNode, TargetNode}, State) ->
     {noreply, State};
 
 handle_cast({confirm, TargetNode, Status}, State) ->
-    ?LOG(info, "Confirm ~s ~s", [TargetNode, Status]),
+    ?tp(info, mria_node_monitor_confirm,
+        #{ target_node => TargetNode
+         , status      => Status
+         }),
     {noreply, State};
 
 handle_cast(Msg = {report_partition, _Node}, State) ->
@@ -115,7 +121,7 @@ handle_cast(Msg = {heal_partition, _SplitView}, State) ->
     {noreply, autoheal_handle_msg(Msg, State)};
 
 handle_cast(Msg, State) ->
-    ?LOG(error, "Unexpected cast: ~p", [Msg]),
+    logger:warning("Unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({nodeup, Node, _Info}, State) ->
@@ -150,7 +156,10 @@ handle_info({mnesia_system_event, {mnesia_down, Node}}, State) ->
 
 handle_info({mnesia_system_event, {inconsistent_database, Context, Node}},
             State = #state{partitions = Partitions}) ->
-    ?LOG(critical, "Network partition detected from node ~s: ~p", [Node, Context]),
+    ?tp(critical, "Core cluster partition",
+        #{ from    => Node
+         , context => Context
+         }),
     mria_membership:partition_occurred(Node),
     case mria_autoheal:enabled() of
         {true, _} -> run_after(3000, confirm_partition);
@@ -159,11 +168,11 @@ handle_info({mnesia_system_event, {inconsistent_database, Context, Node}},
     {noreply, State#state{partitions = lists:usort([Node | Partitions])}};
 
 handle_info({mnesia_system_event, {mnesia_overload, Details}}, State) ->
-    ?LOG(error, "Mnesia overload: ~p", [Details]),
+    logger:error("Mnesia overload: ~p", [Details]),
     {noreply, State};
 
 handle_info({mnesia_system_event, Event}, State) ->
-    ?LOG(error, "Mnesia system event: ~p", [Event]),
+    logger:error("Mnesia system event: ~p", [Event]),
     {noreply, State};
 
 %% Confirm if we should report the partitions
@@ -173,8 +182,10 @@ handle_info(confirm_partition, State = #state{partitions = []}) ->
 handle_info(confirm_partition, State = #state{partitions = Partitions}) ->
     Leader = mria_membership:leader(),
     case mria_node:is_running(Leader) of
-        true  -> cast(Leader, {report_partition, node()});
-        false -> ?LOG(critical, "Leader is down, cannot autoheal the partitions: ~p", [Partitions])
+        true  ->
+            cast(Leader, {report_partition, node()});
+        false ->
+            logger:critical("Leader is down, cannot autoheal the partitions: ~p", [Partitions])
     end,
     {noreply, State};
 
@@ -200,7 +211,7 @@ handle_info(autoclean, State = #state{autoclean = AutoClean}) ->
     {noreply, State#state{autoclean = mria_autoclean:check(AutoClean)}};
 
 handle_info(Info, State) ->
-    ?LOG(error, "Unexpected info: ~p", [Info]),
+    logger:error("Unexpected info: ~p", [Info]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
