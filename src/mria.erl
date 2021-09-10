@@ -188,17 +188,11 @@ leave() ->
 force_leave(Node) when Node =:= node() ->
     ignore;
 force_leave(Node) ->
-    case mria_mnesia:is_node_in_cluster(Node)
-         andalso rpc:call(Node, ?MODULE, leave, []) of
-        ok ->
+    case mria_mnesia:is_node_in_cluster(Node) of
+        true ->
             mria_mnesia:remove_from_cluster(Node);
         false ->
-            {error, node_not_in_cluster};
-        {badrpc, nodedown} ->
-            mria_membership:announce({force_leave, Node}),
-            mria_mnesia:remove_from_cluster(Node);
-        {badrpc, Reason} ->
-            {error, Reason}
+            {error, node_not_in_cluster}
     end.
 
 %%--------------------------------------------------------------------

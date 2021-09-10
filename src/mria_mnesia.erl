@@ -127,7 +127,7 @@ leave_cluster() ->
     end.
 
 %% @doc Remove node from mnesia cluster.
--spec(remove_from_cluster(node()) -> ok | {error, any()}).
+-spec remove_from_cluster(node()) -> ok | {error, any()}.
 remove_from_cluster(Node) when Node =/= node() ->
     case {is_node_in_cluster(Node), is_running_db_node(Node)} of
         {true, true} ->
