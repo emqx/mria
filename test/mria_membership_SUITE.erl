@@ -98,6 +98,32 @@ t_local_member(_) ->
     #member{node = Node} = mria_membership:local_member(),
     ?assertEqual(node(), Node).
 
+t_leave(_) ->
+    Cluster = mria_ct:cluster([core, core, core], []),
+    try
+        [N0, N1, N2] = mria_ct:start_cluster(mria, Cluster),
+        ?assertMatch([N0, N1, N2], rpc:call(N0, mria, info, [running_nodes])),
+        ok = rpc:call(N1, mria, leave, []),
+        ok = rpc:call(N2, mria, leave, []),
+        ?assertMatch([N0], rpc:call(N0, mria, info, [running_nodes]))
+    after
+        mria_ct:teardown_cluster(Cluster)
+    end.
+
+t_force_leave(_) ->
+    Cluster = mria_ct:cluster([core, core, core], []),
+    try
+        [N0, N1, N2] = mria_ct:start_cluster(mria, Cluster),
+        ?assertMatch(true, rpc:call(N0, mria_node, is_running, [N1])),
+        true = rpc:call(N0, mria_node, is_running, [N2]),
+        ?assertMatch([N0, N1, N2], rpc:call(N0, mria, info, [running_nodes])),
+        ?assertMatch(ok, rpc:call(N0, mria, force_leave, [N1])),
+        ?assertMatch(ok, rpc:call(N0, mria, force_leave, [N2])),
+        ?assertMatch([N0], rpc:call(N0, mria, info, [running_nodes]))
+    after
+        mria_ct:teardown_cluster(Cluster)
+    end.
+
 %%--------------------------------------------------------------------
 %% Helper functions
 %%--------------------------------------------------------------------
