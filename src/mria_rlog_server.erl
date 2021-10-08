@@ -76,7 +76,20 @@ start_link(Parent, Shard) ->
 %% server is lost or delayed due to network congestion.
 -spec probe(node(), mria_rlog:shard()) -> boolean().
 probe(Node, Shard) ->
-    mria_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) =:= true.
+    CorrectVersion = get_protocol_version(),
+    case mria_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) of
+        {true, CorrectVersion} ->
+            true;
+        {true, ServerVersion} ->
+            ?tp(warning, "Different Mria version on the server",
+                #{ my_version     => CorrectVersion
+                 , server_version => ServerVersion
+                 , node           => Node
+                 }),
+            false;
+        _ ->
+            false
+    end.
 
 -spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint()) ->
           { ok
@@ -227,6 +240,11 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
             {noreply, St0}
     end.
 
+%% @doc Get version of Mria protocol running on the node
+get_protocol_version() ->
+    %% Should be increased on incompatible changes:
+    0.
+
 %%================================================================================
 %% Internal exports (gen_rpc)
 %%================================================================================
@@ -235,6 +253,6 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
 do_bootstrap(Shard, Subscriber) ->
     gen_server:call(Shard, {bootstrap, Subscriber}, infinity).
 
--spec do_probe(mria_rlog:shard()) -> true.
+-spec do_probe(mria_rlog:shard()) -> {true, integer()}.
 do_probe(Shard) ->
-    gen_server:call(Shard, probe, 1000).
+    {gen_server:call(Shard, probe, 1000), get_protocol_version()}.
