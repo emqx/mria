@@ -12,9 +12,10 @@ activate server
 activate repl
 
 group Agent initialization
-== Probe the connection to minimize risk of double-subscription ==
+== Probe the connection to minimize risk of double-subscription and negotiate protocol version ==
   repl -> server : probe
-  repl <- server
+  repl <- server : {true, 0}
+  note over repl: The protocol version\nshould be the same,\nabort connection if different
 
 == Initiate connection ==
   repl -> server : {connect, LocalCheckpointTS}
