@@ -38,9 +38,7 @@ t_autoheal(Config) when is_list(Config) ->
            [N3] = rpc:call(N2, mria, info, [stopped_nodes]),
            [N3] = rpc:call(N3, mria, info, [running_nodes]),
            [N1,N2] = rpc:call(N3, mria, info, [stopped_nodes]),
-           true = rpc:cast(N3, net_kernel, connect_node, [N1]),
-           true = rpc:cast(N3, net_kernel, connect_node, [N2]),
-           %% Wait for autoheal
+           %% Wait for autoheal, it should happen automatically:
            ?retry(1000, 20,
                   begin
                       [N1,N2,N3] = rpc:call(N1, mria, info, [running_nodes]),

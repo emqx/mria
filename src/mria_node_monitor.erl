@@ -193,11 +193,11 @@ handle_info({autoheal, Msg}, State) ->
     {noreply, autoheal_handle_msg(Msg, State)};
 
 handle_info(heartbeat, State) ->
-    AliveNodes = [N || N <- mria_mnesia:cluster_nodes(all),
-                       lists:member(N, nodes())],
     lists:foreach(fun(Node) ->
-                    cast(Node, {heartbeat, node()})
-                  end, AliveNodes),
+                      if Node =/= node() -> cast(Node, {heartbeat, node()});
+                         true            -> ok
+                      end
+                  end, mria_mnesia:cluster_nodes(all)),
     {noreply, ensure_heartbeat(State#state{heartbeat = undefined})};
 
 handle_info(Msg = {'EXIT', Pid, _Reason}, State = #state{autoheal = Autoheal}) ->
