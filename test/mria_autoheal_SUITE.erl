@@ -47,10 +47,20 @@ t_autoheal(Config) when is_list(Config) ->
                   end),
            rpc:call(N1, mria, leave, []),
            rpc:call(N2, mria, leave, []),
-           rpc:call(N3, mria, leave, [])
+           rpc:call(N3, mria, leave, []),
+           [N1, N2, N3]
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, _) ->
-               true
+       fun([_N1, _N2, N3], Trace) ->
+               ?assert(
+                  ?causality( #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := _N}}
+                            , #{?snk_kind := mria_exec_callback, type := stop,  ?snk_meta := #{node := _N}}
+                            , Trace
+                            )),
+               %% Check that restart callbacks were called after partition was healed:
+               {_, Rest} = ?split_trace_at(#{?snk_kind := "Rebooting minority"}, Trace),
+               ?assertMatch( [stop, start|_]
+                           , ?projection(type, ?of_kind(mria_exec_callback, ?of_node(N3, Rest)))
+                           )
        end).
