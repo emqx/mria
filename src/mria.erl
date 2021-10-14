@@ -369,7 +369,7 @@ do_join(Node, Reason) ->
       core ->
           ?tp(notice, "Mria is restarting to join the core cluster", #{seed => Node}),
           mria_membership:announce(Reason),
-          stop(),
+          stop(Reason),
           ok = mria_mnesia:join_cluster(Node),
           start(),
           ?tp(notice, "Mria has joined the core cluster",
