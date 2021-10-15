@@ -64,6 +64,7 @@
 %% @doc Initialize Mnesia
 -spec ensure_schema() -> ok | {error, _}.
 ensure_schema() ->
+    ?tp(debug, "Ensure mnesia schema", #{}),
     mria_lib:ensure_ok(ensure_data_dir()),
     mria_lib:ensure_ok(init_schema()).
 
@@ -305,7 +306,9 @@ init_schema() ->
               end,
     case (mria_rlog:role() =:= replicant) orelse IsAlone of
         true ->
-            mnesia:create_schema([node()]);
+            Ret = mnesia:create_schema([node()]),
+            ?tp(notice, "Creating new mnesia schema", #{result => Ret}),
+            mria_lib:ensure_ok(Ret);
         false ->
             ok
     end.

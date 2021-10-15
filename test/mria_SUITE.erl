@@ -63,6 +63,31 @@ t_create_del_table(_) ->
         mria_mnesia:ensure_stopped()
     end.
 
+t_disc_table(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+    try
+        Nodes = mria_ct:start_cluster(mria, Cluster),
+        Fun = fun() ->
+                      ok = mria:create_table(kv_tab1,
+                                             [{storage, disc_copies},
+                                              {rlog_shard, test_shard},
+                                              {record_name, kv_tab},
+                                              {attributes, record_info(fields, kv_tab)}
+                                             ]),
+                      ok = mria:create_table(kv_tab2,
+                                             [{storage, disc_only_copies},
+                                              {rlog_shard, test_shard},
+                                              {record_name, kv_tab},
+                                              {attributes, record_info(fields, kv_tab)}
+                                             ]),
+                      ?assertMatch([], mnesia:dirty_all_keys(kv_tab1)),
+                      ?assertMatch([], mnesia:dirty_all_keys(kv_tab2))
+              end,
+        [ok = mria_ct:run_on(N, Fun) || N <- Nodes]
+    after
+        ok = mria_ct:teardown_cluster(Cluster)
+    end.
+
 %% -spec(join_cluster(node()) -> ok).
 %% -spec(leave_cluster(node()) -> ok | {error, any()}).
 t_join_leave_cluster(_) ->

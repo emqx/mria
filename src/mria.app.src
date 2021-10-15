@@ -11,10 +11,10 @@
     mria_top_sup,
     mria_rlog_sup
    ]},
+  %% Note: DON'T add mnesia to the list, or it will mess up start order:
   {applications,
    [kernel,
     stdlib,
-    mnesia,
     inets,
     gen_rpc,
     replayq,
