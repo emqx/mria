@@ -122,7 +122,8 @@ stop(Reason) ->
     %% We cannot run stop callback in `mria_app', since we don't want
     %% to block application controller:
     mria_lib:exec_callback(stop),
-    application:stop(mria).
+    application:stop(mria),
+    application:stop(mnesia).
 
 %%--------------------------------------------------------------------
 %% Info
