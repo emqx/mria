@@ -59,7 +59,7 @@ start_link() ->
 
 init(_) ->
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
-    self() ! ?update,
+    init_timer(),
     {ok, #s{}}.
 
 handle_info(?update, St) ->
@@ -86,8 +86,7 @@ terminate(_Reason, St) ->
 
 do_update() ->
     [do_update(Shard) || Shard <- mria_schema:shards()],
-    Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
-    erlang:send_after(Interval, self(), ?update).
+    init_timer().
 
 do_update(Shard) ->
     Timeout = application:get_env(mria, rlog_lb_update_timeout, 300),
@@ -100,6 +99,10 @@ do_update(Shard) ->
         [{_Load, _Rand, Core}|_] ->
             mria_status:notify_core_node_up(Shard, Core)
     end.
+
+init_timer() ->
+    Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
+    erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
 %%================================================================================
 %% Internal exports
