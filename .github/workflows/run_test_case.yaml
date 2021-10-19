@@ -13,9 +13,12 @@ jobs:
 
         steps:
         - uses: actions/checkout@v1
-        # - name: Check versions
-        #   run: |
-        #     ./git-tag.sh dummy --dryrun
+
+        - name: Install prerequisites
+          run: |
+            apt update
+            apt install -y cmake
+
         - name: Compile
           run: |
             make

@@ -18,7 +18,8 @@
     inets,
     gen_rpc,
     replayq,
-    snabbkaffe
+    snabbkaffe,
+    mnesia_rocksdb
    ]},
   {modules, []},
   {licenses, ["Apache 2.0"]},

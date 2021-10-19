@@ -72,6 +72,7 @@ ensure_schema() ->
 ensure_started() ->
     ok = mnesia:start(),
     {ok, _} = mria_mnesia_null_storage:register(),
+    {ok, _} = mnesia_rocksdb:register(),
     wait_for(start).
 
 %% @doc Ensure mnesia stopped
