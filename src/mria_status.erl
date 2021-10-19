@@ -36,7 +36,7 @@
         ]).
 
 %% gen_event callbacks:
--export([init/1, handle_call/2, handle_event/2]).
+-export([init/1, handle_call/2, handle_event/2, handle_info/2]).
 
 -define(SERVER, ?MODULE).
 
@@ -274,6 +274,13 @@ init([Ref, Subscriber]) ->
 
 handle_call(_, State) ->
     {ok, {error, unknown_call}, State, hibernate}.
+
+handle_info(_Info, State) ->
+    ?tp( mria_status_handle_info
+       , #{ msg => _Info
+          }
+       ),
+    {ok, State}.
 
 handle_event(Event, State = #s{ref = Ref, subscriber = Sub}) ->
     Sub ! {Ref, Event},

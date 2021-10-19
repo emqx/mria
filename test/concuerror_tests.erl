@@ -153,6 +153,42 @@ dirty_bootstrap_test() ->
         ets:delete(ReplicaTab)
     end.
 
+%% check that we handle any info in mria_status
+mria_status_handle_info_test() ->
+    {ok, ServerPid} = mria_status:start_link(),
+    try
+        ?check_trace(
+           begin
+               CreateHandler =
+                   fun() ->
+                           spawn(
+                             fun() ->
+                                     mria_status:subscribe_events(),
+                                     receive
+                                         die -> error(crash)
+                                     end
+                             end)
+                   end,
+               %% we need 2 handlers so the handle_info/2 callback is
+               %% executed with the survivor.
+               HandlerPid0 = CreateHandler(),
+               HandlerPid1 = CreateHandler(),
+               HandlerPid0 ! die,
+               {HandlerPid0, HandlerPid1}
+           end
+          , fun({HandlerPid0, HandlerPid1}, Trace) ->
+                    ?assertMatch(
+                       [#{msg := {'EXIT', _, _}}]
+                      , ?of_kind(mria_status_handle_info, Trace)),
+                    ?assert(is_process_alive(ServerPid)),
+                    ?assert(is_process_alive(HandlerPid1)),
+                    ?assert(not is_process_alive(HandlerPid0))
+            end
+          )
+    after
+        cleanup(ServerPid)
+    end.
+
 importer() ->
     Ops = [ {write, 3, 3}
           , {write, 4, 4}
