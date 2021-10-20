@@ -346,17 +346,18 @@ t_rlog_dirty_operations(_) ->
        end).
 
 t_local_content(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
        try
-          Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+          Nodes = mria_ct:start_cluster(mria, Cluster),
           %% Create the table on all nodes:
-          {[ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
-                                         [local_tab,
-                                          [{local_content, true}]
-                                         ]),
-          %% Perform an invalid r/w transactions on both nodes:
+          {[ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
+                                             [local_tab,
+                                              [{local_content, true}]
+                                             ]),
+          %% Perform an invalid r/w transactions on all nodes:
+          %%   Write to a non-local table in a local content shard:
           [?assertMatch( {aborted, {invalid_transaction, _, _}}
                        , rpc:call(N, mria, transaction,
                                   [mria:local_content_shard(),
@@ -366,6 +367,7 @@ t_local_content(_) ->
                                   ])
                        )
            || N <- Nodes],
+          %%   Write to a local table in a non-local shard:
           [?assertMatch( {aborted, {invalid_transaction, _, _}}
                        , rpc:call(N, mria, transaction,
                                   [test_shard,
@@ -375,25 +377,17 @@ t_local_content(_) ->
                                   ])
                        )
            || N <- Nodes],
-          %% Perform r/w transactions on both nodes with different content:
-          ?assertMatch( {atomic, N1}
-                      , rpc:call(N1, mria, transaction,
+          %% Perform valid r/w transactions on all nodes with different content:
+          [?assertMatch( {atomic, N}
+                       , rpc:call(N, mria, transaction,
                                   [mria:local_content_shard(),
                                    fun() ->
-                                           mnesia:write({local_tab, key, node()}),
+                                           ok = mnesia:write({local_tab, key, node()}),
                                            node()
                                    end
                                   ])
-                       ),
-          ?assertMatch( {atomic, N2}
-                      , rpc:call(N2, mria, transaction,
-                                  [mria:local_content_shard(),
-                                   fun() ->
-                                           mnesia:write({local_tab, key, node()}),
-                                           node()
-                                   end
-                                  ])
-                       ),
+                       )
+           || N <- Nodes],
           %% Perform a successful r/o transaction:
           [?assertMatch( {atomic, N}
                        , rpc:call(N, mria, ro_transaction,

@@ -222,13 +222,10 @@ create_table(Name, TabDef) ->
     MnesiaTabDef = lists:keydelete(rlog_shard, 1, lists:keydelete(storage, 1, TabDef)),
     case {proplists:get_value(rlog_shard, TabDef, ?LOCAL_CONTENT_SHARD),
           proplists:get_value(local_content, TabDef, false)} of
-        {?LOCAL_CONTENT_SHARD, true} ->
-            %% Local content table:
-            create_table_internal(Name, Storage, MnesiaTabDef);
         {?LOCAL_CONTENT_SHARD, false} ->
             ?LOG(critical, "Table ~p doesn't belong to any shard", [Name]),
             error(badarg);
-        {Shard, false} ->
+        {Shard, _LocalContent} ->
             case create_table_internal(Name, Storage, MnesiaTabDef) of
                 ok ->
                     %% It's important to add the table to the shard
@@ -241,10 +238,7 @@ create_table(Name, TabDef) ->
                     mria_schema:add_entry(Entry);
                 Err ->
                     Err
-            end;
-        {_Shard, true} ->
-            ?LOG(critical, "local_content table ~p should belong to ?LOCAL_CONTENT_SHARD.", [Name]),
-            error(badarg)
+            end
     end.
 
 -spec wait_for_tables([table()]) -> ok | {error, _Reason} | {timeout, [table()]}.

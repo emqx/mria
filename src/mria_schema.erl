@@ -180,10 +180,11 @@ create_table_type() ->
 do_add_table(TabDef = #?schema{shard = Shard, mnesia_table = Table}) ->
     case mnesia:wread({?schema, Table}) of
         [] ->
+            IsLive = Shard =/= ?LOCAL_CONTENT_SHARD andalso is_pid(whereis(Shard)),
             ?tp(info, "Adding table to a shard",
                 #{ shard => Shard
                  , table => Table
-                 , live_change => is_pid(whereis(Shard))
+                 , live_change => IsLive
                  }),
             mnesia:write(TabDef),
             ok;
