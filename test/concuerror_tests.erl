@@ -175,16 +175,15 @@ mria_status_handle_info_test() ->
                HandlerPid1 = CreateHandler(),
                HandlerPid0 ! die,
                {HandlerPid0, HandlerPid1}
-           end
-          , fun({HandlerPid0, HandlerPid1}, Trace) ->
+           end,
+           fun({HandlerPid0, HandlerPid1}, Trace) ->
                     ?assertMatch(
                        [#{msg := {'EXIT', _, _}}]
                       , ?of_kind(mria_status_handle_info, Trace)),
                     ?assert(is_process_alive(ServerPid)),
                     ?assert(is_process_alive(HandlerPid1)),
                     ?assert(not is_process_alive(HandlerPid0))
-            end
-          )
+            end)
     after
         cleanup(ServerPid)
     end.
