@@ -253,7 +253,7 @@ copy_table(Name, Storage) ->
             ?LOG(warning, "Ignoring illegal attempt to create a table copy ~p on replicant node ~p", [Name, node()])
     end.
 
--spec wait_for_tables([mria:table()]) -> ok | {error, _Reason} | {timeout, [mria:table()]}.
+-spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
 wait_for_tables(Tables) ->
     ?tp(mria_wait_for_tables, #{tables => Tables}),
     case mnesia:wait_for_tables(Tables, 30000) of
