@@ -276,11 +276,7 @@ handle_call(_, State) ->
     {ok, {error, unknown_call}, State, hibernate}.
 
 handle_info(_Info, State) ->
-    ?tp( mria_status_handle_info
-       , #{ msg => _Info
-          }
-       ),
-    {ok, State}.
+    ?tp(mria_status_handle_info, #{msg => _Info}), {ok, State}.
 
 handle_event(Event, State = #s{ref = Ref, subscriber = Sub}) ->
     Sub ! {Ref, Event},
