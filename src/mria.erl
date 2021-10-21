@@ -241,7 +241,7 @@ create_table(Name, TabDef) ->
             end
     end.
 
--spec wait_for_tables([table()]) -> ok | {error, _Reason} | {timeout, [table()]}.
+-spec wait_for_tables([table()]) -> ok | {error, _Reason}.
 wait_for_tables(Tables) ->
     case mria_mnesia:wait_for_tables(Tables) of
         ok ->
