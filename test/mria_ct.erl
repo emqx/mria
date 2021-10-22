@@ -49,7 +49,7 @@ cleanup(Testcase) ->
                    | {mria_rlog:role(), atom()} % give name, use default environment
                    | {mria_rlog:role(), atom(), env()}. % customize everything
 
--type cluster_opt() :: {base_gen_rpc_port, non_neg_integer}. % starting grpc port
+-type cluster_opt() :: {base_gen_rpc_port, non_neg_integer()}. % starting grpc port
 
 %% @doc Generate cluster config with all necessary connectivity
 %% options, that should be able to run on the localhost
