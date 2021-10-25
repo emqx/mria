@@ -227,3 +227,18 @@ get_txid() ->
         {_, TID, _} ->
             TID
     end.
+
+merge_gen_rpc_env(Cluster) ->
+    AllGenRpcPorts0 =
+        [GenRpcPorts
+         || #{env := Env} <- Cluster,
+            {gen_rpc, client_config_per_node, {internal, GenRpcPorts}} <- Env
+        ],
+    AllGenRpcPorts = lists:foldl(fun maps:merge/2, #{}, AllGenRpcPorts0),
+    [Node#{env => lists:map(
+                    fun({gen_rpc, client_config_per_node, _}) ->
+                            {gen_rpc, client_config_per_node, {internal, AllGenRpcPorts}};
+                       (Env) -> Env
+                    end,
+                    Envs)}
+     || Node = #{env := Envs} <- Cluster].

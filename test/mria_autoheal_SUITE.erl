@@ -74,7 +74,7 @@ t_reboot_rejoin(Config) when is_list(Config) ->
     Cluster2 = mria_ct:cluster([core, replicant, replicant],
                                CommonEnv,
                                [{base_gen_rpc_port, 9001}]),
-    Cluster = merge_gen_rpc_env(Cluster1 ++ Cluster2),
+    Cluster = mria_ct:merge_gen_rpc_env(Cluster1 ++ Cluster2),
     ?check_trace(
        #{timetrap => 25000},
        try
@@ -193,18 +193,3 @@ assert_replicant_bootstrapped(R, C, Trace0) ->
                      , Trace
                      ),
     ok.
-
-merge_gen_rpc_env(Cluster) ->
-    AllGenRpcPorts0 =
-        [GenRpcPorts
-         || #{env := Env} <- Cluster,
-            {gen_rpc, client_config_per_node, {internal, GenRpcPorts}} <- Env
-        ],
-    AllGenRpcPorts = lists:foldl(fun maps:merge/2, #{}, AllGenRpcPorts0),
-    [Node#{env => lists:map(
-                    fun({gen_rpc, client_config_per_node, _}) ->
-                            {gen_rpc, client_config_per_node, {internal, AllGenRpcPorts}};
-                       (Env) -> Env
-                    end,
-                    Envs)}
-     || Node = #{env := Envs} <- Cluster].
