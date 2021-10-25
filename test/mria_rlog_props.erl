@@ -44,11 +44,11 @@ replicant_bootstrap_stages(Node, Trace0) ->
               , #{?snk_kind := state_change, to := bootstrap,    ?snk_meta := #{pid := _Pid}}
               , Trace
               ),
-    ?causality(# {?snk_kind := state_change, to := bootstrap,    ?snk_meta := #{pid := _Pid}}
+    ?causality( #{?snk_kind := state_change, to := bootstrap,    ?snk_meta := #{pid := _Pid}}
               , #{?snk_kind := state_change, to := local_replay, ?snk_meta := #{pid := _Pid}}
               , Trace
               ),
-    ?causality(# {?snk_kind := state_change, to := local_replay, ?snk_meta := #{pid := _Pid}}
+    ?causality( #{?snk_kind := state_change, to := local_replay, ?snk_meta := #{pid := _Pid}}
               , #{?snk_kind := state_change, to := normal,       ?snk_meta := #{pid := _Pid}}
               , Trace
               ).

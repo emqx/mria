@@ -17,6 +17,7 @@
 -module(mria_autoheal_SUITE).
 
 -export([ t_autoheal/1
+        , t_reboot_rejoin/1
         ]).
 
 -include_lib("snabbkaffe/include/ct_boilerplate.hrl").
@@ -64,3 +65,83 @@ t_autoheal(Config) when is_list(Config) ->
                            , ?projection(type, ?of_kind(mria_exec_callback, ?of_node(N3, Rest)))
                            )
        end).
+
+t_reboot_rejoin(Config) when is_list(Config) ->
+    CommonEnv = [ {mria, cluster_autoheal, 200}
+                , {mria, db_backend, rlog}
+                ],
+    Cluster1 = mria_ct:cluster([{core, n0}], CommonEnv),
+    Cluster2 = mria_ct:cluster([core, replicant, replicant],
+                               CommonEnv,
+                               [{base_gen_rpc_port, 9001}]),
+    Cluster = mria_ct:merge_gen_rpc_env(Cluster1 ++ Cluster2),
+    ?check_trace(
+       #{timetrap => 25000},
+       try
+           AllNodes = [C1, C2, _R1, _R2] = mria_ct:start_cluster(mria, Cluster),
+           ?tp(about_to_join, #{}),
+           %% performs a full "power cycle" in C2.
+           rpc:call(C2, mria, join, [C1]),
+           %% we need to ensure that the rlog server for the shard is
+           %% restarted, since it died during the "power cycle" from
+           %% the join operation.
+           rpc:call(C2, mria_rlog, wait_for_shards, [[test_shard], 5000]),
+           ?tp(test_end, #{}),
+           %% assert there's a single cluster at the end.
+           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+           AllNodes
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       fun([C1, C2, R1, R2], Trace0) ->
+               {_, Trace1} = ?split_trace_at(#{?snk_kind := about_to_join}, Trace0),
+               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace1),
+               TraceC2 = ?of_node(C2, Trace),
+               %% C1 joins C2
+               ?assert(
+                  ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
+                                      , seed := C1
+                                      }
+                                   , #{ ?snk_kind := "Starting autoheal"
+                                      }
+                                   , TraceC2
+                                   )),
+               ?assert(
+                  ?strict_causality( #{ ?snk_kind := "Starting autoheal"
+                                      }
+                                   , #{ ?snk_kind := "Mria has joined the core cluster"
+                                      , seed := C1
+                                      , status := #{ running_nodes := [_, _]
+                                                   }
+                                      }
+                                   , TraceC2
+                                   )),
+               ?assert(
+                  ?strict_causality( #{ ?snk_kind := "Mria has joined the core cluster"
+                                      , status := #{ running_nodes := [_, _]
+                                                   }
+                                      }
+                                   , #{ ?snk_kind := "Starting RLOG shard"
+                                      , shard := test_shard
+                                      }
+                                   , TraceC2
+                                   )),
+               %% Replicants reboot and bootstrap shard data
+               assert_replicant_bootstrapped(R1, C2, Trace),
+               assert_replicant_bootstrapped(R2, C2, Trace)
+       end).
+
+assert_replicant_bootstrapped(R, C, Trace) ->
+    %% The core that the replicas are connected to is changing
+    %% clusters
+    ?assert(
+       ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
+                           , ?snk_meta := #{ node := C }
+                           }
+                        , #{ ?snk_kind := "Remote RLOG agent died"
+                           , ?snk_meta := #{ node := R }
+                           }
+                        , Trace
+                        )),
+    mria_rlog_props:replicant_bootstrap_stages(R, Trace),
+    ok.

@@ -358,7 +358,7 @@ ro_trans_rpc(Shard, Fun) ->
             Ans
     end.
 
--spec do_join(node(), join_reason()) -> ok | ignore | {error, _}.
+-spec do_join(node(), join_reason()) -> ok | ignore.
 do_join(Node, Reason) ->
   case mria_rlog:role(Node) of
       core ->

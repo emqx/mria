@@ -49,15 +49,21 @@ cleanup(Testcase) ->
                    | {mria_rlog:role(), atom()} % give name, use default environment
                    | {mria_rlog:role(), atom(), env()}. % customize everything
 
+-type cluster_opt() :: {base_gen_rpc_port, non_neg_integer()}. % starting grpc port
+
 %% @doc Generate cluster config with all necessary connectivity
 %% options, that should be able to run on the localhost
 -spec cluster([node_spec()], env()) -> [start_spec()].
-cluster(Specs0, CommonEnv) ->
+cluster(Specs, CommonEnv) ->
+    cluster(Specs, CommonEnv, []).
+
+-spec cluster([node_spec()], env(), [cluster_opt()]) -> [start_spec()].
+cluster(Specs0, CommonEnv, ClusterOpts) ->
     Specs1 = lists:zip(Specs0, lists:seq(1, length(Specs0))),
     Specs = expand_node_specs(Specs1, CommonEnv),
     CoreNodes = [node_id(Name) || {{core, Name, _}, _} <- Specs],
     %% Assign grpc ports:
-    BaseGenRpcPort = 9000,
+    BaseGenRpcPort = proplists:get_value(base_gen_rpc_port, ClusterOpts, 9000),
     GenRpcPorts = maps:from_list([{node_id(Name), {tcp, BaseGenRpcPort + Num}}
                                   || {{_, Name, _}, Num} <- Specs]),
     %% Set the default node of the cluster:
@@ -221,3 +227,18 @@ get_txid() ->
         {_, TID, _} ->
             TID
     end.
+
+merge_gen_rpc_env(Cluster) ->
+    AllGenRpcPorts0 =
+        [GenRpcPorts
+         || #{env := Env} <- Cluster,
+            {gen_rpc, client_config_per_node, {internal, GenRpcPorts}} <- Env
+        ],
+    AllGenRpcPorts = lists:foldl(fun maps:merge/2, #{}, AllGenRpcPorts0),
+    [Node#{env => lists:map(
+                    fun({gen_rpc, client_config_per_node, _}) ->
+                            {gen_rpc, client_config_per_node, {internal, AllGenRpcPorts}};
+                       (Env) -> Env
+                    end,
+                    Envs)}
+     || Node = #{env := Envs} <- Cluster].
