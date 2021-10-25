@@ -78,7 +78,7 @@ t_reboot_rejoin(Config) when is_list(Config) ->
     ?check_trace(
        #{timetrap => 25000},
        try
-           AllNodes = [C1, C2, R1, R2] = mria_ct:start_cluster(mria, Cluster),
+           AllNodes = [C1, C2, _R1, _R2] = mria_ct:start_cluster(mria, Cluster),
            ?tp(about_to_join, #{}),
            %% performs a full "power cycle" in C2.
            rpc:call(C2, mria, join, [C1]),
@@ -86,15 +86,9 @@ t_reboot_rejoin(Config) when is_list(Config) ->
            %% restarted, since it died during the "power cycle" from
            %% the join operation.
            rpc:call(C2, mria_rlog, wait_for_shards, [[test_shard], 5000]),
-           %% wait until there's only one cluster.
-           ?retry(1000, 20,
-                  begin
-                      AllNodes = rpc:call(C1, mria, info, [running_nodes]),
-                      AllNodes = rpc:call(C2, mria, info, [running_nodes]),
-                      AllNodes = rpc:call(R1, mria, info, [running_nodes]),
-                      AllNodes = rpc:call(R2, mria, info, [running_nodes])
-                  end),
            ?tp(test_end, #{}),
+           %% assert there's a single cluster at the end.
+           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
            AllNodes
        after
            ok = mria_ct:teardown_cluster(Cluster)
@@ -135,7 +129,6 @@ t_reboot_rejoin(Config) when is_list(Config) ->
        end).
 
 assert_replicant_bootstrapped(R, C, Trace0) ->
-    Trace = ?of_node(R, Trace0),
     %% The core that the replicas are connected to is changing
     %% clusters
     ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
@@ -146,50 +139,5 @@ assert_replicant_bootstrapped(R, C, Trace0) ->
                         }
                      , Trace0
                      ),
-    ?strict_causality( #{ ?snk_kind := state_change
-                        , from := normal
-                        , to := disconnected
-                        }
-                     , #{ ?snk_kind := state_change
-                        , from := disconnected
-                        , to := bootstrap
-                        }
-                     , Trace
-                     ),
-    ?strict_causality( #{ ?snk_kind := state_change
-                        , from := normal
-                        , to := disconnected
-                        }
-                     , #{ ?snk_kind := state_change
-                        , from := disconnected
-                        , to := bootstrap
-                        }
-                     , Trace
-                     ),
-    ?strict_causality( #{ ?snk_kind := state_change
-                        , from := disconnected
-                        , to := bootstrap
-                        }
-                     , #{ ?snk_kind := "Bootstrap of the shard is complete"
-                        }
-                     , Trace
-                     ),
-    ?strict_causality( #{ ?snk_kind := "Bootstrap of the shard is complete"
-                        }
-                     , #{ ?snk_kind := state_change
-                        , from := bootstrap
-                        , to := local_replay
-                        }
-                     , Trace
-                     ),
-    ?strict_causality( #{ ?snk_kind := state_change
-                        , from := bootstrap
-                        , to := local_replay
-                        }
-                     , #{ ?snk_kind := state_change
-                        , from := local_replay
-                        , to := normal
-                        }
-                     , Trace
-                     ),
+    mria_rlog_props:replicant_bootstrap_stages(R, Trace0),
     ok.
