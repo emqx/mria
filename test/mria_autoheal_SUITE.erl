@@ -96,48 +96,52 @@ t_reboot_rejoin(Config) when is_list(Config) ->
        fun([C1, C2, R1, R2], Trace0) ->
                {_, Trace1} = ?split_trace_at(#{?snk_kind := about_to_join}, Trace0),
                {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace1),
-               TraceC1 = ?of_node(C1, Trace),
+               TraceC2 = ?of_node(C2, Trace),
                %% C1 joins C2
-               ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
-                                   , seed := C2
-                                   }
-                                , #{ ?snk_kind := "Starting autoheal"
-                                   }
-                                , TraceC1
-                                ),
-               ?strict_causality( #{ ?snk_kind := "Starting autoheal"
-                                   }
-                                , #{ ?snk_kind := "Mria has joined the core cluster"
-                                   , seed := C2
-                                   , status := #{ running_nodes := [_, _, _, _]
-                                                }
-                                   }
-                                , TraceC1
-                                ),
-               ?strict_causality( #{ ?snk_kind := "Mria has joined the core cluster"
-                                   , status := #{ running_nodes := [_, _, _, _]
-                                                }
-                                   }
-                                , #{ ?snk_kind := "Starting RLOG shard"
-                                   , shard := test_shard
-                                   }
-                                , TraceC1
-                                ),
+               ?assert(
+                  ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
+                                      , seed := C1
+                                      }
+                                   , #{ ?snk_kind := "Starting autoheal"
+                                      }
+                                   , TraceC2
+                                   )),
+               ?assert(
+                  ?strict_causality( #{ ?snk_kind := "Starting autoheal"
+                                      }
+                                   , #{ ?snk_kind := "Mria has joined the core cluster"
+                                      , seed := C1
+                                      , status := #{ running_nodes := [_, _]
+                                                   }
+                                      }
+                                   , TraceC2
+                                   )),
+               ?assert(
+                  ?strict_causality( #{ ?snk_kind := "Mria has joined the core cluster"
+                                      , status := #{ running_nodes := [_, _]
+                                                   }
+                                      }
+                                   , #{ ?snk_kind := "Starting RLOG shard"
+                                      , shard := test_shard
+                                      }
+                                   , TraceC2
+                                   )),
                %% Replicants reboot and bootstrap shard data
-               assert_replicant_bootstrapped(R1, C1, Trace),
-               assert_replicant_bootstrapped(R2, C1, Trace)
+               assert_replicant_bootstrapped(R1, C2, Trace),
+               assert_replicant_bootstrapped(R2, C2, Trace)
        end).
 
-assert_replicant_bootstrapped(R, C, Trace0) ->
+assert_replicant_bootstrapped(R, C, Trace) ->
     %% The core that the replicas are connected to is changing
     %% clusters
-    ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
-                        , ?snk_meta := #{ host := C }
-                        }
-                     , #{ ?snk_kind := "Remote RLOG agent died"
-                        , ?snk_meta := #{ host := R }
-                        }
-                     , Trace0
-                     ),
-    mria_rlog_props:replicant_bootstrap_stages(R, Trace0),
+    ?assert(
+       ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
+                           , ?snk_meta := #{ node := C }
+                           }
+                        , #{ ?snk_kind := "Remote RLOG agent died"
+                           , ?snk_meta := #{ node := R }
+                           }
+                        , Trace
+                        )),
+    mria_rlog_props:replicant_bootstrap_stages(R, Trace),
     ok.
