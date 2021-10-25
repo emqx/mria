@@ -95,11 +95,11 @@ t_reboot_rejoin(Config) when is_list(Config) ->
                       AllNodes = rpc:call(R2, mria, info, [running_nodes])
                   end),
            ?tp(test_end, #{}),
-           Cluster
+           AllNodes
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
-       fun([#{node := C1}, #{node := C2}, #{node := R1}, #{node := R2}], Trace0) ->
+       fun([C1, C2, R1, R2], Trace0) ->
                {_, Trace1} = ?split_trace_at(#{?snk_kind := about_to_join}, Trace0),
                {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace1),
                TraceC1 = ?of_node(C1, Trace),
