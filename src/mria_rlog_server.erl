@@ -114,6 +114,7 @@ bootstrap_me(RemoteNode, Shard) ->
 %%================================================================================
 
 init({Parent, Shard}) ->
+    process_flag(trap_exit, true),
     logger:set_process_metadata(#{ domain => [mria, rlog, server]
                                  , shard => Shard
                                  }),

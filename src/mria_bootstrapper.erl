@@ -18,7 +18,7 @@
 
 -module(mria_bootstrapper).
 
--behavior(gen_server).
+-behaviour(gen_server).
 
 %% API:
 -export([start_link/2, start_link_client/3]).
@@ -90,6 +90,7 @@ do_complete(Client, Server, Snapshot) ->
 %%================================================================================
 
 init({server, Shard, Subscriber}) ->
+    process_flag(trap_exit, true),
     logger:set_process_metadata(#{ domain => [mria, rlog, bootstrapper, server]
                                  , shard  => Shard
                                  }),
@@ -108,6 +109,7 @@ init({server, Shard, Subscriber}) ->
                 , key_queue  = Queue
                 }};
 init({client, Shard, RemoteNode, Parent}) ->
+    process_flag(trap_exit, true),
     logger:set_process_metadata(#{ domain => [mria, rlog, bootstrapper, client]
                                  , shard  => Shard
                                  }),
