@@ -58,6 +58,7 @@ start_link() ->
 %%================================================================================
 
 init(_) ->
+    process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
     init_timer(),
     {ok, #s{}}.

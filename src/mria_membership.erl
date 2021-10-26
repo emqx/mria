@@ -230,6 +230,7 @@ call(Req) ->
 %%--------------------------------------------------------------------
 
 init([]) ->
+    process_flag(trap_exit, true),
     _ = ets:new(membership, [ordered_set, protected, named_table, {keypos, 2}]),
     IsMnesiaRunning = case lists:member(node(), mria_mnesia:running_nodes()) of
                           true  -> running;
