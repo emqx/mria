@@ -19,6 +19,7 @@
 -module(concuerror_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-define(CONCUERROR, true).
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 %% Note: the number of interleavings that Concuerror has to explore
