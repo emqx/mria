@@ -147,7 +147,7 @@ handle_mnesia_event({Shard, TXID, Ops}, _ActivityId, D = #d{shard = Shard}) ->
          , seqno       => SeqNo
          }),
     Tx = {self(), SeqNo, TXID, [Ops]},
-    ok = mria_rlog_replica:push_tlog_entry(PushMode, D#d.subscriber, Tx),
+    ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
     {keep_state, D#d{seqno = SeqNo + 1}}.
 
 subscribe_realtime(D) ->

@@ -201,7 +201,7 @@ t_rlog_smoke_test(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], Env),
     CounterKey = counter,
     ?check_trace(
-       #{timetrap => NTrans * 10 + 10_000},
+       #{timetrap => NTrans * 10 + 10000},
        try
            %% Inject some orderings to make sure the replicant
            %% receives transactions in all states.

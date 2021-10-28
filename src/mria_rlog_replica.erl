@@ -25,7 +25,7 @@
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
 
 %% Internal exports:
--export([do_push_tlog_entry/2, push_tlog_entry/3]).
+-export([do_push_tlog_entry/2, push_tlog_entry/4]).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -141,12 +141,12 @@ terminate(_Reason, _State, #d{}) ->
 %%================================================================================
 
 %% This function is called by the remote core node.
--spec push_tlog_entry(sync | async, mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
-push_tlog_entry(async, {Node, Pid}, Batch) ->
-    mria_lib:rpc_cast(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]),
+-spec push_tlog_entry(sync | async, mria_rlog:shard(), mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
+push_tlog_entry(async, Shard, {Node, Pid}, Batch) ->
+    mria_lib:rpc_cast({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]),
     ok;
-push_tlog_entry(sync, {Node, Pid}, Batch) ->
-    mria_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
+push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
+    mria_lib:rpc_call({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
 
 %%================================================================================
 %% Internal functions
