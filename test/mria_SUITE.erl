@@ -159,28 +159,33 @@ t_rlog_smoke_test(_) ->
     Env = [ {mria, bootstrapper_chunk_config, #{count_limit => 3}}
           | mria_mnesia_test_util:common_env()
           ],
+    NTrans = 300,
     Cluster = mria_ct:cluster([core, core, replicant], Env),
     CounterKey = counter,
     ?check_trace(
-       #{timetrap => 10000},
+       #{timetrap => NTrans * 10 + 10_000},
        try
            %% Inject some orderings to make sure the replicant
            %% receives transactions in all states.
            %%
            %% 1. Commit some transactions before the replicant start:
-           ?force_ordering(#{?snk_kind := trans_gen_counter_update, value := 5}, #{?snk_kind := state_change, to := disconnected}),
+           ?force_ordering(#{?snk_kind := trans_gen_counter_update, value := 5},
+                           #{?snk_kind := state_change, to := disconnected}),
            %% 2. Make sure the rest of transactions are produced after the agent starts:
-           ?force_ordering(#{?snk_kind := subscribe_realtime_stream}, #{?snk_kind := trans_gen_counter_update, value := 10}),
+           ?force_ordering(#{?snk_kind := subscribe_realtime_stream},
+                           #{?snk_kind := trans_gen_counter_update, value := 10}),
            %% 3. Make sure transactions are sent during TLOG replay: (TODO)
-           ?force_ordering(#{?snk_kind := state_change, to := bootstrap}, #{?snk_kind := trans_gen_counter_update, value := 15}),
+           ?force_ordering(#{?snk_kind := state_change, to := bootstrap},
+                           #{?snk_kind := trans_gen_counter_update, value := 15}),
            %% 4. Make sure some transactions are produced while in normal mode
-           ?force_ordering(#{?snk_kind := state_change, to := normal}, #{?snk_kind := trans_gen_counter_update, value := 25}),
+           ?force_ordering(#{?snk_kind := state_change, to := normal},
+                           #{?snk_kind := trans_gen_counter_update, value := 25}),
 
            Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
            ok = mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Generate some transactions:
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
-           ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, 30]),
+           ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans]),
            mria_mnesia_test_util:stabilize(1000),
            %% Check status:
            [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
@@ -200,6 +205,7 @@ t_rlog_smoke_test(_) ->
            ok
        end,
        fun([N1, N2, N3], Trace) ->
+               ?assert(mria_rlog_props:no_tlog_gaps(Trace)),
                %% Ensure that the nodes assumed designated roles:
                ?projection_complete(node, ?of_kind(rlog_server_start, Trace), [N1, N2]),
                ?projection_complete(node, ?of_kind(rlog_replica_start, Trace), [N3]),
