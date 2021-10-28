@@ -20,6 +20,7 @@
         , replicant_bootstrap_stages/2
         , all_batches_received/1
         , counter_import_check/3
+        , no_tlog_gaps/1
         ]).
 
 -include_lib("snabbkaffe/include/test_macros.hrl").
@@ -87,6 +88,11 @@ check_transaction_replay_sequence([]) ->
     true;
 check_transaction_replay_sequence([First|Rest]) ->
     check_transaction_replay_sequence(First, First, Rest).
+
+%% Check that there are no gaps in the transaction log
+no_tlog_gaps(Trace) ->
+    ?assertEqual([], ?of_kind(gap_in_the_tlog, Trace)),
+    true.
 
 %%================================================================================
 %% Internal functions

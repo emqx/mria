@@ -20,6 +20,7 @@
 -export([ role/0
         , backend/0
         , rpc_module/0
+        , tlog_push_mode/0
         , strict_mode/0
 
         , load_config/0
@@ -82,6 +83,10 @@ role() ->
 -spec rpc_module() -> gen_rpc | rpc.
 rpc_module() ->
     persistent_term:get(?mria(rlog_rpc_module), gen_rpc).
+
+-spec tlog_push_mode() -> sync | async.
+tlog_push_mode() ->
+    application:get_env(mria, tlog_push_mode, async).
 
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().

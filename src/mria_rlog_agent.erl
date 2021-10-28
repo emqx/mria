@@ -43,6 +43,7 @@
         { shard                :: mria_rlog:shard()
         , subscriber           :: mria_lib:subscriber()
         , seqno          = 0   :: integer()
+        , push_mode            :: sync | async
         }).
 
 -type data() :: #d{}.
@@ -81,6 +82,7 @@ init({Shard, Subscriber, _ReplaySince}) ->
                                     }),
     D = #d{ shard          = Shard
           , subscriber     = Subscriber
+          , push_mode      = mria_config:tlog_push_mode()
           },
     %% TMP workaround until replaying from the old logs is figured out:
     subscribe_realtime(D),
@@ -135,7 +137,8 @@ handle_state_trans(_OldState, _State, _Data) ->
 
 -spec handle_mnesia_event(mria_lib:rlog(), term(), data()) -> fsm_result().
 handle_mnesia_event({Shard, TXID, Ops}, _ActivityId, D = #d{shard = Shard}) ->
-    SeqNo = D#d.seqno,
+    PushMode = D#d.push_mode,
+    SeqNo    = D#d.seqno,
     ?tp(rlog_realtime_op,
         #{ ops         => Ops
          , txid        => TXID
@@ -144,7 +147,7 @@ handle_mnesia_event({Shard, TXID, Ops}, _ActivityId, D = #d{shard = Shard}) ->
          , seqno       => SeqNo
          }),
     Tx = {self(), SeqNo, TXID, [Ops]},
-    ok = mria_rlog_replica:push_tlog_entry(D#d.subscriber, Tx),
+    ok = mria_rlog_replica:push_tlog_entry(PushMode, D#d.subscriber, Tx),
     {keep_state, D#d{seqno = SeqNo + 1}}.
 
 subscribe_realtime(D) ->

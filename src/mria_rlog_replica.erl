@@ -25,7 +25,7 @@
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
 
 %% Internal exports:
--export([do_push_tlog_entry/2, push_tlog_entry/2]).
+-export([do_push_tlog_entry/2, push_tlog_entry/3]).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -141,11 +141,11 @@ terminate(_Reason, _State, #d{}) ->
 %%================================================================================
 
 %% This function is called by the remote core node.
--spec push_tlog_entry(mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
-push_tlog_entry({Node, Pid}, Batch) ->
-    %% TODO: this should be a cast, but gen_rpc doesn't guarantee the
-    %% ordering of cast messages. In the production code this will be
-    %% horrible!
+-spec push_tlog_entry(sync | async, mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
+push_tlog_entry(async, {Node, Pid}, Batch) ->
+    mria_lib:rpc_cast(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]),
+    ok;
+push_tlog_entry(sync, {Node, Pid}, Batch) ->
     mria_lib:rpc_call(Node, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
 
 %%================================================================================
@@ -200,6 +200,10 @@ handle_tlog_entry(_State, {Agent, SeqNo, TXID, _},
     %% Gap in the TLOG. Consuming it now will cause inconsistency, so we must restart.
     %% TODO: sometimes it should be possible to restart gracefully to
     %% salvage the bootstrapped data.
+    ?tp(error, gap_in_the_tlog, #{ expected_seqno => MySeqNo
+                                 , got_seqno      => SeqNo
+                                 , agent          => Agent
+                                 }),
     error({gap_in_the_tlog, TXID, SeqNo, MySeqNo});
 handle_tlog_entry(State, {Agent, SeqNo, TXID, _Transaction},
                   #d{ next_batch_seqno = ExpectedSeqno
