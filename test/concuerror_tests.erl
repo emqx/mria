@@ -14,6 +14,8 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
+%% NOTE: Concuerror doesn't pick up testcases automatically, add them
+%% to the Makefile explicitly
 -module(concuerror_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -156,36 +158,23 @@ dirty_bootstrap_test() ->
 %% check that we handle any info in mria_status
 mria_status_handle_info_test() ->
     {ok, ServerPid} = mria_status:start_link(),
+    CreateHandler =
+        fun() ->
+                spawn(fun() ->
+                              mria_status:subscribe_events(),
+                              exit(intentional)
+                      end)
+        end,
+    HandlerPid0 = CreateHandler(),
+    HandlerPid1 = CreateHandler(),
     try
-        ?check_trace(
-           begin
-               CreateHandler =
-                   fun() ->
-                           spawn(
-                             fun() ->
-                                     mria_status:subscribe_events(),
-                                     receive
-                                         die -> error(crash)
-                                     end
-                             end)
-                   end,
-               %% we need 2 handlers so the handle_info/2 callback is
-               %% executed with the survivor.
-               HandlerPid0 = CreateHandler(),
-               HandlerPid1 = CreateHandler(),
-               HandlerPid0 ! die,
-               {HandlerPid0, HandlerPid1}
-           end,
-           fun({HandlerPid0, HandlerPid1}, Trace) ->
-                    ?assertMatch(
-                       [#{msg := {'EXIT', _, _}}]
-                      , ?of_kind(mria_status_handle_info, Trace)),
-                    ?assert(is_process_alive(ServerPid)),
-                    ?assert(is_process_alive(HandlerPid1)),
-                    ?assert(not is_process_alive(HandlerPid0))
-            end)
+        %% Check that the server doesn't crash when any of the linked
+        %% processes crash:
+        ?assert(is_process_alive(ServerPid))
     after
-        cleanup(ServerPid)
+        stop_process(HandlerPid0),
+        stop_process(HandlerPid1),
+        stop_process(ServerPid)
     end.
 
 importer() ->
@@ -243,11 +232,17 @@ flush() ->
     end.
 
 cleanup(Pid) ->
+    stop_process(Pid),
+    ets:delete(mria_rlog_replica_tab),
+    ets:delete(mria_rlog_stats_tab).
+
+%% Send an exit signal to a process and wait for it to stop. This is
+%% needed because otherwise concuerror will (rightfully) detect a race
+%% condition when the signal is delivered later than we expect!
+stop_process(Pid) ->
     unlink(Pid),
     MRef = monitor(process, Pid),
     exit(Pid, shutdown),
     receive
         {'DOWN', MRef, _, _, _} -> ok
-    end,
-    ets:delete(mria_rlog_replica_tab),
-    ets:delete(mria_rlog_stats_tab).
+    end.
