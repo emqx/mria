@@ -39,7 +39,7 @@
         ]).
 
 %% Internal exports
--export([do_bootstrap/2, do_probe/1]).
+-export([do_bootstrap/2, do_probe/1, get_protocol_version/0]).
 
 -export_type([checkpoint/0]).
 
@@ -76,20 +76,7 @@ start_link(Parent, Shard) ->
 %% server is lost or delayed due to network congestion.
 -spec probe(node(), mria_rlog:shard()) -> boolean().
 probe(Node, Shard) ->
-    CorrectVersion = get_protocol_version(),
-    case mria_lib:rpc_call(Node, ?MODULE, do_probe, [Shard]) of
-        {true, CorrectVersion} ->
-            true;
-        {true, ServerVersion} ->
-            ?tp(warning, "Different Mria version on the server",
-                #{ my_version     => CorrectVersion
-                 , server_version => ServerVersion
-                 , node           => Node
-                 }),
-            false;
-        _ ->
-            false
-    end.
+    mria_lb:probe(Node, Shard).
 
 -spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint()) ->
           { ok
@@ -256,4 +243,4 @@ do_bootstrap(Shard, Subscriber) ->
 
 -spec do_probe(mria_rlog:shard()) -> {true, integer()}.
 do_probe(Shard) ->
-    {gen_server:call(Shard, probe, 1000), get_protocol_version()}.
+    {gen_server:call(Shard, probe, 1000), mria_rlog_server:get_protocol_version()}.
