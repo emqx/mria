@@ -88,6 +88,44 @@ t_disc_table(_) ->
         ok = mria_ct:teardown_cluster(Cluster)
     end.
 
+t_rocksdb_table(_) ->
+    EnvOverride = [{mnesia_rocksdb, semantics, fast}],
+    Cluster = mria_ct:cluster( [core, {core, EnvOverride}]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    try
+        Nodes = mria_ct:start_cluster(mria, Cluster),
+        CreateTab =
+            fun() ->
+                    ok = mria:create_table(kv_tab,
+                                           [{storage, rocksdb_copies},
+                                            {rlog_shard, test_shard},
+                                            {record_name, kv_tab},
+                                            {attributes, record_info(fields, kv_tab)}
+                                           ]),
+                    {atomic, Ret} =
+                        mria:transaction(test_shard,
+                                         fun() ->
+                                                 mnesia:write(#kv_tab{key = node(), val = node()})
+                                         end),
+                    Ret
+            end,
+        ReadTab =
+            fun() ->
+                    {atomic, Val} =
+                        mria:ro_transaction(test_shard,
+                                            fun() ->
+                                                    [#kv_tab{val = Val}] = mnesia:read(kv_tab, node()),
+                                                    Val
+                                            end),
+                    Val
+            end,
+        [ok = mria_ct:run_on(N, CreateTab) || N <- Nodes],
+        [N = mria_ct:run_on(N, ReadTab)    || N <- Nodes]
+    after
+        ok = mria_ct:teardown_cluster(Cluster)
+    end.
+
 %% -spec(join_cluster(node()) -> ok).
 %% -spec(leave_cluster(node()) -> ok | {error, any()}).
 t_join_leave_cluster(_) ->
