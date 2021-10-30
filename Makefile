@@ -74,7 +74,7 @@ app.config: $(CUTTLEFISH_SCRIPT)
 
 CONCUERROR := $(BUILD_DIR)/Concuerror/bin/concuerror
 CONCUERROR_RUN := $(CONCUERROR) \
-	--treat_as_normal shutdown --treat_as_normal normal \
+	--treat_as_normal shutdown --treat_as_normal normal --treat_as_normal intentional \
 	-x code -x code_server -x error_handler \
 	-pa $(BUILD_DIR)/concuerror+test/lib/snabbkaffe/ebin \
 	-pa $(BUILD_DIR)/concuerror+test/lib/mria/ebin
@@ -91,6 +91,7 @@ concuerror_test: $(CONCUERROR)
 	$(call concuerror,notify_different_tags_test)
 	$(call concuerror,get_core_node_test)
 	$(call concuerror,dirty_bootstrap_test)
+	$(call concuerror,mria_status_handle_info_test)
 
 $(CONCUERROR):
 	mkdir -p _build/

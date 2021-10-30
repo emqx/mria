@@ -341,7 +341,7 @@ dirty_delete_object(Record) ->
 -spec ro_trans_rpc(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_trans_rpc(Shard, Fun) ->
     {ok, Core} = mria_status:get_core_node(Shard, 5000),
-    case mria_lib:rpc_call(Core, ?MODULE, ro_transaction, [Shard, Fun]) of
+    case mria_lib:rpc_call({Core, Shard}, ?MODULE, ro_transaction, [Shard, Fun]) of
         {badrpc, Err} ->
             ?tp(error, ro_trans_badrpc,
                 #{ core   => Core

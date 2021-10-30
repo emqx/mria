@@ -21,8 +21,10 @@
         , txid_to_checkpoint/1
         , make_key/1
         , import_batch/2
+
         , rpc_call/4
         , rpc_cast/4
+
         , shuffle/1
         , send_after/3
         , cancel_timer/1
@@ -55,11 +57,14 @@
              , mnesia_tid/0
              , txid/0
              , rlog/0
+             , rpc_destination/0
              ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
 -include("mria_rlog.hrl").
 -include_lib("mnesia/src/mnesia.hrl").
+
+-compile({inline, [node_from_destination/1]}).
 
 %%================================================================================
 %% Type declarations
@@ -85,6 +90,8 @@
                       }.
 
 -type subscriber() :: {node(), pid()}.
+
+-type rpc_destination() :: node() | {node(), _SerializationKey}.
 
 %%================================================================================
 %% RLOG key creation
@@ -176,16 +183,24 @@ import_op_dirty({{Tab, _K}, Record, write}) ->
 %%================================================================================
 
 %% @doc Do an RPC call
--spec rpc_call(node(), module(), atom(), list()) -> term().
-rpc_call(Node, Module, Function, Args) ->
-    Mod = mria_config:rpc_module(),
-    apply(Mod, call, [Node, Module, Function, Args]).
+-spec rpc_call(rpc_destination(), module(), atom(), list()) -> term().
+rpc_call(Destination, Module, Function, Args) ->
+    case mria_config:rpc_module() of
+        rpc ->
+            rpc:call(node_from_destination(Destination), Module, Function, Args);
+        gen_rpc ->
+            gen_rpc:call(Destination, Module, Function, Args)
+    end.
 
 %% @doc Do an RPC cast
--spec rpc_cast(node(), module(), atom(), list()) -> term().
-rpc_cast(Node, Module, Function, Args) ->
-    Mod = mria_config:rpc_module(),
-    apply(Mod, cast, [Node, Module, Function, Args]).
+-spec rpc_cast(rpc_destination(), module(), atom(), list()) -> term().
+rpc_cast(Destination, Module, Function, Args) ->
+    case mria_config:rpc_module() of
+        rpc ->
+            rpc:cast(node_from_destination(Destination), Module, Function, Args);
+        gen_rpc ->
+            gen_rpc:cast(Destination, Module, Function, Args)
+    end.
 
 %%================================================================================
 %% Misc functions
@@ -226,7 +241,7 @@ call_backend_rw_trans(Shard, Function, Args) ->
             transactional_wrapper(Shard, Function, Args);
         {rlog, replicant, _} ->
             Core = find_upstream_node(Shard),
-            mria_lib:rpc_call(Core, ?MODULE, transactional_wrapper, [Shard, Function, Args])
+            mria_lib:rpc_call({Core, Shard}, ?MODULE, transactional_wrapper, [Shard, Function, Args])
     end.
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
@@ -245,7 +260,7 @@ call_backend_rw_dirty(Function, Table, Args) ->
                 false ->
                     %% Run dirty operation via RPC:
                     Core = find_upstream_node(Shard),
-                    mria_lib:rpc_call(Core, ?MODULE, dirty_wrapper,
+                    mria_lib:rpc_call({Core, Shard}, ?MODULE, dirty_wrapper,
                                       [Shard, Function, Table, Args])
             end
     end.
@@ -389,3 +404,9 @@ do_ensure_no_ops_outside_shard(TxStore, Shard) ->
                  , Tables
                  ),
     ok.
+
+-spec node_from_destination(rpc_destination()) -> node().
+node_from_destination({Node, _SerializationKey}) ->
+    Node;
+node_from_destination(Node) ->
+    Node.
