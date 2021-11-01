@@ -86,7 +86,7 @@ handle_cast(_Cast, St) ->
 handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = ProtoVSNs}) ->
     LastVSNChecked = maps:get(Node, ProtoVSNs, undefined),
     MyVersion = mria_rlog:get_protocol_version(),
-    ProbeResult = mria_lib:rpc_call(Node, mria_rlog_server, do_probe, [Shard]),
+    ProbeResult = mria_lib:rpc_call({Node, Shard}, mria_rlog_server, do_probe, [Shard]),
     {Reply, ServerVersion} =
         case ProbeResult of
             {true, MyVersion} ->
