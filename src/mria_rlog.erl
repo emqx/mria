@@ -114,7 +114,7 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
         true ->
             MyNode = node(),
             Args = [Shard, {MyNode, Subscriber}, Checkpoint],
-            mria_lib:rpc_call(RemoteNode, mria_rlog_server, subscribe, Args);
+            mria_lib:rpc_call({RemoteNode, Shard}, mria_rlog_server, subscribe, Args);
         false ->
             {badrpc, probe_failed}
     end.
