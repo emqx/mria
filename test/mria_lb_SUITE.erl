@@ -49,46 +49,46 @@ t_probe(_Config) ->
        try
            [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-           CorrectVersion = rpc:call(N2, mria_rlog_server, get_protocol_version, []),
+           ExpectedVersion = rpc:call(N2, mria_rlog_server, get_protocol_version, []),
            ?tp(test_start, #{}),
            ok = rpc:call(N1, meck, new, [mria_rlog_server, [passthrough, no_history, no_link]]),
            ok = rpc:call(N3, meck, new, [mria_rlog_server, [passthrough, no_history, no_link]]),
            %% 1. first time checking; should log
            ?tp({call, 1}, #{}),
            ok = rpc:call(N1, meck, expect, [mria_rlog_server, get_protocol_version,
-                                            fun() -> CorrectVersion + 1 end]),
+                                            fun() -> ExpectedVersion + 1 end]),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 2. last version is cached; should not log
            ?tp({call, 2}, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 3. probing a new node for the first time; should log
            ok = rpc:call(N3, meck, expect, [mria_rlog_server, get_protocol_version,
-                                            fun() -> CorrectVersion + 1 end]),
+                                            fun() -> ExpectedVersion + 1 end]),
            ?tp({call, 3}, #{}),
            false = rpc:call(N2, mria_lb, probe, [N3, test_shard]),
            %% 4. change of versions; should log
            ok = rpc:call(N1, meck, expect, [mria_rlog_server, get_protocol_version,
-                                            fun() -> CorrectVersion + 2 end]),
+                                            fun() -> ExpectedVersion + 2 end]),
            ?tp({call, 4}, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 5. correct version; should not log
            ok = rpc:call(N1, meck, expect, [mria_rlog_server, get_protocol_version,
-                                            fun() -> CorrectVersion end]),
+                                            fun() -> ExpectedVersion end]),
            ?tp({call, 5}, #{}),
            true = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            ?tp(test_end, #{}),
-           {CorrectVersion, [N1, N2, N3]}
+           {ExpectedVersion, [N1, N2, N3]}
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
-       fun({CorrectVersion, [N1, _N2, N3]}, Trace0) ->
+       fun({ExpectedVersion, [N1, _N2, N3]}, Trace0) ->
                %% 1.
                Trace1 = ?trace_between( #{?snk_kind := {call, 1}}
                                       , #{?snk_kind := {call, 2}}
                                       , Trace0
                                       ),
-               ServerVersion1 = CorrectVersion + 1,
-               ?assertMatch([#{ my_version     := CorrectVersion
+               ServerVersion1 = ExpectedVersion + 1,
+               ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion1
                               , node           := N1
                               }],
@@ -104,7 +104,7 @@ t_probe(_Config) ->
                                       , #{?snk_kind := {call, 4}}
                                       , Trace0
                                       ),
-               ?assertMatch([#{ my_version     := CorrectVersion
+               ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion1
                               , node           := N3
                               }],
@@ -114,8 +114,8 @@ t_probe(_Config) ->
                                       , #{?snk_kind := {call, 5}}
                                       , Trace0
                                       ),
-               ServerVersion2 = CorrectVersion + 2,
-               ?assertMatch([#{ my_version     := CorrectVersion
+               ServerVersion2 = ExpectedVersion + 2,
+               ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion2
                               , node           := N1
                               }],

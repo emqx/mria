@@ -85,14 +85,14 @@ handle_cast(_Cast, St) ->
 
 handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = ProtoVSNs}) ->
     LastVSNChecked = maps:get(Node, ProtoVSNs, undefined),
-    CorrectVersion = mria_rlog_server:get_protocol_version(),
+    MyVersion = mria_rlog_server:get_protocol_version(),
     ProbeResult = mria_lib:rpc_call(Node, mria_rlog_server, do_probe, [Shard]),
     {Reply, ServerVersion} = case ProbeResult of
-        {true, CorrectVersion} ->
-            {true, CorrectVersion};
+        {true, MyVersion} ->
+            {true, MyVersion};
         {true, CurrentVersion} when CurrentVersion =/= LastVSNChecked ->
             ?tp(warning, "Different Mria version on the server",
-                #{ my_version     => CorrectVersion
+                #{ my_version     => MyVersion
                  , server_version => CurrentVersion
                  , last_version   => LastVSNChecked
                  , node           => Node
