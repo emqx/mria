@@ -44,7 +44,7 @@
 %% Type declarations
 %%================================================================================
 
--type core_protocol_versions() :: #{{node(), mria_rlog:shard()} => integer()}.
+-type core_protocol_versions() :: #{node() => integer()}.
 
 -record(s,
         { core_protocol_versions :: core_protocol_versions()
@@ -83,8 +83,8 @@ handle_info(_Info, St) ->
 handle_cast(_Cast, St) ->
     {noreply, St}.
 
-handle_call({probe, Node, Shard}, _From, St = #s{core_protocol_versions = ProtoVSNs}) ->
-    LastVSNChecked = maps:get({Node, Shard}, ProtoVSNs, undefined),
+handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = ProtoVSNs}) ->
+    LastVSNChecked = maps:get(Node, ProtoVSNs, undefined),
     CorrectVersion = mria_rlog_server:get_protocol_version(),
     ProbeResult = mria_lib:rpc_call(Node, mria_rlog_server, do_probe, [Shard]),
     {Reply, ServerVersion} = case ProbeResult of
@@ -101,8 +101,8 @@ handle_call({probe, Node, Shard}, _From, St = #s{core_protocol_versions = ProtoV
         _ ->
             {false, LastVSNChecked}
     end,
-    {reply, Reply,
-     St#s{core_protocol_versions = ProtoVSNs#{{Node, Shard} => ServerVersion}}};
+    St = St0#s{core_protocol_versions = ProtoVSNs#{Node => ServerVersion}},
+    {reply, Reply, St};
 handle_call(_From, Call, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
 
