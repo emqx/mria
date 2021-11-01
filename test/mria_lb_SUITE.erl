@@ -21,7 +21,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
--include("mria_ct.hrl").
 
 all() ->
     mria_ct:all(?MODULE).
@@ -54,27 +53,27 @@ t_probe(_Config) ->
            ok = rpc:call(N1, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
            ok = rpc:call(N3, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
            %% 1. first time checking; should log
-           ?tp({call, 1}, #{}),
            ok = rpc:call(N1, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion + 1 end]),
+           ?tp(call_probe, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 2. last version is cached; should not log
-           ?tp({call, 2}, #{}),
+           ?tp(call_probe, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 3. probing a new node for the first time; should log
            ok = rpc:call(N3, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion + 1 end]),
-           ?tp({call, 3}, #{}),
+           ?tp(call_probe, #{}),
            false = rpc:call(N2, mria_lb, probe, [N3, test_shard]),
            %% 4. change of versions; should log
            ok = rpc:call(N1, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion + 2 end]),
-           ?tp({call, 4}, #{}),
+           ?tp(call_probe, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 5. correct version; should not log
            ok = rpc:call(N1, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion end]),
-           ?tp({call, 5}, #{}),
+           ?tp(call_probe, #{}),
            true = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            ?tp(test_end, #{}),
            {ExpectedVersion, [N1, N2, N3]}
@@ -82,11 +81,11 @@ t_probe(_Config) ->
            ok = mria_ct:teardown_cluster(Cluster)
        end,
        fun({ExpectedVersion, [N1, _N2, N3]}, Trace0) ->
+               Traces = ?splitr_trace(#{?snk_kind := call_probe},
+                                      Trace0),
+               ?assertEqual(6, length(Traces)),
+               [_, Trace1, Trace2, Trace3, Trace4, Trace5] = Traces,
                %% 1.
-               Trace1 = ?trace_between( #{?snk_kind := {call, 1}}
-                                      , #{?snk_kind := {call, 2}}
-                                      , Trace0
-                                      ),
                ServerVersion1 = ExpectedVersion + 1,
                ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion1
@@ -94,26 +93,14 @@ t_probe(_Config) ->
                               }],
                             ?of_kind("Different Mria version on the server", Trace1)),
                %% 2.
-               Trace2 = ?trace_between( #{?snk_kind := {call, 2}}
-                                      , #{?snk_kind := {call, 3}}
-                                      , Trace0
-                                      ),
                ?assertEqual([], ?of_kind("Different Mria version on the server", Trace2)),
                %% 3.
-               Trace3 = ?trace_between( #{?snk_kind := {call, 3}}
-                                      , #{?snk_kind := {call, 4}}
-                                      , Trace0
-                                      ),
                ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion1
                               , node           := N3
                               }],
                             ?of_kind("Different Mria version on the server", Trace3)),
                %% 4.
-               Trace4 = ?trace_between( #{?snk_kind := {call, 4}}
-                                      , #{?snk_kind := {call, 5}}
-                                      , Trace0
-                                      ),
                ServerVersion2 = ExpectedVersion + 2,
                ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion2
@@ -121,10 +108,6 @@ t_probe(_Config) ->
                               }],
                             ?of_kind("Different Mria version on the server", Trace4)),
                %% 5.
-               Trace5 = ?trace_between( #{?snk_kind := {call, 5}}
-                                      , #{?snk_kind := test_end}
-                                      , Trace0
-                                      ),
                ?assertEqual([], ?of_kind("Different Mria version on the server", Trace5)),
                ok
        end).
