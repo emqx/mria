@@ -91,23 +91,23 @@ t_probe(_Config) ->
                               , server_version := ServerVersion1
                               , node           := N1
                               }],
-                            ?of_kind("Different Mria version on the server", Trace1)),
+                            ?of_kind("Different Mria version on the core node", Trace1)),
                %% 2.
-               ?assertEqual([], ?of_kind("Different Mria version on the server", Trace2)),
+               ?assertEqual([], ?of_kind("Different Mria version on the core node", Trace2)),
                %% 3.
                ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion1
                               , node           := N3
                               }],
-                            ?of_kind("Different Mria version on the server", Trace3)),
+                            ?of_kind("Different Mria version on the core node", Trace3)),
                %% 4.
                ServerVersion2 = ExpectedVersion + 2,
                ?assertMatch([#{ my_version     := ExpectedVersion
                               , server_version := ServerVersion2
                               , node           := N1
                               }],
-                            ?of_kind("Different Mria version on the server", Trace4)),
+                            ?of_kind("Different Mria version on the core node", Trace4)),
                %% 5.
-               ?assertEqual([], ?of_kind("Different Mria version on the server", Trace5)),
+               ?assertEqual([], ?of_kind("Different Mria version on the core node", Trace5)),
                ok
        end).

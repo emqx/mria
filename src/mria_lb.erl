@@ -92,7 +92,7 @@ handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = Proto
             {true, MyVersion} ->
                 {true, MyVersion};
             {true, CurrentVersion} when CurrentVersion =/= LastVSNChecked ->
-                ?tp(warning, "Different Mria version on the server",
+                ?tp(warning, "Different Mria version on the core node",
                     #{ my_version     => MyVersion
                      , server_version => CurrentVersion
                      , last_version   => LastVSNChecked
