@@ -49,30 +49,30 @@ t_probe(_Config) ->
        try
            [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-           ExpectedVersion = rpc:call(N2, mria_rlog_server, get_protocol_version, []),
+           ExpectedVersion = rpc:call(N2, mria_rlog, get_protocol_version, []),
            ?tp(test_start, #{}),
-           ok = rpc:call(N1, meck, new, [mria_rlog_server, [passthrough, no_history, no_link]]),
-           ok = rpc:call(N3, meck, new, [mria_rlog_server, [passthrough, no_history, no_link]]),
+           ok = rpc:call(N1, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
+           ok = rpc:call(N3, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
            %% 1. first time checking; should log
            ?tp({call, 1}, #{}),
-           ok = rpc:call(N1, meck, expect, [mria_rlog_server, get_protocol_version,
+           ok = rpc:call(N1, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion + 1 end]),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 2. last version is cached; should not log
            ?tp({call, 2}, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 3. probing a new node for the first time; should log
-           ok = rpc:call(N3, meck, expect, [mria_rlog_server, get_protocol_version,
+           ok = rpc:call(N3, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion + 1 end]),
            ?tp({call, 3}, #{}),
            false = rpc:call(N2, mria_lb, probe, [N3, test_shard]),
            %% 4. change of versions; should log
-           ok = rpc:call(N1, meck, expect, [mria_rlog_server, get_protocol_version,
+           ok = rpc:call(N1, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion + 2 end]),
            ?tp({call, 4}, #{}),
            false = rpc:call(N2, mria_lb, probe, [N1, test_shard]),
            %% 5. correct version; should not log
-           ok = rpc:call(N1, meck, expect, [mria_rlog_server, get_protocol_version,
+           ok = rpc:call(N1, meck, expect, [mria_rlog, get_protocol_version,
                                             fun() -> ExpectedVersion end]),
            ?tp({call, 5}, #{}),
            true = rpc:call(N2, mria_lb, probe, [N1, test_shard]),

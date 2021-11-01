@@ -39,7 +39,7 @@
         ]).
 
 %% Internal exports
--export([do_bootstrap/2, do_probe/1, get_protocol_version/0]).
+-export([do_bootstrap/2, do_probe/1]).
 
 -export_type([checkpoint/0]).
 
@@ -228,11 +228,6 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
             {noreply, St0}
     end.
 
-%% @doc Get version of Mria protocol running on the node
-get_protocol_version() ->
-    %% Should be increased on incompatible changes:
-    0.
-
 %%================================================================================
 %% Internal exports (gen_rpc)
 %%================================================================================
@@ -243,4 +238,4 @@ do_bootstrap(Shard, Subscriber) ->
 
 -spec do_probe(mria_rlog:shard()) -> {true, integer()}.
 do_probe(Shard) ->
-    {gen_server:call(Shard, probe, 1000), mria_rlog_server:get_protocol_version()}.
+    {gen_server:call(Shard, probe, 1000), mria_rlog:get_protocol_version()}.

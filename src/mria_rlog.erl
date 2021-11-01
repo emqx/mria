@@ -18,6 +18,7 @@
 -module(mria_rlog).
 
 -export([ status/0
+        , get_protocol_version/0
 
         , role/0
         , role/1
@@ -117,3 +118,9 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
         false ->
             {badrpc, probe_failed}
     end.
+
+%% @doc Get version of Mria protocol running on the node
+-spec get_protocol_version() -> integer().
+get_protocol_version() ->
+    %% Should be increased on incompatible changes:
+    0.
