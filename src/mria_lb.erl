@@ -22,6 +22,7 @@
 
 %% API
 -export([ start_link/0
+        , probe/2
         ]).
 
 %% gen_server callbacks
@@ -37,11 +38,17 @@
 -export([ core_node_weight/1
         ]).
 
+-include_lib("snabbkaffe/include/trace.hrl").
+
 %%================================================================================
 %% Type declarations
 %%================================================================================
 
--record(s, {}).
+-type core_protocol_versions() :: #{node() => integer()}.
+
+-record(s,
+        { core_protocol_versions :: core_protocol_versions()
+        }).
 
 -define(update, update).
 -define(SERVER, ?MODULE).
@@ -53,6 +60,10 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec probe(node(), mria_rlog:shard()) -> boolean().
+probe(Node, Shard) ->
+    gen_server:call(?SERVER, {probe, Node, Shard}).
+
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
@@ -61,7 +72,7 @@ init(_) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
     init_timer(),
-    {ok, #s{}}.
+    {ok, #s{core_protocol_versions = #{}}}.
 
 handle_info(?update, St) ->
     do_update(),
@@ -72,6 +83,27 @@ handle_info(_Info, St) ->
 handle_cast(_Cast, St) ->
     {noreply, St}.
 
+handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = ProtoVSNs}) ->
+    LastVSNChecked = maps:get(Node, ProtoVSNs, undefined),
+    MyVersion = mria_rlog:get_protocol_version(),
+    ProbeResult = mria_lib:rpc_call({Node, Shard}, mria_rlog_server, do_probe, [Shard]),
+    {Reply, ServerVersion} =
+        case ProbeResult of
+            {true, MyVersion} ->
+                {true, MyVersion};
+            {true, CurrentVersion} when CurrentVersion =/= LastVSNChecked ->
+                ?tp(warning, "Different Mria version on the core node",
+                    #{ my_version     => MyVersion
+                     , server_version => CurrentVersion
+                     , last_version   => LastVSNChecked
+                     , node           => Node
+                     }),
+                {false, CurrentVersion};
+            _ ->
+                {false, LastVSNChecked}
+        end,
+    St = St0#s{core_protocol_versions = ProtoVSNs#{Node => ServerVersion}},
+    {reply, Reply, St};
 handle_call(_From, Call, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
 
