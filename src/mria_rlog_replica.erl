@@ -18,6 +18,8 @@
 %% a remote core node.
 -module(mria_rlog_replica).
 
+-behaviour(gen_statem).
+
 %% API:
 -export([start_link/1]).
 
