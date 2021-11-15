@@ -303,7 +303,7 @@ transaction(Shard, Fun, Args) ->
 
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
-    transaction(Shard, fun erlang:apply/2, [Fun, []]).
+    transaction(Shard, Fun, []).
 
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->

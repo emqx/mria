@@ -33,15 +33,15 @@
 
 -spec transaction(fun(() -> A)) -> A.
 transaction(Fun) ->
-    unwrap_mnesia_ret(mnesia:transaction(Fun)).
+    Fun().
 
 -spec transaction(fun((...) -> A), list()) -> A.
 transaction(Fun, Args) ->
-    unwrap_mnesia_ret(mnesia:transaction(Fun, Args)).
+    apply(Fun, Args).
 
 -spec ro_transaction(fun(() -> A)) -> A.
 ro_transaction(Fun) ->
-    Ret = unwrap_mnesia_ret(mnesia:transaction(Fun)),
+    Ret = Fun(),
     assert_ro(),
     Ret.
 
@@ -59,11 +59,6 @@ clear_table(Tab) ->
 %%================================================================================
 %% Internal functions
 %%================================================================================
-
-unwrap_mnesia_ret({atomic, Ret}) ->
-    Ret;
-unwrap_mnesia_ret({aborted, Ret}) ->
-    mnesia:abort(Ret).
 
 assert_ro() ->
     case mria_config:strict_mode() of
