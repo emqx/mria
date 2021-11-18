@@ -86,7 +86,7 @@ rpc_module() ->
 
 -spec tlog_push_mode() -> sync | async.
 tlog_push_mode() ->
-    application:get_env(mria, tlog_push_mode, async).
+    application:get_env(mria, tlog_push_mode, sync).
 
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().
