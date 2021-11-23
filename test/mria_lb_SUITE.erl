@@ -34,6 +34,7 @@ end_per_suite(_Config) ->
 
 init_per_testcase(TestCase, Config) ->
     logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
+    ok = snabbkaffe:start_trace(),
     Config.
 
 end_per_testcase(TestCase, Config) ->
@@ -111,3 +112,127 @@ t_probe(_Config) ->
                ?assertEqual([], ?of_kind("Different Mria version on the core node", Trace5)),
                ok
        end).
+
+t_core_nodes(_Config) ->
+    Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 60000},
+       try
+           [C1, R1, C2] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+           %% 1. no conflict: accepts nodes
+           ?assertEqual([C1, C2], rpc:call(R1, mria_lb, core_nodes, [])),
+           ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, [])),
+           %% 2. nodes in cluster returned by core candidates are not
+           %% contained in callback return; rejects nodes
+           InexistentNodes = ["inexistent@127.0.0.1"],
+           clear_core_node_list(R1),
+           with_reported_cores(
+             C1, InexistentNodes,
+             fun() ->
+                     {R1, mria_lb} ! update,
+                     {ok, _} = ?block_until(#{ ?snk_kind := mria_lb_core_discovery_divergent_cluster
+                                             , node := R1
+                                             , previous_cores := []
+                                             , returned_cores := [C1, C2]
+                                             , unknown_nodes := InexistentNodes
+                                             }, 5000),
+                     ?assertEqual([], rpc:call(R1, mria_lb, core_nodes, [])),
+                     ?assertEqual([], rpc:call(R1, mria_rlog, core_nodes, []))
+             end),
+           %% 3. if one candidate core returns an empty list, should
+           %% not have an effect on the whole; accepts nodes
+           with_reported_cores(
+             C1, [],
+             fun() ->
+                     {_, {ok, _}} =
+                         ?wait_async_action(
+                            {R1, mria_lb} ! update,
+                            #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                             , node := R1
+                             , previous_cores := []
+                             , returned_cores := [C1, C2]
+                             }, 5000),
+                     ?assertEqual([C1, C2], rpc:call(R1, mria_lb, core_nodes, [])),
+                     ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, []))
+             end),
+           %% 4. if a candidate is a replicant, it's excluded from the final list
+           clear_core_node_list(R1),
+           with_role(
+             C2, replicant,
+             fun() ->
+                     {R1, mria_lb} ! update,
+                     {ok, _} = ?block_until(#{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                                             , node := R1
+                                             , previous_cores := []
+                                             , returned_cores := [C1]
+                                             }, 5000),
+                     ?assertEqual([C1], rpc:call(R1, mria_lb, core_nodes, [])),
+                     ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
+             end),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       fun(_, _Trace) ->
+               ok
+       end).
+
+clear_core_node_list(Replicant) ->
+    CoresBefore = erpc:call(Replicant, application, get_env,
+                            [mria, core_nodes, []]),
+    DefaultFun = fun() ->
+                         erpc:call(Replicant, application, get_env,
+                                   [mria, core_nodes, CoresBefore])
+                 end,
+    OldCallback = erpc:call(Replicant, application, get_env,
+                            [mria, core_nodes_callback, DefaultFun]),
+    try
+        {_, {ok, _}} = ?wait_async_action(
+                          begin
+                              ok = erpc:call(Replicant, application, set_env,
+                                             [mria, core_nodes_callback, fun() -> [] end]),
+                              {Replicant, mria_lb} ! update
+                          end,
+                          #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                           , node := Replicant
+                           , previous_cores := _
+                           , returned_cores := []
+                           }, 5000),
+        ok
+    after
+        ok = erpc:call(Replicant, application, set_env, [mria, core_nodes_callback,
+                                                         OldCallback]),
+        ok = erpc:call(Replicant, application, set_env, [mria, core_nodes,
+                                                         CoresBefore])
+    end.
+
+with_reported_cores(Nodes, CoresToReport, TestFun) when is_list(Nodes) ->
+    lists:foreach(
+      fun(Node) ->
+              ok = erpc:call(Node, meck, new, [mria_mnesia, [passthrough, no_history, no_link]]),
+              ok = erpc:call(Node, meck, expect, [mria_mnesia, db_nodes,
+                                                  fun() -> CoresToReport end])
+      end,
+      Nodes),
+    try
+        TestFun()
+    after
+        lists:foreach(
+          fun(Node) ->
+                  ok = erpc:call(Node, meck, unload, [mria_mnesia])
+          end,
+          Nodes)
+    end;
+with_reported_cores(Node, CoresToReport, TestFun) ->
+    with_reported_cores([Node], CoresToReport, TestFun).
+
+with_role(Node, Role, TestFun) ->
+    ok = erpc:call(Node, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
+    ok = erpc:call(Node, meck, expect, [mria_rlog, role,
+                                        fun() -> Role end]),
+    try
+        TestFun()
+    after
+        ok = erpc:call(Node, meck, unload, [mria_rlog])
+    end.

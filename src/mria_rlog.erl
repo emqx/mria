@@ -25,6 +25,7 @@
         , backend/0
 
         , core_nodes/0
+        , set_core_nodes_callback/1
         , subscribe/4
         , wait_for_shards/2
         ]).
@@ -80,7 +81,12 @@ backend() ->
 
 -spec core_nodes() -> [node()].
 core_nodes() ->
-    application:get_env(mria, core_nodes, []).
+    mria_lb:core_nodes().
+
+%% @doc Defines the core node discovery callback to be used.
+-spec set_core_nodes_callback(fun(() -> [node()])) -> ok.
+set_core_nodes_callback(CallbackFun) when is_function(CallbackFun, 0) ->
+    application:set_env(mria, core_nodes_callback, CallbackFun).
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
 wait_for_shards(Shards0, Timeout) ->
