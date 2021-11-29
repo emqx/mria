@@ -112,7 +112,7 @@ t_sum_verify(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, Trace) ->
+       fun(Trace) ->
                ?assertMatch( [ok, ok]
                            , ?projection(result, ?of_kind(verify_trans_sum, Trace))
                            )

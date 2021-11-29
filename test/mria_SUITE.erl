@@ -297,7 +297,7 @@ t_abort(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, Trace) ->
+       fun(Trace) ->
                ?assertMatch([], ?of_kind(rlog_import_trans, Trace))
        end).
 
@@ -310,7 +310,7 @@ t_core_node_competing_writes(_) ->
     ?check_trace(
        #{timetrap => 30000},
        try
-           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
            spawn(fun() ->
                          rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NOper]),
@@ -318,12 +318,11 @@ t_core_node_competing_writes(_) ->
                  end),
            ok = rpc:call(N2, mria_transaction_gen, counter, [CounterKey, NOper]),
            ?block_until(#{?snk_kind := n1_counter_done}),
-           mria_mnesia_test_util:wait_full_replication(Cluster),
-           N3
+           mria_mnesia_test_util:wait_full_replication(Cluster)
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_N3, Trace) ->
+       fun(Trace) ->
                Events = [Val || #{?snk_kind := rlog_import_trans, ops := Ops} <- Trace,
                                 {{test_tab, _}, {test_tab, _Key, Val}, write} <- Ops],
                %% Check that the number of imported transaction equals to the expected number:
@@ -348,9 +347,7 @@ t_rlog_clear_table(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, _) ->
-               true
-       end).
+       []).
 
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
@@ -385,9 +382,8 @@ t_rlog_dirty_operations(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, Trace) ->
-               ?assert(mria_rlog_props:replicant_no_restarts(Trace))
-       end).
+       [ fun mria_rlog_props:replicant_no_restarts/1
+       ]).
 
 t_local_content(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
@@ -459,9 +455,7 @@ t_local_content(_) ->
       after
           mria_ct:teardown_cluster(Cluster)
       end,
-      fun(_, _) ->
-              true
-      end).
+      []).
 
 %% This testcase verifies verifies various modes of mria:ro_transaction
 t_sum_verify(_) ->
@@ -481,7 +475,7 @@ t_sum_verify(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, Trace) ->
+       fun(Trace) ->
                ?assert(mria_rlog_props:replicant_no_restarts(Trace)),
                ?assertMatch( [#{result := ok}, #{result := ok}]
                            , ?of_kind(verify_trans_sum, Trace)
@@ -528,9 +522,7 @@ t_core_node_down(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, _Trace) ->
-               true
-       end).
+       []).
 
 t_dirty_reads(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
