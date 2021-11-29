@@ -16,6 +16,8 @@
 
 -module(mria_rlog_props).
 
+-compile(nowarn_underscore_match).
+
 -export([ replicant_no_restarts/1
         , replicant_bootstrap_stages/2
         , all_batches_received/1

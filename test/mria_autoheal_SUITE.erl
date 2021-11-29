@@ -20,6 +20,8 @@
         , t_reboot_rejoin/1
         ]).
 
+-compile(nowarn_underscore_match).
+
 -include_lib("snabbkaffe/include/ct_boilerplate.hrl").
 
 t_autoheal(Config) when is_list(Config) ->

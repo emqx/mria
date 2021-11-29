@@ -26,6 +26,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
+-compile(nowarn_underscore_match).
 
 all() -> mria_ct:all(?MODULE).
 
@@ -112,7 +113,7 @@ t_sum_verify(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, Trace) ->
+       fun(Trace) ->
                ?assertMatch( [ok, ok]
                            , ?projection(result, ?of_kind(verify_trans_sum, Trace))
                            )
