@@ -26,6 +26,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
+-compile(nowarn_underscore_match).
 
 all() -> mria_ct:all(?MODULE).
 

@@ -19,6 +19,7 @@
 
 -compile(export_all).
 -compile(nowarn_export_all).
+-compile(nowarn_underscore_match).
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").

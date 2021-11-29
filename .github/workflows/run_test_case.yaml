@@ -5,11 +5,10 @@ on: [push, pull_request]
 jobs:
 
     run_test_case:
-
         runs-on: ubuntu-latest
 
         container:
-            image: erlang:22.1
+            image: erlang:24.0
 
         steps:
         - uses: actions/checkout@v1
