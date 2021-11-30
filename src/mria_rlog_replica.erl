@@ -59,6 +59,7 @@
         , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
         , next_batch_seqno = 0         :: integer()
         , replayq                      :: replayq:q() | undefined
+        , importer_worker              :: pid()
         }).
 
 -type data() :: #d{}.
@@ -94,7 +95,9 @@ init({Shard, _Opts}) ->
         #{ node => node()
          , shard => Shard
          }),
-    D = #d{ shard = Shard
+    {ok, ImporterPid} = mria_replica_importer_worker:start_link(Shard),
+    D = #d{ shard           = Shard
+          , importer_worker = ImporterPid
           },
     {ok, ?disconnected, D}.
 
@@ -163,6 +166,7 @@ handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
                         , shard            = Shard
+                        , importer_worker  = ImporterWorker
                         }) ->
     %% Normal flow, transactions are applied directly to the replica:
     ?tp(rlog_replica_import_trans,
@@ -172,7 +176,7 @@ handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
          , transaction => Transaction
          }),
     Checkpoint = mria_lib:txid_to_checkpoint(TXID),
-    mria_lib:import_batch(transaction, Transaction),
+    ok = mria_replica_importer_worker:import_batch(ImporterWorker, Transaction),
     mria_status:notify_replicant_import_trans(Shard, Checkpoint),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     , checkpoint       = Checkpoint
@@ -297,13 +301,14 @@ initiate_reconnect(#d{shard = Shard}) ->
 
 %% @private Try connecting to a core node
 -spec handle_reconnect(data()) -> fsm_result().
-handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
+handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, importer_worker = ImporterWorker}) ->
     ?tp(warning, rlog_replica_reconnect,
         #{ node => node()
          }),
     case try_connect(Shard, Checkpoint) of
         {ok, _BootstrapNeeded = true, Node, ConnPid, TableSpecs} ->
             D = #d{ shard            = Shard
+                  , importer_worker  = ImporterWorker
                   , agent            = ConnPid
                   , remote_core_node = Node
                   },
@@ -311,6 +316,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint}) ->
             {next_state, ?bootstrap, D};
         {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs} ->
             D = #d{ shard            = Shard
+                  , importer_worker  = ImporterWorker
                   , agent            = ConnPid
                   , remote_core_node = Node
                   , checkpoint       = Checkpoint

@@ -163,7 +163,7 @@ handle_call({bootstrap, Subscriber}, _From, State) ->
     {reply, {ok, Pid}, State};
 handle_call(probe, _From, State) ->
     {reply, true, State};
-handle_call(_From, Call, St) ->
+handle_call(Call, _From, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
 
 code_change(_OldVsn, St, _Extra) ->
