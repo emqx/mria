@@ -76,6 +76,7 @@ callback_mode() -> [handle_event_function, state_enter].
 -spec init({mria_rlog:shard(), mria_lib:subscriber(), mria_lib:txid()}) -> {ok, state(), data()}.
 init({Shard, Subscriber, _ReplaySince}) ->
     process_flag(trap_exit, true),
+    process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain     => [mria, rlog, agent]
                                     , shard      => Shard
                                     , subscriber => Subscriber

@@ -86,6 +86,7 @@ callback_mode() -> [handle_event_function, state_enter].
 -spec init({mria_rlog:shard(), any()}) -> {ok, state(), data()}.
 init({Shard, _Opts}) ->
     process_flag(trap_exit, true),
+    process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]
                                     , shard  => Shard
                                     }),
