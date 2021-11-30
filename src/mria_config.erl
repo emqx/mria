@@ -86,7 +86,7 @@ rpc_module() ->
 
 -spec tlog_push_mode() -> sync | async.
 tlog_push_mode() ->
-    application:get_env(mria, tlog_push_mode, sync).
+    persistent_term:get(?mria(tlog_push_mode), sync).
 
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().
@@ -99,6 +99,7 @@ load_config() ->
     copy_from_env(db_backend),
     copy_from_env(node_role),
     copy_from_env(strict_mode),
+    copy_from_env(tlog_push_mode),
     consistency_check().
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
