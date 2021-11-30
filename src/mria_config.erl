@@ -86,7 +86,7 @@ rpc_module() ->
 
 -spec tlog_push_mode() -> sync | async.
 tlog_push_mode() ->
-    persistent_term:get(?mria(tlog_push_mode), sync).
+    persistent_term:get(?mria(tlog_push_mode), async).
 
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().

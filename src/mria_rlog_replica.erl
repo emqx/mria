@@ -99,7 +99,7 @@ init({Shard, _Opts}) ->
     {ok, ?disconnected, D}.
 
 -spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) -> fsm_result().
-handle_event(cast, {tlog_entry, Tx}, State, D) ->
+handle_event(info, {tlog_entry, Tx}, State, D) ->
     handle_tlog_entry(State, Tx, D);
 %% Events specific to `disconnected' state:
 handle_event(enter, OldState, ?disconnected, D) ->
@@ -145,8 +145,10 @@ terminate(_Reason, _State, #d{}) ->
 
 %% This function is called by the remote core node.
 -spec push_tlog_entry(sync | async, mria_rlog:shard(), mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
-push_tlog_entry(async, Shard, {Node, Pid}, Batch) ->
-    mria_lib:rpc_cast({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]),
+push_tlog_entry(async, _Shard, {_Node, Pid}, Batch) ->
+    %% mria_lib:rpc_cast({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]),
+    %% TODO: Don't merge to master. Tmp fix for performance test.
+    do_push_tlog_entry(Pid, Batch), %% Note: here Pid is remote
     ok;
 push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
     mria_lib:rpc_call({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
@@ -416,7 +418,8 @@ do_push_tlog_entry(Pid, Batch) ->
     ?tp(receive_tlog_entry,
         #{ entry => Batch
          }),
-    gen_statem:cast(Pid, {tlog_entry, Batch}).
+    Pid ! {tlog_entry, Batch},
+    ok.
 
 -spec clear_table(atom()) -> ok.
 clear_table(Table) ->
