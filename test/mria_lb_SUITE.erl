@@ -113,7 +113,7 @@ t_probe(_Config) ->
                ok
        end).
 
-t_core_nodes(_Config) ->
+t_core_node_discovery(_Config) ->
     Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 60000},
@@ -173,10 +173,7 @@ t_core_nodes(_Config) ->
            ok
        after
            ok = mria_ct:teardown_cluster(Cluster)
-       end,
-       fun(_, _Trace) ->
-               ok
-       end).
+       end, []).
 
 clear_core_node_list(Replicant) ->
     CoresBefore = erpc:call(Replicant, application, get_env,
