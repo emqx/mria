@@ -22,8 +22,8 @@
 
 %% API:
 -export([ start_link/1
-        , start_importer_worker/2
-        , start_tmp_worker/2
+        , get_importer_worker/1
+        , start_bootstrap_client/4
         ]).
 
 %% Supervisor callbacks:
@@ -37,28 +37,21 @@
 start_link(Shard) ->
     supervisor:start_link(?MODULE, Shard).
 
--spec start_importer_worker(pid(), mria_rlog:shard()) -> pid().
-start_importer_worker(SupPid, Shard) ->
-    Spec = #{ id       => importer_worker
-            , start    => {mria_replica_importer_worker, start_link, [Shard]}
-            , restart  => permanent
-            , type     => worker
-            , shutdown => 1000
-            },
-    _ = supervisor:terminate_child(SupPid, importer_worker),
-    {ok, Pid} = supervisor:start_child(SupPid, Spec),
+-spec get_importer_worker(pid()) -> pid().
+get_importer_worker(SupPid) ->
+    {ok, Pid} = mria_lib:sup_child_pid(SupPid, importer_worker),
     Pid.
 
--spec start_tmp_worker(pid(), {module(), atom(), list()}) -> pid().
-start_tmp_worker(SupPid, Start) ->
-    Spec = #{ id       => tmp_worker
-            , start    => Start
+-spec start_bootstrap_client(pid(), mria_rlog:shard(), node(), pid()) -> pid().
+start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
+    Id = bootstrap_client,
+    Spec = #{ id       => Id
+            , start    => {mria_bootstrapper, start_link_client, [Shard, RemoteNode, ReplicaPid]}
             , restart  => transient
             , type     => worker
             , shutdown => 1000
             },
-    {ok, Pid} = supervisor:start_child(SupPid, Spec),
-    Pid.
+    start_worker(SupPid, Id, Spec).
 
 %%================================================================================
 %% Supervisor callbacks
@@ -69,7 +62,13 @@ init(Shard) ->
                 , intensity => 0
                 , period    => 1
                 },
-    Children = [ #{ id       => replica
+    Children = [ #{ id       => importer_worker
+                  , start    => {mria_replica_importer_worker, start_link, [Shard]}
+                  , restart  => permanent
+                  , type     => worker
+                  , shutdown => 1000
+                  }
+               , #{ id       => replica
                   , start    => {mria_rlog_replica, start_link, [self(), Shard]}
                   , restart  => permanent
                   , shutdown => 1000
@@ -77,3 +76,13 @@ init(Shard) ->
                   }
                ],
     {ok, {SupFlags, Children}}.
+
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+start_worker(SupPid, Id, Spec) ->
+    _ = supervisor:terminate_child(SupPid, Id),
+    _ = supervisor:delete_child(SupPid, Id),
+    {ok, Pid} = supervisor:start_child(SupPid, Spec),
+    Pid.

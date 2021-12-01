@@ -36,13 +36,7 @@ start_link() ->
 
 -spec find_shard(mria_rlog:shard()) -> {ok, pid()} | undefined.
 find_shard(Shard) ->
-    Children = [Child || {Id, Child, _, _} <- supervisor:which_children(?SUPERVISOR), Id =:= Shard],
-    case Children of
-        [Pid] when is_pid(Pid) ->
-            {ok, Pid};
-        _ ->
-            undefined
-    end.
+    mria_lib:sup_child_pid(?SUPERVISOR, Shard).
 
 %% @doc Add shard dynamically
 -spec start_shard(mria_rlog:shard()) -> {ok, pid()}

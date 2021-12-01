@@ -53,13 +53,13 @@
 
 -record(d,
         { shard                        :: mria_rlog:shard()
+        , parent_sup                   :: pid()
         , remote_core_node = undefined :: node() | undefined
         , agent                        :: pid() | undefined
-        , tmp_worker       = undefined :: pid() | undefined
         , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
         , next_batch_seqno = 0         :: integer()
         , replayq                      :: replayq:q() | undefined
-        , importer_worker              :: pid()
+        , importer_worker              :: pid() | undefined
         }).
 
 -type data() :: #d{}.
@@ -84,7 +84,7 @@ start_link(ParentSup, Shard) ->
 callback_mode() -> [handle_event_function, state_enter].
 
 -spec init({pid(), mria_rlog:shard()}) -> {ok, state(), data()}.
-init({_ParentSup, Shard}) ->
+init({ParentSup, Shard}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]
@@ -94,9 +94,8 @@ init({_ParentSup, Shard}) ->
         #{ node => node()
          , shard => Shard
          }),
-    {ok, ImporterPid} = mria_replica_importer_worker:start_link(Shard),
     D = #d{ shard           = Shard
-          , importer_worker = ImporterPid
+          , parent_sup      = ParentSup
           },
     {ok, ?disconnected, D}.
 
@@ -113,7 +112,7 @@ handle_event(timeout, ?reconnect, ?disconnected, D) ->
 handle_event(enter, OldState, ?bootstrap, D) ->
     handle_state_trans(OldState, ?bootstrap, D),
     initiate_bootstrap(D);
-handle_event(info, {bootstrap_complete, Pid, Checkpoint}, ?bootstrap, D = #d{tmp_worker = Pid}) ->
+handle_event(info, {bootstrap_complete, _Pid, Checkpoint}, ?bootstrap, D) ->
     handle_bootstrap_complete(Checkpoint, D);
 %% Events specific to `local_replay' state:
 handle_event(enter, OldState, ?local_replay, D) ->
@@ -123,13 +122,11 @@ handle_event(timeout, ?local_replay_loop, ?local_replay, D) ->
     replay_local(D);
 %% Events specific to `normal' state:
 handle_event(enter, OldState, ?normal, D) ->
-    handle_normal(D),
-    handle_state_trans(OldState, ?normal, D);
+    handle_state_trans(OldState, ?normal, D),
+    enter_normal(D);
 %% Common events:
 handle_event(enter, OldState, State, Data) ->
     handle_state_trans(OldState, State, Data);
-handle_event(info, {'EXIT', Worker, Reason}, State, D = #d{tmp_worker = Worker}) ->
-    handle_worker_down(State, Reason, D);
 handle_event(info, {'EXIT', Agent, Reason}, State, D = #d{agent = Agent}) ->
     handle_agent_down(State, Reason, D);
 handle_event(EventType, Event, State, Data) ->
@@ -148,8 +145,6 @@ terminate(_Reason, _State, #d{}) ->
 %% This function is called by the remote core node.
 -spec push_tlog_entry(sync | async, mria_rlog:shard(), mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
 push_tlog_entry(async, _Shard, {_Node, Pid}, Batch) ->
-    %% mria_lib:rpc_cast({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]),
-    %% TODO: Don't merge to master. Tmp fix for performance test.
     do_push_tlog_entry(Pid, Batch), %% Note: here Pid is remote
     ok;
 push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
@@ -228,14 +223,14 @@ handle_tlog_entry(State, {Agent, SeqNo, TXID, _Transaction},
     keep_state_and_data.
 
 -spec initiate_bootstrap(data()) -> fsm_result().
-initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote}) ->
+initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote, parent_sup = ParentSup}) ->
     %% Disable local reads before starting bootstrap:
     set_where_to_read(Remote, Shard),
     %% Discard all data of the shard:
     #{tables := Tables} = mria_config:shard_config(Shard),
     [ok = clear_table(Tab) || Tab <- Tables],
     %% Do bootstrap:
-    {ok, Pid} = mria_bootstrapper:start_link_client(Shard, Remote, self()),
+    _Pid = mria_replicant_shard_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
     ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
     ReplayqExtraOpts = application:get_env(mria, rlog_replayq_options, #{}),
@@ -244,8 +239,7 @@ initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote}) ->
                       , sizer    => fun(_) -> 1 end
                       , dir      => filename:join(ReplayqBaseDir, atom_to_list(Shard))
                       }),
-    {keep_state, D#d{ tmp_worker = Pid
-                    , replayq    = Q
+    {keep_state, D#d{ replayq    = Q
                     }}.
 
 -spec handle_bootstrap_complete(mria_rlog_server:checkpoint(), data()) -> fsm_result().
@@ -254,9 +248,7 @@ handle_bootstrap_complete(Checkpoint, D) ->
         #{ checkpoint => Checkpoint
          , shard      => D#d.shard
          }),
-    forget_tmp_worker(D),
-    {next_state, ?local_replay, D#d{ tmp_worker = undefined
-                                   , checkpoint = Checkpoint
+    {next_state, ?local_replay, D#d{ checkpoint = Checkpoint
                                    }}.
 
 -spec handle_agent_down(state(), term(), data()) -> fsm_result().
@@ -300,14 +292,14 @@ initiate_reconnect(#d{shard = Shard}) ->
 
 %% @private Try connecting to a core node
 -spec handle_reconnect(data()) -> fsm_result().
-handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, importer_worker = ImporterWorker}) ->
+handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentSup}) ->
     ?tp(warning, rlog_replica_reconnect,
         #{ node => node()
          }),
     case try_connect(Shard, Checkpoint) of
         {ok, _BootstrapNeeded = true, Node, ConnPid, TableSpecs} ->
             D = #d{ shard            = Shard
-                  , importer_worker  = ImporterWorker
+                  , parent_sup       = ParentSup
                   , agent            = ConnPid
                   , remote_core_node = Node
                   },
@@ -315,7 +307,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, importer_worker = Im
             {next_state, ?bootstrap, D};
         {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs} ->
             D = #d{ shard            = Shard
-                  , importer_worker  = ImporterWorker
+                  , parent_sup       = ParentSup
                   , agent            = ConnPid
                   , remote_core_node = Node
                   , checkpoint       = Checkpoint
@@ -373,24 +365,18 @@ buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
     mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D#d{replayq = Q}.
 
--spec handle_normal(data()) -> ok.
-handle_normal(D = #d{shard = Shard, agent = Agent}) ->
+-spec enter_normal(data()) -> fsm_result().
+enter_normal(D = #d{shard = Shard, agent = Agent, parent_sup = ParentSup}) ->
+    ImporterWorker = mria_replicant_shard_sup:get_importer_worker(ParentSup),
     mria_status:notify_shard_up(Shard, Agent),
     %% Now we can enable local reads:
     set_where_to_read(node(), Shard),
     ?tp(notice, "Shard fully up",
         #{ node => node()
          , shard => D#d.shard
-         }).
-
--spec handle_worker_down(state(), term(), data()) -> no_return().
-handle_worker_down(State, Reason, D) ->
-    ?tp(critical, "Failed to initialize replica",
-        #{ state => State
-         , reason => Reason
-         , worker => D#d.tmp_worker
          }),
-    exit(bootstrap_failed).
+    {keep_state, D#d{ importer_worker = ImporterWorker
+                    }}.
 
 -spec handle_unknown(term(), term(), state(), data()) -> fsm_result().
 handle_unknown(EventType, Event, State, Data) ->
@@ -409,14 +395,6 @@ handle_state_trans(OldState, State, Data) ->
          }),
     mria_status:notify_replicant_state(Data#d.shard, State),
     keep_state_and_data.
-
--spec forget_tmp_worker(data()) -> ok.
-forget_tmp_worker(#d{tmp_worker = Pid}) ->
-    unlink(Pid),
-    receive
-        {'EXIT', Pid, normal} -> ok
-    after 0 -> ok
-    end.
 
 -spec do_push_tlog_entry(pid(), mria_lib:tlog_entry()) -> ok.
 do_push_tlog_entry(Pid, Batch) ->
