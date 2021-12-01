@@ -342,7 +342,7 @@ shutdown_process(Pid) when is_pid(Pid) ->
             ok
     end.
 
--spec exec_callback(mria_config:callback()) -> ok.
+-spec exec_callback(mria_config:callback()) -> term().
 exec_callback(Name) ->
     ?tp(mria_exec_callback, #{type => Name}),
     case mria_config:callback(Name) of

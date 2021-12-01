@@ -146,7 +146,7 @@ t_core_node_discovery(_Config) ->
                             {R1, mria_lb} ! update,
                             #{ ?snk_kind := mria_lb_core_discovery_divergent_cluster
                              , node := R1
-                             , previous_cores := []
+                             , previous_cores := _
                              , returned_cores := [C1, C2]
                              , unknown_nodes := InexistentNodes
                              }, 5000),
@@ -192,19 +192,12 @@ t_core_node_discovery(_Config) ->
        end, []).
 
 clear_core_node_list(Replicant) ->
-    CoresBefore = erpc:call(Replicant, application, get_env,
-                            [mria, core_nodes, []]),
-    DefaultFun = fun() ->
-                         erpc:call(Replicant, application, get_env,
-                                   [mria, core_nodes, CoresBefore])
-                 end,
-    OldCallback = erpc:call(Replicant, application, get_env,
-                            [mria, core_nodes_callback, DefaultFun]),
+    {ok, OldCallback} = erpc:call(Replicant, mria_config, callback, [core_node_discovery]),
     try
         {_, {ok, _}} = ?wait_async_action(
                           begin
-                              ok = erpc:call(Replicant, application, set_env,
-                                             [mria, core_nodes_callback, fun() -> [] end]),
+                              ok = erpc:call(Replicant, mria_config, register_callback,
+                                             [core_node_discovery, fun() -> [] end]),
                               {Replicant, mria_lb} ! update
                           end,
                           #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -214,10 +207,8 @@ clear_core_node_list(Replicant) ->
                            }, 5000),
         ok
     after
-        ok = erpc:call(Replicant, application, set_env, [mria, core_nodes_callback,
-                                                         OldCallback]),
-        ok = erpc:call(Replicant, application, set_env, [mria, core_nodes,
-                                                         CoresBefore])
+        ok = erpc:call(Replicant, mria_config, register_callback,
+                       [core_node_discovery, OldCallback])
     end.
 
 with_reported_cores(Nodes, CoresToReport, TestFun) when is_list(Nodes) ->

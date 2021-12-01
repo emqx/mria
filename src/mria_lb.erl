@@ -151,9 +151,7 @@ init_timer() ->
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
 list_core_nodes(OldCoreNodes) ->
-    DefaultFun = fun() -> application:get_env(mria, core_nodes, []) end,
-    CallbackFun = application:get_env(mria, core_nodes_callback, DefaultFun),
-    NewCoreNodes0 = lists:usort(CallbackFun()),
+    NewCoreNodes0 = lists:usort(mria_lib:exec_callback(core_node_discovery)),
     case NewCoreNodes0 =:= OldCoreNodes of
         true ->
             ?tp(mria_lb_core_discovery_no_change, #{ old => OldCoreNodes

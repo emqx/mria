@@ -46,7 +46,8 @@
 
 -type callback() :: start
                   | stop
-                  | {start | stop, mria_rlog:shard()}.
+                  | {start | stop, mria_rlog:shard()}
+                  | core_node_discovery.
 
 -export_type([callback/0]).
 
@@ -99,6 +100,8 @@ load_config() ->
     copy_from_env(db_backend),
     copy_from_env(node_role),
     copy_from_env(strict_mode),
+    register_callback(core_node_discovery,
+                      fun() -> application:get_env(mria, core_nodes, []) end),
     consistency_check().
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
@@ -113,11 +116,11 @@ load_shard_config(Shard, Tables) ->
               },
     ok = persistent_term:put(?shard_config(Shard), Config).
 
--spec register_callback(mria_config:callback(), function()) -> ok.
+-spec register_callback(mria_config:callback(), fun(() -> term())) -> ok.
 register_callback(Name, Fun) ->
     apply(application, set_env, [mria, {callback, Name}, Fun]).
 
--spec callback(mria_config:callback()) -> {ok, function()} | undefined.
+-spec callback(mria_config:callback()) -> {ok, fun(() -> term())} | undefined.
 callback(Name) ->
     apply(application, get_env, [mria, {callback, Name}]).
 
