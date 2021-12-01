@@ -186,10 +186,11 @@ list_core_nodes(OldCoreNodes) ->
 %% from the same mnesia cluster.
 check_same_cluster(NewCoreNodes0) ->
     NewCoreNodes1 = [N || N <- NewCoreNodes0,
-                          core =:= erpc:call(N, mria_rlog, role, [])],
-    DbNodes = lists:usort([N || {ok, Ns} <- erpc:multicall(NewCoreNodes1, mria_mnesia, db_nodes,
-                                                           [], ?CORE_DISCOVERY_TIMEOUT),
-                                  N <- Ns]),
+                          core =:= mria_lib:rpc_call(N, mria_rlog, role, [])],
+    DbNodes = lists:usort([N || N0 <- NewCoreNodes1,
+                                DbNodes <- [mria_lib:rpc_call(N0, mria_mnesia, db_nodes, [])],
+                                is_list(DbNodes),
+                                N <- DbNodes]),
     UnknownNodes = DbNodes -- NewCoreNodes0,
     ?tp(mria_lb_db_nodes_results,
         #{ me => node()

@@ -118,8 +118,19 @@ t_core_node_discovery(_Config) ->
     ?check_trace(
        #{timetrap => 60000},
        try
-           [C1, R1, C2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+           {[C1, R1, C2], {ok, _}} =
+               ?wait_async_action(
+                  begin
+                      Nodes = [_, R1, _] = mria_ct:start_cluster(mria, Cluster),
+                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+                      {R1, mria_lb} ! update,
+                      Nodes
+                  end,
+                  #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                   , node := _
+                   , previous_cores := _
+                   , returned_cores := [_, _]
+                   }, 10000),
            %% 1. no conflict: accepts nodes
            ?assertEqual([C1, C2], rpc:call(R1, mria_lb, core_nodes, [])),
            ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, [])),
@@ -130,13 +141,15 @@ t_core_node_discovery(_Config) ->
            with_reported_cores(
              C1, InexistentNodes,
              fun() ->
-                     {R1, mria_lb} ! update,
-                     {ok, _} = ?block_until(#{ ?snk_kind := mria_lb_core_discovery_divergent_cluster
-                                             , node := R1
-                                             , previous_cores := []
-                                             , returned_cores := [C1, C2]
-                                             , unknown_nodes := InexistentNodes
-                                             }, 5000),
+                     {_, {ok, _}} =
+                         ?wait_async_action(
+                            {R1, mria_lb} ! update,
+                            #{ ?snk_kind := mria_lb_core_discovery_divergent_cluster
+                             , node := R1
+                             , previous_cores := []
+                             , returned_cores := [C1, C2]
+                             , unknown_nodes := InexistentNodes
+                             }, 5000),
                      ?assertEqual([], rpc:call(R1, mria_lb, core_nodes, [])),
                      ?assertEqual([], rpc:call(R1, mria_rlog, core_nodes, []))
              end),
@@ -160,13 +173,16 @@ t_core_node_discovery(_Config) ->
            clear_core_node_list(R1),
            with_role(
              C2, replicant,
+
              fun() ->
-                     {R1, mria_lb} ! update,
-                     {ok, _} = ?block_until(#{ ?snk_kind := mria_lb_core_discovery_new_nodes
-                                             , node := R1
-                                             , previous_cores := []
-                                             , returned_cores := [C1]
-                                             }, 5000),
+                     {_, {ok, _}} =
+                         ?wait_async_action(
+                            {R1, mria_lb} ! update,
+                            #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                             , node := R1
+                             , previous_cores := _
+                             , returned_cores := [C1]
+                             }, 5000),
                      ?assertEqual([C1], rpc:call(R1, mria_lb, core_nodes, [])),
                      ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
              end),
