@@ -16,7 +16,7 @@
 
 %% Top level supervisor for the RLOG tree, that starts the persistent
 %% processes.
--module(mria_top_sup).
+-module(mria_rlog_sup).
 
 -behaviour(supervisor).
 
