@@ -14,8 +14,8 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
-%% Supervision tree for the shards
--module(mria_rlog_sup).
+%% Supervisor that manages the shards
+-module(mria_shards_sup).
 
 -behaviour(supervisor).
 

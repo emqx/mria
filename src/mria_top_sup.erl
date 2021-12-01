@@ -75,8 +75,8 @@ core_node_lb() ->
      }.
 
 child_sup() ->
-    #{ id => mria_rlog_sup
-     , start => {mria_rlog_sup, start_link, []}
+    #{ id => mria_shards_sup
+     , start => {mria_shards_sup, start_link, []}
      , restart => permanent
      , shutdown => infinity
      , type => supervisor

@@ -9,7 +9,7 @@
     mria_rlog_server,
     mria_lb,
     mria_top_sup,
-    mria_rlog_sup
+    mria_shards_sup
    ]},
   %% Note: DON'T add mnesia to the list, or it will mess up start order:
   {applications,
