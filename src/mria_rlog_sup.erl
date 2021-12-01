@@ -95,7 +95,7 @@ init([replicant, Shards]) ->
 
 shard_sup(Shard) ->
     #{ id => Shard
-     , start => {mria_rlog_shard_sup, start_link, [Shard]}
+     , start => {mria_core_shard_sup, start_link, [Shard]}
      , restart => permanent
      , shutdown => infinity
      , type => supervisor
