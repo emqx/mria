@@ -30,7 +30,6 @@
         , start_link/1
         ]).
 
-
 %% gen_server callbacks
 -export([ init/1
         , handle_call/3
@@ -38,13 +37,15 @@
         , handle_info/2
         ]).
 
+-include_lib("snabbkaffe/include/trace.hrl").
+
 %%================================================================================
 %% API funcions
 %%================================================================================
 
 -spec start_link(mria_rlog:shard()) -> {ok, pid()}.
 start_link(Shard) ->
-    gen_server:start_link(?MODULE, {Shard}, []).
+    gen_server:start_link(?MODULE, Shard, []).
 
 -spec import_batch(pid(), [mria_lib:tx()]) -> ok.
 import_batch(Server, Tx) ->
@@ -53,10 +54,11 @@ import_batch(Server, Tx) ->
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
-init({Shard}) ->
+init(Shard) ->
     logger:set_process_metadata(#{ domain => [mria, rlog, replica, importer]
                                  , shard => Shard
                                  }),
+    ?tp(mria_replica_importer_worker_start, #{shard => Shard}),
     {ok, []}.
 
 handle_call({import_batch, Ops}, _From, St) ->

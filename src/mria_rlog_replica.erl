@@ -21,7 +21,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/1]).
+-export([start_link/2]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
@@ -70,9 +70,8 @@
 %% API funcions
 %%================================================================================
 
-start_link(Shard) ->
-    Config = #{}, % TODO
-    gen_statem:start_link({local, Shard}, ?MODULE, {Shard, Config}, []).
+start_link(ParentSup, Shard) ->
+    gen_statem:start_link({local, Shard}, ?MODULE, {ParentSup, Shard}, []).
 
 %%================================================================================
 %% gen_statem callbacks
@@ -84,8 +83,8 @@ start_link(Shard) ->
 %% group event handlers logically.
 callback_mode() -> [handle_event_function, state_enter].
 
--spec init({mria_rlog:shard(), any()}) -> {ok, state(), data()}.
-init({Shard, _Opts}) ->
+-spec init({pid(), mria_rlog:shard()}) -> {ok, state(), data()}.
+init({_ParentSup, Shard}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]

@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% Supervision tree for the shard.
-%% Runs on core nodes under `mria_rlog_core_sup'
+%% Runs on core nodes under `mria_shards_sup'
 -module(mria_core_shard_sup).
 
 -behaviour(supervisor).
