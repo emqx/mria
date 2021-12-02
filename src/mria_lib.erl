@@ -372,7 +372,7 @@ exec_callback_async(Name) ->
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->
-    case mria_status:get_core_node(Shard, 5000) of
+    case mria_status:get_core_node(Shard, infinity) of
         {ok, Node} -> Node;
         timeout    -> error(transaction_timeout)
     end.
