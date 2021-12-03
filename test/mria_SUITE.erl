@@ -465,10 +465,17 @@ t_sum_verify(_) ->
     ?check_trace(
        #{timetrap => 30000},
        try
-           ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 3
+           ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 4
+                          , #{?snk_kind := state_change, to := bootstrap}
+                          ),
+           ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 2 * NTrans div 4
+                          , #{?snk_kind := state_change, to := local_replay}
+                          ),
+           ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 3 * NTrans div 4
                           , #{?snk_kind := state_change, to := normal}
                           ),
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+           Nodes = mria_ct:start_cluster(mria_async, Cluster),
+           timer:sleep(1000),
            [ok = rpc:call(N, mria_transaction_gen, verify_trans_sum, [NTrans, 10])
             || N <- lists:reverse(Nodes)],
            [?block_until(#{?snk_kind := verify_trans_sum, node := N}, 5000)

@@ -1,15 +1,17 @@
 @startuml
-scale 1024 width
+scale 2000 width
 
 participant "RLOG server" as server #ffc
 participant "RLOG agent" as agent #ffc
 participant "RLOG bootstrapper" as boot_serv #ffc
 
 participant "RLOG replica" as repl #ccf
+participant "RLOG replica\nimporter worker" as repl_imp #ccf
 participant "bootstrap client" as boot_client #ccf
 
 activate server
 activate repl
+activate repl_imp
 
 group Agent initialization
 == Probe the connection to minimize risk of double-subscription and negotiate protocol version ==
@@ -92,8 +94,10 @@ end
 hnote over repl : normal
 
 loop
-  agent -> repl : {batch, [MnesiaOps]}
-  repl -> repl : Import batch to the\nlocal replica
+  agent -> repl : {batch, [Transactions]}
+  repl -> repl_imp : {import_batch, [Transactions]}
+  repl_imp -> repl_imp : Import batch to the\nlocal replica
+  repl <- repl_imp : ok
 end
 
 @enduml

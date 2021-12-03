@@ -95,7 +95,7 @@ wait_for_shards(Shards0, Timeout) ->
 
 -spec ensure_shard(shard()) -> ok.
 ensure_shard(Shard) ->
-    case mria_rlog_sup:start_shard(Shard) of
+    case mria_shards_sup:start_shard(Shard) of
         {ok, _}                       -> ok;
         {error, already_present}      -> ok;
         {error, {already_started, _}} -> ok;

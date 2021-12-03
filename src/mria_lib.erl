@@ -41,6 +41,8 @@
         , shutdown_process/1
         , exec_callback/1
         , exec_callback_async/1
+
+        , sup_child_pid/2
         ]).
 
 %% Internal exports
@@ -205,6 +207,16 @@ rpc_cast(Destination, Module, Function, Args) ->
 %%================================================================================
 %% Misc functions
 %%================================================================================
+
+-spec sup_child_pid(_SupRef, _ChildId) -> {ok, pid()} | undefined.
+sup_child_pid(SupRef, ChildId) ->
+    Children = [Child || {Id, Child, _, _} <- supervisor:which_children(SupRef), Id =:= ChildId],
+    case Children of
+        [Pid] when is_pid(Pid) ->
+            {ok, Pid};
+        _ ->
+            undefined
+    end.
 
 %% @doc Random shuffle of a small list.
 -spec shuffle([A]) -> [A].

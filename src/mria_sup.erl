@@ -35,7 +35,7 @@ init([]) ->
     {ok, {{one_for_all, 0, 3600},
           [child(mria_membership, worker),
            child(mria_node_monitor, worker),
-           child(mria_top_sup, supervisor)
+           child(mria_rlog_sup, supervisor)
           ]}}.
 
 child(Mod, worker) ->

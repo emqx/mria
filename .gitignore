@@ -31,3 +31,5 @@ TAGS
 _checkouts/
 TEST-*.xml
 concuerror_report.txt
+snabbkaffe/
+rebar3.crashdump
