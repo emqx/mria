@@ -151,12 +151,14 @@ init_timer() ->
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
 list_core_nodes(OldCoreNodes) ->
-    NewCoreNodes0 = lists:usort(mria_lib:exec_callback(core_node_discovery)),
+    DiscoveryFun = mria_config:core_node_discovery_callback(),
+    NewCoreNodes0 = lists:usort(DiscoveryFun()),
     case NewCoreNodes0 =:= OldCoreNodes of
         true ->
-            ?tp(mria_lb_core_discovery_no_change, #{ old => OldCoreNodes
-                                                   , node => node()
-                                                   }),
+            ?tp(mria_lb_core_discovery_no_change,
+                #{ previous_cores => OldCoreNodes
+                 , node => node()
+                 }),
             OldCoreNodes;
         false ->
             case check_same_cluster(NewCoreNodes0) of
@@ -183,8 +185,12 @@ list_core_nodes(OldCoreNodes) ->
 %% ensure that the nodes returned by the discovery callback are all
 %% from the same mnesia cluster.
 check_same_cluster(NewCoreNodes0) ->
-    NewCoreNodes1 = [N || N <- NewCoreNodes0,
-                          core =:= mria_lib:rpc_call(N, mria_rlog, role, [])],
+    Roles = lists:map(
+              fun(N) ->
+                      mria_lib:rpc_call(N, mria_rlog, role, [])
+              end,
+              NewCoreNodes0),
+    NewCoreNodes1 = [N || {N, core} <- lists:zip(NewCoreNodes0, Roles)],
     DbNodes = lists:usort([N || N0 <- NewCoreNodes1,
                                 DbNodes <- [mria_lib:rpc_call(N0, mria_mnesia, db_nodes, [])],
                                 is_list(DbNodes),

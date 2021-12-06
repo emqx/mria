@@ -192,7 +192,7 @@ t_core_node_discovery(_Config) ->
        end, []).
 
 clear_core_node_list(Replicant) ->
-    {ok, OldCallback} = erpc:call(Replicant, mria_config, callback, [core_node_discovery]),
+    MaybeOldCallback = erpc:call(Replicant, mria_config, callback, [core_node_discovery]),
     try
         {_, {ok, _}} = ?wait_async_action(
                           begin
@@ -207,8 +207,14 @@ clear_core_node_list(Replicant) ->
                            }, 5000),
         ok
     after
-        ok = erpc:call(Replicant, mria_config, register_callback,
-                       [core_node_discovery, OldCallback])
+        case MaybeOldCallback of
+            {ok, OldCallback} ->
+                ok = erpc:call(Replicant, mria_config, register_callback,
+                               [core_node_discovery, OldCallback]);
+            undefined ->
+                ok = erpc:call(Replicant, mria_config, unregister_callback,
+                               [core_node_discovery])
+        end
     end.
 
 with_reported_cores(Nodes, CoresToReport, TestFun) when is_list(Nodes) ->
