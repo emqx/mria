@@ -31,9 +31,11 @@
         , erase_shard_config/1
         , shard_rlookup/1
         , shard_config/1
+        , core_node_discovery_callback/0
 
           %% Callbacks
         , register_callback/2
+        , unregister_callback/1
         , callback/1
         ]).
 
@@ -46,7 +48,8 @@
 
 -type callback() :: start
                   | stop
-                  | {start | stop, mria_rlog:shard()}.
+                  | {start | stop, mria_rlog:shard()}
+                  | core_node_discovery.
 
 -export_type([callback/0]).
 
@@ -114,11 +117,25 @@ load_shard_config(Shard, Tables) ->
               },
     ok = persistent_term:put(?shard_config(Shard), Config).
 
--spec register_callback(mria_config:callback(), function()) -> ok.
+-spec core_node_discovery_callback() -> fun(() -> [node()]).
+core_node_discovery_callback() ->
+    case callback(core_node_discovery) of
+        {ok, Fun} ->
+            Fun;
+        undefined ->
+            %% Default function
+            fun() -> application:get_env(mria, core_nodes, []) end
+    end.
+
+-spec register_callback(mria_config:callback(), fun(() -> term())) -> ok.
 register_callback(Name, Fun) ->
     apply(application, set_env, [mria, {callback, Name}, Fun]).
 
--spec callback(mria_config:callback()) -> {ok, function()} | undefined.
+-spec unregister_callback(mria_config:callback()) -> ok.
+unregister_callback(Name) ->
+    apply(application, unset_env, [mria, {callback, Name}]).
+
+-spec callback(mria_config:callback()) -> {ok, fun(() -> term())} | undefined.
 callback(Name) ->
     apply(application, get_env, [mria, {callback, Name}]).
 

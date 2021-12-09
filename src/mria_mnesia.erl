@@ -43,6 +43,7 @@
         , running_nodes/0
         , is_node_in_cluster/0
         , is_node_in_cluster/1
+        , db_nodes/0
         ]).
 
 %% Dir, schema and tables
@@ -204,6 +205,11 @@ running_nodes() ->
                     []
             end
     end.
+
+%% @doc List Mnesia DB nodes.  Used by `mria_lb' to check if nodes
+%% reported by core discovery callback are in the same cluster.
+db_nodes() ->
+    mnesia:system_info(db_nodes).
 
 %% @doc Is this node in mnesia cluster?
 is_node_in_cluster() ->

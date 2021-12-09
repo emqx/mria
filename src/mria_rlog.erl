@@ -80,7 +80,7 @@ backend() ->
 
 -spec core_nodes() -> [node()].
 core_nodes() ->
-    application:get_env(mria, core_nodes, []).
+    mria_lb:core_nodes().
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
 wait_for_shards(Shards0, Timeout) ->

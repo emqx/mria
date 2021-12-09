@@ -23,6 +23,7 @@
 %% API
 -export([ start_link/0
         , probe/2
+        , core_nodes/0
         ]).
 
 %% gen_server callbacks
@@ -48,10 +49,12 @@
 
 -record(s,
         { core_protocol_versions :: core_protocol_versions()
+        , core_nodes :: [node()]
         }).
 
 -define(update, update).
 -define(SERVER, ?MODULE).
+-define(CORE_DISCOVERY_TIMEOUT, 30000).
 
 %%================================================================================
 %% API
@@ -64,6 +67,10 @@ start_link() ->
 probe(Node, Shard) ->
     gen_server:call(?SERVER, {probe, Node, Shard}).
 
+-spec core_nodes() -> [node()].
+core_nodes() ->
+    gen_server:call(?SERVER, core_nodes, ?CORE_DISCOVERY_TIMEOUT).
+
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
@@ -72,10 +79,13 @@ init(_) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
     init_timer(),
-    {ok, #s{core_protocol_versions = #{}}}.
+    State = #s{ core_protocol_versions = #{}
+              , core_nodes = []
+              },
+    {ok, State}.
 
-handle_info(?update, St) ->
-    do_update(),
+handle_info(?update, St0) ->
+    St = do_update(St0),
     {noreply, St};
 handle_info(_Info, St) ->
     {noreply, St}.
@@ -104,7 +114,9 @@ handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = Proto
         end,
     St = St0#s{core_protocol_versions = ProtoVSNs#{Node => ServerVersion}},
     {reply, Reply, St};
-handle_call(_From, Call, St) ->
+handle_call(core_nodes, _From, St = #s{core_nodes = CoreNodes}) ->
+    {reply, CoreNodes, St};
+handle_call(Call, _From, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
 
 code_change(_OldVsn, St, _Extra) ->
@@ -117,13 +129,14 @@ terminate(_Reason, St) ->
 %% Internal functions
 %%================================================================================
 
-do_update() ->
-    [do_update(Shard) || Shard <- mria_schema:shards()],
-    init_timer().
+do_update(State) ->
+    NewCoreNodes = list_core_nodes(State#s.core_nodes),
+    [do_update_shard(Shard, NewCoreNodes) || Shard <- mria_schema:shards()],
+    init_timer(),
+    State#s{core_nodes = NewCoreNodes}.
 
-do_update(Shard) ->
+do_update_shard(Shard, CoreNodes) ->
     Timeout = application:get_env(mria, rlog_lb_update_timeout, 300),
-    CoreNodes = mria_rlog:core_nodes(),
     {Resp0, _} = rpc:multicall(CoreNodes, ?MODULE, core_node_weight, [Shard], Timeout),
     Resp = lists:sort([I || {ok, I} <- Resp0]),
     case Resp of
@@ -136,6 +149,60 @@ do_update(Shard) ->
 init_timer() ->
     Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
+
+list_core_nodes(OldCoreNodes) ->
+    DiscoveryFun = mria_config:core_node_discovery_callback(),
+    NewCoreNodes0 = lists:usort(DiscoveryFun()),
+    case NewCoreNodes0 =:= OldCoreNodes of
+        true ->
+            OldCoreNodes;
+        false ->
+            case check_same_cluster(NewCoreNodes0) of
+                {ok, NewCoreNodes1} ->
+                    ?tp( mria_lb_core_discovery_new_nodes
+                       , #{ previous_cores => OldCoreNodes
+                          , returned_cores => NewCoreNodes1
+                          , node => node()
+                          }
+                       ),
+                    NewCoreNodes1;
+                {error, {unknown_nodes, UnknownNodes}} ->
+                    ?tp( error
+                       ,  mria_lb_core_discovery_divergent_cluster
+                       , #{ previous_cores => OldCoreNodes
+                          , returned_cores => NewCoreNodes0
+                          , unknown_nodes => UnknownNodes
+                          , node => node()
+                          }),
+                    OldCoreNodes
+            end
+    end.
+
+%% ensure that the nodes returned by the discovery callback are all
+%% from the same mnesia cluster.
+check_same_cluster(NewCoreNodes0) ->
+    Roles = lists:map(
+              fun(N) ->
+                      mria_lib:rpc_call(N, mria_rlog, role, [])
+              end,
+              NewCoreNodes0),
+    NewCoreNodes1 = [N || {N, core} <- lists:zip(NewCoreNodes0, Roles)],
+    DbNodes = lists:usort([N || N0 <- NewCoreNodes1,
+                                DbNodes <- [mria_lib:rpc_call(N0, mria_mnesia, db_nodes, [])],
+                                is_list(DbNodes),
+                                N <- DbNodes]),
+    UnknownNodes = DbNodes -- NewCoreNodes0,
+    ?tp(mria_lb_db_nodes_results,
+        #{ me => node()
+         , db_nodes => DbNodes
+         , new_unfiltered => NewCoreNodes0
+         , new_filtered_by_role => NewCoreNodes1
+         , unknown_nodes => UnknownNodes
+         }),
+    case UnknownNodes =:= [] of
+        true -> {ok, NewCoreNodes1};
+        false -> {error, {unknown_nodes, UnknownNodes}}
+    end.
 
 %%================================================================================
 %% Internal exports
