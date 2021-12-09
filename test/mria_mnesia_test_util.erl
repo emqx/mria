@@ -30,14 +30,10 @@ wait_full_replication(Cluster, Timeout) ->
     mria_helper_tab:wait_full_replication(Cluster, Timeout).
 
 stabilize(Timeout) ->
-    case ?block_until(
-            #{ ?snk_meta := #{domain := [mria, rlog|_]}
-             , ?snk_kind := Kind
-             } when Kind =/= mria_lb_core_discovery_no_change,
-            Timeout, 0) of
+    case ?block_until(#{?snk_meta := #{domain := [mria, rlog|_]}}, Timeout, 0) of
         timeout -> ok;
         {ok, _Evt} ->
-            %% ct:pal("Restart waiting for cluster stabilize due to ~p", [_Evt]),
+            %%ct:pal("Restart waiting for cluster stabilize sue to ~p", [_Evt]),
             stabilize(Timeout)
     end.
 

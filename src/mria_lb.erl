@@ -155,10 +155,6 @@ list_core_nodes(OldCoreNodes) ->
     NewCoreNodes0 = lists:usort(DiscoveryFun()),
     case NewCoreNodes0 =:= OldCoreNodes of
         true ->
-            ?tp(mria_lb_core_discovery_no_change,
-                #{ previous_cores => OldCoreNodes
-                 , node => node()
-                 }),
             OldCoreNodes;
         false ->
             case check_same_cluster(NewCoreNodes0) of
