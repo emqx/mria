@@ -27,7 +27,7 @@
          set/2, unset/1, is_set/1, read/1, read/2, peek/1, wait_vars/2]).
 
 %% Internal exports:
--export([waker_entrypoint/2, waker_loop/2]).
+-export([waker_entrypoint/2]).
 
 %%================================================================================
 %% Types
@@ -116,11 +116,10 @@ peek(Key) ->
 %% @doc Wait for the variable to be set and return the value
 -spec read(key()) -> value().
 read(Key) ->
-    case read_or_spawn(Key) of
+    case read_or_wait(Key) of
         {set, Value} ->
             Value;
-        {unset, WakerPid} ->
-            MRef = monitor(process, WakerPid),
+        {wait, MRef} ->
             receive
                 %% Rather unconventionally, the actual information is
                 %% transmitted in a DOWN message from a temporary
@@ -140,11 +139,10 @@ read(Key) ->
 read(Key, infinity) ->
     {ok, read(Key)};
 read(Key, Timeout) ->
-    case read_or_spawn(Key) of
+    case read_or_wait(Key) of
         {set, Value} ->
             {ok, Value};
-        {unset, WakerPid} ->
-            MRef = monitor(process, WakerPid),
+        {wait, MRef} ->
             receive
                 %% Rather unconventionally, the actual information is
                 %% transmitted in a DOWN message from a temporary
@@ -167,7 +165,7 @@ wait_vars(Keys, infinity) ->
     _ = [read(I) || I <- Keys],
     ok;
 wait_vars(Keys, Timeout) ->
-    L = [{I, monitor(process, Pid)} || I <- Keys, {unset, Pid} <- [read_or_spawn(I)]],
+    L = [{I, MRef} || I <- Keys, {wait, MRef} <- [read_or_wait(I)]],
     {TimedOutKeys, MRefs} = lists:unzip(do_wait_vars(L, Timeout)),
     _ = [demonitor(I, [flush]) || I <- MRefs],
     case TimedOutKeys of
@@ -179,28 +177,24 @@ wait_vars(Keys, Timeout) ->
 %% Internal functions
 %%================================================================================
 
--spec read_or_spawn(key()) -> {set, value()} | {unset, pid()}.
-read_or_spawn(Key) ->
+-spec read_or_wait(key()) -> {set, value()} | {wait, reference()}.
+read_or_wait(Key) ->
     case ets:lookup(?status_tab, Key) of
         [] ->
-            spawn_waker(Key);
-        [{_, Val}] ->
-            Val
-    end.
-
--spec spawn_waker(key()) -> {unset, pid()}.
-spawn_waker(Key) ->
-    Pid = spawn(?MODULE, waker_entrypoint, [Key, self()]),
-    case ets:insert_new(?status_tab, {Key, {unset, Pid}}) of
-        true ->
-            {unset, Pid};
-        false ->
-            %% Race condition: someone installed the waker process
-            %% before us, or the variable was set. We must dispose of
-            %% the process we've just created.
-            exit(Pid, normal),
-            [{_, NewValue}] = ets:lookup(?status_tab, Key),
-            NewValue
+            {Pid, MRef} = spawn_monitor(?MODULE, waker_entrypoint, [Key, self()]),
+            %% Wait until the newly created process either establishes itself
+            %% as a waker for the key, or exits:
+            receive
+                {Pid, proceed} ->
+                    {wait, MRef};
+                {'DOWN', MRef, _, _, Reason} ->
+                    cvar_retry = Reason, %% assert
+                    read_or_wait(Key)
+            end;
+        [{_, {set, Val}}] ->
+            {set, Val};
+        [{_, {unset, Pid}}] ->
+            {wait, monitor(process, Pid)}
     end.
 
 -spec do_wait_vars([{key(), reference()}], integer()) ->
@@ -228,43 +222,34 @@ do_wait_vars([{Key, MRef}|Rest], TimeLeft) ->
 
 -spec waker_entrypoint(key(), pid()) -> no_return().
 waker_entrypoint(Key, Parent) ->
-    MRef = monitor(process, Parent),
-    ?MODULE:waker_loop(Key, MRef).
-
--spec waker_loop(key(), reference()) -> no_return().
-waker_loop(Key, ParentMRef) ->
-    receive
-        {set, Value} ->
-            ets_insert({Key, {set, Value}}),
-            %% This will broadcast the variable value in the DOWN
-            %% message to the processes that monitor us:
-            exit({cvar_set, Value});
-        {'DOWN', ParentMRef, _, _, _} ->
-            Self = self(),
-            case ets_lookup(Key) of
-                [{_, {unset, Self}}] ->
-                    %% The parent died, but it inserted us to the
-                    %% table, so there may be other processes waiting
-                    %% for us, so carry on as usual:
-                    ?MODULE:waker_loop(Key, ParentMRef);
-                _ ->
-                    %% The parent died before it inserted us the
-                    %% table, it means no one is waiting for us, and
-                    %% we should just self-terminate to avoid hanging
-                    %% forever:
-                    ok
+    case ets_insert_new({Key, {unset, self()}}) of
+        false ->
+            %% Race condition: someone installed the waker before us,
+            %% or the variable has been set, so exit and signal the
+            %% parent to retry:
+            exit(cvar_retry);
+        true ->
+            %% We are the official waker for the variable now. Wait
+            %% for it to be set:
+            Parent ! {self(), proceed},
+            receive
+                {set, Value} ->
+                    ets_insert({Key, {set, Value}}),
+                    %% This will broadcast the variable value in the
+                    %% DOWN message to the processes that monitor us:
+                    exit({cvar_set, Value})
             end
     end.
 
-ets_lookup(Key) ->
-    try ets:lookup(?status_tab, Key)
+ets_insert(Value) ->
+    try ets:insert(?status_tab, Value)
     catch
         error:badarg ->
             exit(cvar_stopped)
     end.
 
-ets_insert(Value) ->
-    try ets:insert(?status_tab, Value)
+ets_insert_new(Value) ->
+    try ets:insert_new(?status_tab, Value)
     catch
         error:badarg ->
             exit(cvar_stopped)

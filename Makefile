@@ -75,7 +75,7 @@ app.config: $(CUTTLEFISH_SCRIPT)
 CONCUERROR := $(BUILD_DIR)/Concuerror/bin/concuerror
 CONCUERROR_RUN := $(CONCUERROR) \
 	--treat_as_normal shutdown --treat_as_normal normal --treat_as_normal intentional \
-	--treat_as_normal cvar_set --treat_as_normal cvar_stopped \
+	--treat_as_normal cvar_set --treat_as_normal cvar_stopped --treat_as_normal cvar_retry \
 	-x code -x code_server -x error_handler \
 	-pa $(BUILD_DIR)/concuerror+test/lib/snabbkaffe/ebin \
 	-pa $(BUILD_DIR)/concuerror+test/lib/mria/ebin

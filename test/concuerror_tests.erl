@@ -35,7 +35,7 @@ cvar_read_test() ->
         spawn(fun() ->
                       mria_condition_var:set(foo, Val)
               end),
-        case mria_condition_var:read(foo, 10) of
+        case mria_condition_var:read(foo, 100) of
             {ok, Val} -> ok;
             timeout   -> ok
         end,
@@ -228,7 +228,7 @@ wait_for_shards_crash_test() ->
             {timeout, _Shards} ->
                 ok
         catch
-            error:{case_clause, shutdown} -> ok
+            error:_ -> ok
         end,
         ?assertMatch([], flush())
     after
@@ -331,17 +331,6 @@ cleanup() ->
             catch mria_condition_var:stop(),
             catch ets:delete(mria_rlog_stats_tab)
     end.
-
-%% %% Send an exit signal to a process and wait for it to stop. This is
-%% %% needed because otherwise concuerror will (rightfully) detect a race
-%% %% condition when the signal is delivered later than we expect!
-%% stop_process(Pid) ->
-%%     unlink(Pid),
-%%     MRef = monitor(process, Pid),
-%%     exit(Pid, shutdown),
-%%     receive
-%%         {'DOWN', MRef, _, _, _} -> ok
-%%     end.
 
 %% Hack to detect if running under concuerror:
 is_concuerror() ->
