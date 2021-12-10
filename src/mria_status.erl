@@ -18,8 +18,12 @@
 %% event subscribers.
 -module(mria_status).
 
+%% Currently the server doesn't do anything except managing the
+%% lifetime of the tables:
+-behaviour(gen_server).
+
 %% API:
--export([init/0,
+-export([start_link/0,
          notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
          notify_core_node_up/2, notify_core_node_down/1, get_core_node/2,
 
@@ -34,6 +38,9 @@
 
          notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1
         ]).
+
+%% gen_server callbacks:
+-export([init/1, terminate/2, handle_call/3, handle_cast/2]).
 
 -define(SERVER, ?MODULE).
 
@@ -57,15 +64,8 @@
 %% API funcions
 %%================================================================================
 
-%% @doc Init tables
--spec init() -> ok.
-init() ->
-    mria_condition_var:init(),
-    ets:new(?stats_tab, [ set
-                        , named_table
-                        , public
-                        , {write_concurrency, true}
-                        ]).
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Return core node used as the upstream for the replica
 -spec upstream_node(mria_rlog:shard()) -> {ok, node()} | disconnected.
@@ -226,6 +226,30 @@ notify_replicant_bootstrap_import(Shard) ->
     Op = {2, 1},
     ets:update_counter(?stats_tab, Key, Op, {Key, 0}),
     ok.
+
+%%================================================================================
+%% gen_server callbacks:
+%%================================================================================
+
+init(_) ->
+    process_flag(trap_exit, true),
+    mria_condition_var:init(),
+    ets:new(?stats_tab, [ set
+                        , named_table
+                        , public
+                        , {write_concurrency, true}
+                        ]),
+    {ok, []}.
+
+terminate(_Reason, _State) ->
+    mria_condition_var:stop(),
+    {exit, normal}.
+
+handle_call(_, _, State) ->
+    {reply, {error, unknown_call}, State}.
+
+handle_cast(_, State) ->
+    {noreply, State}.
 
 %%================================================================================
 %% Internal functions

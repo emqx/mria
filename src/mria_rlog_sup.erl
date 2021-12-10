@@ -40,25 +40,31 @@ start_link() ->
 %%================================================================================
 
 init(core) ->
-    mria_status:init(),
     SupFlags = #{ strategy => one_for_all
                 , intensity => 1
                 , period => 1
                 },
-    Children = [child_sup()],
+    Children = [status_mgr(), child_sup()],
     {ok, {SupFlags, Children}};
 init(replicant) ->
-    mria_status:init(),
     SupFlags = #{ strategy => one_for_all
                 , intensity => 1
                 , period => 1
                 },
-    Children = [core_node_lb(), child_sup()],
+    Children = [status_mgr(), core_node_lb(), child_sup()],
     {ok, {SupFlags, Children}}.
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+status_mgr() ->
+    #{ id => mria_status
+     , start => {mria_status, start_link, []}
+     , restart => permanent
+     , shutdown => 5000
+     , type => worker
+     }.
 
 core_node_lb() ->
     #{ id => mria_lb

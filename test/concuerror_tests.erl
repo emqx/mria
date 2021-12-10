@@ -135,10 +135,25 @@ cvar_wait_multiple_timeout_test() ->
         cleanup()
     end.
 
+%% Check waiting for multiple variables, one times out.
+%%
+%% Note: it doesn't run under concuerror, since we rely on the precise
+%% timings here:
+cvar_wait_multiple_timeout_one_test() ->
+    mria_condition_var:init(),
+    try
+        [spawn(fun() ->
+                       timer:sleep(100),
+                       mria_condition_var:set(Key, Key)
+               end) || Key <- [foo, baz]],
+        ?assertMatch({timeout, [bar]}, mria_condition_var:wait_vars([foo, bar, baz], 200))
+    after
+        cleanup()
+    end.
 
 %% Check that waiting for shards with timeout=infinity always results in `ok'.
 wait_for_shards_inf_test() ->
-    mria_status:init(),
+    mria_condition_var:init(),
     try
         spawn(fun() ->
                       catch mria_status:notify_shard_up(foo, self())
@@ -155,7 +170,7 @@ wait_for_shards_inf_test() ->
 
 %% Check that events published with different tags don't leave garbage messages behind
 notify_different_tags_test() ->
-    mria_status:init(),
+    mria_condition_var:init(),
     try
         spawn(fun() ->
                       catch mria_status:notify_shard_up(foo, self())
@@ -171,7 +186,7 @@ notify_different_tags_test() ->
 
 %% Test waiting for core node
 get_core_node_test() ->
-    mria_status:init(),
+    mria_condition_var:init(),
     try
         Node = node(),
         spawn(fun() ->
@@ -185,7 +200,7 @@ get_core_node_test() ->
 
 %% Check that waiting for shards with a finite timeout never hangs forever:
 wait_for_shards_timeout_test() ->
-    mria_status:init(),
+    mria_condition_var:init(),
     try
         spawn(fun() ->
                       catch mria_status:notify_shard_up(foo, self())
@@ -212,7 +227,7 @@ wait_for_shards_timeout_test() ->
 
 %% Check that waiting for events never results in infinite wait
 wait_for_shards_crash_test() ->
-    mria_status:init(),
+    mria_condition_var:init(),
     try
         spawn(fun() ->
                       catch mria_status:notify_shard_up(foo, node())
@@ -328,8 +343,7 @@ cleanup() ->
             %% Cleanup causes more interleavings, skip it:
             ok;
         false ->
-            catch mria_condition_var:stop(),
-            catch ets:delete(mria_rlog_stats_tab)
+            catch mria_condition_var:stop()
     end.
 
 %% Hack to detect if running under concuerror:

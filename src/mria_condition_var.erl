@@ -123,12 +123,12 @@ read(Key) ->
             receive
                 %% Rather unconventionally, the actual information is
                 %% transmitted in a DOWN message from a temporary
-                %% "waker" process. See `waker_loop':
+                %% "waker" process. See `waker_entrypoint':
                 {'DOWN', MRef, _, _, {cvar_set, Value}} ->
                     Value;
                 {'DOWN', MRef, _, _, noproc} ->
                     %% Race condition: the variable was set between
-                    %% read_or_spawn and monitor call.
+                    %% `read_or_wait' and `monitor' calls.
                     read(Key)
             end
     end.
@@ -151,7 +151,7 @@ read(Key, Timeout) ->
                     {ok, Value};
                 {'DOWN', MRef, _, _, noproc} ->
                     %% Race condition: the variable was set between
-                    %% read_or_spawn and monitor call:
+                    %% `read_or_wait' and `monitor' calls:
                     read(Key, 0)
             after Timeout ->
                     demonitor(MRef, [flush]),
