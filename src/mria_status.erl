@@ -18,14 +18,14 @@
 %% event subscribers.
 -module(mria_status).
 
--behaviour(gen_event).
-
 %% API:
--export([start_link/0, subscribe_events/0, unsubscribe_events/1, notify_shard_up/2,
-         notify_shard_down/1, wait_for_shards/2, upstream/1, upstream_node/1,
-         shards_up/0, shards_down/0, get_shard_stats/1, agents/0, replicants/0,
-
+-export([init/0,
+         notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
          notify_core_node_up/2, notify_core_node_down/1, get_core_node/2,
+
+         upstream/1, upstream_node/1,
+         shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
+         get_shard_stats/1, agents/0, replicants/0,
 
          notify_replicant_state/2, notify_replicant_import_trans/2,
          notify_replicant_replayq_len/2,
@@ -35,21 +35,12 @@
          notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1
         ]).
 
-%% gen_event callbacks:
--export([init/1, handle_call/2, handle_event/2, handle_info/2]).
-
 -define(SERVER, ?MODULE).
-
--record(s,
-        { ref        :: reference()
-        , subscriber :: pid()
-        }).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %% Tables and table keys:
--define(replica_tab, mria_rlog_replica_tab).
 -define(upstream_pid, upstream_pid).
 -define(core_node, core_node).
 
@@ -66,6 +57,16 @@
 %% API funcions
 %%================================================================================
 
+%% @doc Init tables
+-spec init() -> ok.
+init() ->
+    mria_condition_var:init(),
+    ets:new(?stats_tab, [ set
+                        , named_table
+                        , public
+                        , {write_concurrency, true}
+                        ]).
+
 %% @doc Return core node used as the upstream for the replica
 -spec upstream_node(mria_rlog:shard()) -> {ok, node()} | disconnected.
 upstream_node(Shard) ->
@@ -77,26 +78,10 @@ upstream_node(Shard) ->
 %% @doc Return pid of the core node agent that serves us.
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
 upstream(Shard) ->
-    case ets:lookup(?replica_tab, {?upstream_pid, Shard}) of
-        [{_, Node}] -> {ok, Node};
-        []          -> disconnected
+    case mria_condition_var:peek({?upstream_pid, Shard}) of
+        {ok, Pid} -> {ok, Pid};
+        undefined -> disconnected
     end.
-
--spec start_link() -> {ok, pid()}.
-start_link() ->
-    %% Create a table that holds state of the replicas:
-    ets:new(?replica_tab, [ ordered_set
-                          , named_table
-                          , public
-                          , {write_concurrency, false}
-                          , {read_concurrency, true}
-                          ]),
-    ets:new(?stats_tab, [ set
-                        , named_table
-                        , public
-                        , {write_concurrency, true}
-                        ]),
-    gen_event:start_link({local, ?SERVER}, []).
 
 -spec notify_shard_up(mria_rlog:shard(), _AgentPid :: pid()) -> ok.
 notify_shard_up(Shard, Upstream) ->
@@ -155,28 +140,7 @@ replicants() ->
 %% accept or RPC calls.
 -spec get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
 get_core_node(Shard, Timeout) ->
-    case ets:lookup(?replica_tab, {?core_node, Shard}) of
-        [{_, Node}] ->
-            {ok, Node};
-        [] ->
-            case wait_objects(?core_node, [Shard], Timeout) of
-                ok           -> get_core_node(Shard, 0);
-                {timeout, _} -> timeout
-            end
-    end.
-
--spec subscribe_events() -> reference().
-subscribe_events() ->
-    Self = self(),
-    Ref = monitor(process, ?SERVER),
-    ok = gen_event:add_sup_handler(?SERVER, {?MODULE, Ref}, [Ref, Self]),
-    Ref.
-
--spec unsubscribe_events(reference()) -> ok.
-unsubscribe_events(Ref) ->
-    ok = gen_event:delete_handler(?SERVER, {?MODULE, Ref}, []),
-    demonitor(Ref, [flush]),
-    flush_events(Ref).
+    mria_condition_var:read({?core_node, Shard}, Timeout).
 
 -spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]}.
 wait_for_shards(Shards, Timeout) ->
@@ -184,29 +148,35 @@ wait_for_shards(Shards, Timeout) ->
         #{ shards => Shards
          , timeout => Timeout
          }),
-   Ret = wait_objects(?upstream_pid, Shards, Timeout),
+    Result = mria_condition_var:wait_vars([{?upstream_pid, I} || I <- Shards], Timeout),
+    Ret = case Result of
+              ok ->
+                  ok;
+              {timeout, L} ->
+                  %% Unzip to transform `[{upstream_shard, foo}, {upstream_shard, bar}]' to `[foo, bar]':
+                  {timeout, element(2, lists:unzip(L))}
+          end,
     ?tp(info, "Done waiting for shards",
         #{ shards => Shards
-         , result =>  Ret
+         , result => Ret
          }),
     Ret.
 
+-spec shards_status() -> [{mria_rlog:shard(), _Status}].
+shards_status() ->
+    [{I, get_stat(I, ?replicant_state)} || I <- mria_schema:shards()].
+
 -spec shards_up() -> [mria_rlog:shard()].
 shards_up() ->
-    objects_up(?upstream_pid).
+    [I || {I, normal} <- shards_status()].
 
--spec objects_up(atom()) -> [term()].
-objects_up(Tag) ->
-    case ets:whereis(?replica_tab) of
-        undefined ->
-            [];
-        _ ->
-            lists:append(ets:match(?replica_tab, {{Tag, '$1'}, '_'}))
-    end.
+-spec shards_syncing() -> [mria_rlog:shard()].
+shards_syncing() ->
+    [I || {I, Status} <- shards_status(), Status =:= bootstrap orelse Status =:= local_replay].
 
 -spec shards_down() -> [mria_rlog:shard()].
 shards_down() ->
-    mria_schema:shards() -- shards_up().
+    [I || {I, Status} <- shards_status(), Status =:= disconnected orelse Status =:= undefined].
 
 -spec get_shard_stats(mria_rlog:shard()) -> map().
 get_shard_stats(Shard) ->
@@ -258,68 +228,8 @@ notify_replicant_bootstrap_import(Shard) ->
     ok.
 
 %%================================================================================
-%% gen_event callbacks
-%%================================================================================
-
-init([Ref, Subscriber]) ->
-    process_flag(trap_exit, true),
-    logger:set_process_metadata(#{domain => [mria, event_mgr]}),
-    ?tp(start_event_monitor,
-        #{ reference  => Ref
-         , subscriber => Subscriber
-         }),
-    State = #s{ ref        = Ref
-              , subscriber = Subscriber
-              },
-    {ok, State, hibernate}.
-
-handle_call(_, State) ->
-    {ok, {error, unknown_call}, State, hibernate}.
-
-handle_info(_Info, State) ->
-    ?tp(mria_status_handle_info, #{msg => _Info}),
-    {ok, State}.
-
-handle_event(Event, State = #s{ref = Ref, subscriber = Sub}) ->
-    Sub ! {Ref, Event},
-    {ok, State, hibernate}.
-
-%%================================================================================
 %% Internal functions
 %%================================================================================
-
--spec wait_objects(atom(), [A], timeout()) -> ok | {timeout, [A]}.
-wait_objects(Tag, Objects, Timeout) ->
-    ERef = subscribe_events(),
-    TRef = mria_lib:send_after(Timeout, self(), {ERef, timeout}),
-    %% Exclude shards that are up, since they are not going to send any events:
-    DownObjects = Objects -- objects_up(Tag),
-    Ret = do_wait_objects(Tag, ERef, DownObjects),
-    mria_lib:cancel_timer(TRef),
-    unsubscribe_events(ERef),
-    Ret.
-
-do_wait_objects(_, _, []) ->
-    ok;
-do_wait_objects(Tag, ERef, RemainingObjects) ->
-    receive
-        {'DOWN', ERef, _, _, _} ->
-            error(rlog_restarted);
-        {ERef, timeout} ->
-            {timeout, RemainingObjects};
-        {ERef, {{Tag, Object}, _Value}} ->
-            do_wait_objects(Tag, ERef, RemainingObjects -- [Object])
-    end.
-
-flush_events(ERef) ->
-    receive
-        {gen_event_EXIT, {?MODULE, ERef}, _} ->
-            flush_events(ERef);
-        {ERef, _} ->
-            flush_events(ERef)
-    after 0 ->
-            ok
-    end.
 
 -spec set_stat(mria_rlog:shard(), atom(), term()) -> ok.
 set_stat(Shard, Stat, Val) ->
@@ -347,28 +257,23 @@ get_bootstrap_time(Shard) ->
 -spec do_notify_up(atom(), term(), term()) -> ok.
 do_notify_up(Tag, Object, Value) ->
     Key = {Tag, Object},
-    New = not ets:member(?replica_tab, Key),
-    ets:insert(?replica_tab, {Key, Value}),
-    case New of
-        true ->
-            ?tp(mria_status_change,
-                #{ status => up
-                 , tag    => Tag
-                 , key    => Object
-                 , value  => Value
-                 , node   => node()
-                 }),
-            gen_event:notify(?SERVER, {Key, Value});
-        false ->
-            ok
-    end.
+    mria_condition_var:is_set(Key) orelse
+        ?tp(mria_status_change,
+            #{ status => up
+             , tag    => Tag
+             , key    => Object
+             , value  => Value
+             , node   => node()
+             }),
+    mria_condition_var:set(Key, Value).
 
 -spec do_notify_down(atom(), term()) -> ok.
 do_notify_down(Tag, Object) ->
     Key = {Tag, Object},
-    ets:delete(?replica_tab, Key),
-    ?tp(mria_status_change,
-        #{ status => down
-         , key    => Object
-         , tag    => Tag
-         }).
+    mria_condition_var:is_set(Key) andalso
+        ?tp(mria_status_change,
+            #{ status => down
+             , key    => Object
+             , tag    => Tag
+             }),
+    mria_condition_var:unset(Key).
