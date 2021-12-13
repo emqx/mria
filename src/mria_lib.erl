@@ -234,6 +234,7 @@ send_after(Timeout, To, Message) ->
 cancel_timer(undefined) ->
     ok;
 cancel_timer(TRef) ->
+    %% TODO: flush the message from the MQ
     erlang:cancel_timer(TRef).
 
 -spec subscriber_node(subscriber()) -> node().
