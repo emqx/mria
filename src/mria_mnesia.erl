@@ -189,7 +189,7 @@ running_nodes() ->
     case mria_rlog:role() of
         core ->
             CoreNodes = mnesia:system_info(running_db_nodes),
-            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, []),
+            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, [], 15000),
             Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
             lists:usort(CoreNodes ++ Replicants);
         replicant ->
