@@ -85,15 +85,11 @@ init({Shard, Subscriber, _ReplaySince}) ->
           , subscriber     = Subscriber
           , push_mode      = mria_config:tlog_push_mode()
           },
-    %% TMP workaround until replaying from the old logs is figured out:
-    subscribe_realtime(D),
     {ok, ?normal, D}.
 
 -spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) ->
           gen_statem:event_handler_result(state()).
-%% Events specific to `?normal' state:
-%% Note that we only expect writes here.
-handle_event(info, {mnesia_table_event, {write, Record, ActivityId}}, ?normal, D) ->
+handle_event(info, {trans, Tid, Ops}, ?normal, D) ->
     handle_mnesia_event(Record, ActivityId, D);
 %% Common actions:
 handle_event({call, From}, stop, State, D) ->

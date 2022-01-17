@@ -201,7 +201,7 @@ rpc_cast(Destination, Module, Function, Args) ->
         rpc ->
             rpc:cast(node_from_destination(Destination), Module, Function, Args);
         gen_rpc ->
-            gen_rpc:cast(Destination, Module, Function, Args)
+            gen_rpc:ordered_cast(Destination, Module, Function, Args)
     end.
 
 %%================================================================================

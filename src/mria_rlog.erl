@@ -17,6 +17,8 @@
 %% API and management functions for asynchronous Mnesia replication
 -module(mria_rlog).
 
+-compile({inline, [do_detect_shard/1]}).
+
 -export([ status/0
         , get_protocol_version/0
 
@@ -27,6 +29,9 @@
         , core_nodes/0
         , subscribe/4
         , wait_for_shards/2
+        , init/0
+
+        , intercept_trans/2
         ]).
 
 -export_type([ shard/0
@@ -124,3 +129,35 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
 get_protocol_version() ->
     %% Should be increased on incompatible changes:
     0.
+
+intercept_trans(Tid, Commit) ->
+    ?tp(mria_rlog_intercept_trans, Commit#{tid => Tid}),
+    case detect_shard(Commit) of
+        undefined -> ok;
+        Shard     -> mria_rlog_server:dispatch(Shard, Tid, Commit)
+    end.
+
+%% Assuming that all ops belong to one shard:
+%% TODO: Handle local content tables more soundly.
+detect_shard(#{ram_copies := [Op|_]}) ->
+    do_detect_shard(Op);
+detect_shard(#{disc_copies := [Op|_]}) ->
+    do_detect_shard(Op);
+detect_shard(#{disc_only_copies := [Op|_]}) ->
+    do_detect_shard(Op);
+detect_shard(#{ext := [Op|_]}) ->
+    do_detect_shard(Op);
+detect_shard(_) ->
+    undefined.
+
+do_detect_shard({{Tab, _Key}, _Value, _Operation}) ->
+    mria_config:shard_rlookup(Tab).
+
+-spec init() -> ok.
+init() ->
+    case {backend(), role()} of
+        {rlog, core} ->
+            mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2);
+        _ ->
+            ok
+    end.
