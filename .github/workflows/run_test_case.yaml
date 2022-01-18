@@ -7,8 +7,7 @@ jobs:
     run_test_case:
         runs-on: ubuntu-latest
 
-        container:
-            image: erlang:24.0
+        container: ghcr.io/emqx/emqx-builder/5.0-5:1.13.2-24.1.5-4-ubuntu20.04
 
         steps:
         - uses: actions/checkout@v1
