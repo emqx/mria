@@ -156,26 +156,21 @@ push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
 
 %% @private Consume transactions from the core node
 -spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
-handle_tlog_entry(?normal, {Agent, SeqNo, TXID, Transaction},
+handle_tlog_entry(?normal, {Agent, SeqNo, Transaction},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
-                        , shard            = Shard
                         , importer_worker  = ImporterWorker
                         }) ->
     %% Normal flow, transactions are applied directly to the replica:
     ?tp(rlog_replica_import_trans,
         #{ agent       => Agent
          , seqno       => SeqNo
-         , txid        => TXID
          , transaction => Transaction
          }),
-    Checkpoint = mria_lib:txid_to_checkpoint(TXID),
     ok = mria_replica_importer_worker:import_batch(ImporterWorker, Transaction),
-    mria_status:notify_replicant_import_trans(Shard, Checkpoint),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
-                    , checkpoint       = Checkpoint
                     }};
-handle_tlog_entry(St, {Agent, SeqNo, TXID, Transaction},
+handle_tlog_entry(St, {Agent, SeqNo, Transaction},
                   D0 = #d{ agent = Agent
                          , next_batch_seqno = SeqNo
                          }) when St =:= ?bootstrap orelse
@@ -185,18 +180,12 @@ handle_tlog_entry(St, {Agent, SeqNo, TXID, Transaction},
     ?tp(rlog_replica_store_trans,
         #{ agent       => Agent
          , seqno       => SeqNo
-         , txid        => TXID
          , transaction => Transaction
          }),
     D = buffer_tlog_ops(Transaction, D0),
-    MaybeCheckpoint = case St of
-                          ?local_replay -> TXID;
-                          ?bootstrap    -> undefined
-                      end,
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
-                    , checkpoint       = MaybeCheckpoint
                     }};
-handle_tlog_entry(_State, {Agent, SeqNo, TXID, _},
+handle_tlog_entry(_State, {Agent, SeqNo, _Transaction},
              #d{ agent = Agent
                , next_batch_seqno = MySeqNo
                }) when SeqNo > MySeqNo ->
@@ -207,8 +196,8 @@ handle_tlog_entry(_State, {Agent, SeqNo, TXID, _},
                                  , got_seqno      => SeqNo
                                  , agent          => Agent
                                  }),
-    error({gap_in_the_tlog, TXID, SeqNo, MySeqNo});
-handle_tlog_entry(State, {Agent, SeqNo, TXID, _Transaction},
+    error({gap_in_the_tlog, SeqNo, MySeqNo});
+handle_tlog_entry(State, {Agent, SeqNo, _Transaction},
                   #d{ next_batch_seqno = ExpectedSeqno
                     , agent            = ExpectedAgent
                     }) ->
@@ -216,7 +205,6 @@ handle_tlog_entry(State, {Agent, SeqNo, TXID, _Transaction},
         #{ state          => State
          , from           => Agent
          , from_expected  => ExpectedAgent
-         , txid           => TXID
          , seqno          => SeqNo
          , seqno_expected => ExpectedSeqno
          }),

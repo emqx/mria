@@ -85,12 +85,16 @@ init({Shard, Subscriber, _ReplaySince}) ->
           , subscriber     = Subscriber
           , push_mode      = mria_config:tlog_push_mode()
           },
+    ?tp(info, rlog_agent_started,
+        #{ shard => Shard
+         }),
     {ok, ?normal, D}.
 
 -spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) ->
           gen_statem:event_handler_result(state()).
-handle_event(info, {trans, Tid, Ops}, ?normal, D) ->
-    handle_mnesia_event(Record, ActivityId, D);
+handle_event(info, {trans, Shard, Tid, Commit}, ?normal, D = #d{shard = Shard}) ->
+    %% Tid = ActivityId
+    handle_mnesia_event({Shard, Commit}, Tid, D);
 %% Common actions:
 handle_event({call, From}, stop, State, D) ->
     handle_stop(State, From, D);
@@ -132,26 +136,27 @@ handle_state_trans(_OldState, _State, _Data) ->
          }),
     keep_state_and_data.
 
--spec handle_mnesia_event(mria_lib:rlog(), term(), data()) -> fsm_result().
-handle_mnesia_event({Shard, TXID, Ops}, _ActivityId, D = #d{shard = Shard}) ->
+-spec handle_mnesia_event({mria_rlog:shard(), mria_rlog:commit_records()}, term(), data()) ->
+          fsm_result().
+handle_mnesia_event({Shard, Commit}, _ActivityId, D = #d{shard = Shard}) ->
     PushMode = D#d.push_mode,
     SeqNo    = D#d.seqno,
+    Ops = maps:fold(
+            fun(K, Ops, Acc) when K =:= ram_copies;
+                                  K =:= disc_copies;
+                                  K =:= disc_only_copies ->
+                    Ops ++ Acc;
+               (_K, _Ops, Acc) ->
+                    Acc
+            end,
+            [],
+            Commit),
     ?tp(rlog_realtime_op,
         #{ ops         => Ops
-         , txid        => TXID
          , activity_id => _ActivityId
          , agent       => self()
          , seqno       => SeqNo
          }),
-    Tx = {self(), SeqNo, TXID, [Ops]},
+    Tx = {self(), SeqNo, [Ops]},
     ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
     {keep_state, D#d{seqno = SeqNo + 1}}.
-
-subscribe_realtime(D) ->
-    Table = D#d.shard,
-    {ok, Node} = mnesia:subscribe({table, Table, simple}),
-    ?tp(info, subscribe_realtime_stream,
-        #{ rlog           => Table
-         , subscribe_node => Node
-         }),
-    ok.

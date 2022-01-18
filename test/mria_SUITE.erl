@@ -211,7 +211,7 @@ t_rlog_smoke_test(_) ->
            ?force_ordering(#{?snk_kind := trans_gen_counter_update, value := 5},
                            #{?snk_kind := state_change, to := disconnected}),
            %% 2. Make sure the rest of transactions are produced after the agent starts:
-           ?force_ordering(#{?snk_kind := subscribe_realtime_stream},
+           ?force_ordering(#{?snk_kind := rlog_agent_started},
                            #{?snk_kind := trans_gen_counter_update, value := 10}),
            %% 3. Make sure transactions are sent during TLOG replay: (TODO)
            ?force_ordering(#{?snk_kind := state_change, to := bootstrap},
@@ -624,6 +624,57 @@ t_rlog_schema(_) ->
                             , Rest
                             ))
        end).
+
+%% Test post commit hook using disc tables.
+t_mnesia_post_commit_hook_disc(_) ->
+    Cluster = mria_ct:cluster([core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [_N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           {[ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
+                                              [ kv_tab1
+                                              , [ {storage, disc_copies}
+                                                , {rlog_shard, test_shard}
+                                                , {record_name, kv_tab}
+                                                , {attributes, record_info(fields, kv_tab)}
+                                                ]
+                                              ]),
+           {[ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
+                                              [ kv_tab2
+                                              , [ {storage, disc_only_copies}
+                                                , {rlog_shard, test_shard}
+                                                , {record_name, kv_tab}
+                                                , {attributes, record_info(fields, kv_tab)}
+                                                ]
+                                              ]),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           %% write some records starting on one of the replicas
+           {atomic, _} = rpc:call(N2, mria, transaction,
+                                  [test_shard,
+                                   fun() ->
+                                           mnesia:write(kv_tab1, {kv_tab, 1, 1}, write),
+                                           mnesia:write(kv_tab2, {kv_tab, 2, 2}, write)
+                                   end]),
+           ok = rpc:call(N2, mria, dirty_write, [kv_tab1, {kv_tab, 3, 3}]),
+           ok = rpc:call(N2, mria, dirty_write, [kv_tab2, {kv_tab, 4, 4}]),
+           mria_mnesia_test_util:wait_full_replication(Cluster),
+           %% other replica should get updates
+           {atomic, Res} = rpc:call(N3, mria, transaction,
+                                    [test_shard,
+                                     fun() ->
+                                             [#kv_tab{val = V1}] = mnesia:read(kv_tab1, 1),
+                                             [#kv_tab{val = V2}] = mnesia:read(kv_tab2, 2),
+                                             [#kv_tab{val = V3}] = mnesia:read(kv_tab1, 3),
+                                             [#kv_tab{val = V4}] = mnesia:read(kv_tab2, 4),
+                                             {V1, V2, V3, V4}
+                                     end]),
+           ?assertEqual({1, 2, 3, 4}, Res),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
 
 cluster_benchmark(_) ->
     NReplicas = 6,

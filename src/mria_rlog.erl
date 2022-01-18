@@ -37,6 +37,7 @@
 -export_type([ shard/0
              , role/0
              , shard_config/0
+             , commit_records/0
              ]).
 
 -include("mria_rlog.hrl").
@@ -51,6 +52,14 @@
 -type shard_config() :: #{ tables := [mria:table()]
                          , match_spec := ets:match_spec()
                          }.
+
+-type commit_records() :: #{ node => node()
+                           , ram_copies => list()
+                           , disc_copies => list()
+                           , disc_only_copies => list()
+                           , ext => list()
+                           , schema_ops => list()
+                           }.
 
 status() ->
     Backend = backend(),
@@ -139,14 +148,17 @@ intercept_trans(Tid, Commit) ->
 
 %% Assuming that all ops belong to one shard:
 %% TODO: Handle local content tables more soundly.
-detect_shard(#{ram_copies := [Op|_]}) ->
+detect_shard(#{ram_copies := [Op | _]}) ->
     do_detect_shard(Op);
-detect_shard(#{disc_copies := [Op|_]}) ->
+detect_shard(#{disc_copies := [Op | _]}) ->
     do_detect_shard(Op);
-detect_shard(#{disc_only_copies := [Op|_]}) ->
+detect_shard(#{disc_only_copies := [Op | _]}) ->
     do_detect_shard(Op);
-detect_shard(#{ext := [Op|_]}) ->
+detect_shard(#{ext := [{ext_copies, [{_, Op}]} | _]}) ->
     do_detect_shard(Op);
+%% FIXME: Should we handle snmp ext type ops? how to test?
+detect_shard(#{ext := [{snmp, [{Operation, MnesiaTab, MnesiaKey, _SnmpKey}]} | _]}) ->
+    do_detect_shard({{MnesiaTab, MnesiaKey}, undefined, Operation});
 detect_shard(_) ->
     undefined.
 

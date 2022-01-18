@@ -152,7 +152,8 @@ consistency_check() ->
             error(unsupported_backend);
         {rlog, _, false} ->
             ?LOG(critical, "Configuration error: cannot use mria DB "
-                           "backend with this version of Erlang/OTP", []);
+                           "backend with this version of Erlang/OTP", []),
+            error(unsupported_otp_version);
          _ ->
             ok
     end.

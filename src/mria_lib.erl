@@ -30,8 +30,6 @@
         , cancel_timer/1
         , subscriber_node/1
 
-        , get_internals/0
-
         , call_backend_rw_trans/3
         , call_backend_rw_dirty/3
 
@@ -87,7 +85,6 @@
 
 -type tlog_entry() :: { _Sender :: pid()
                       , _SeqNo  :: integer()
-                      , _Key    :: txid()
                       , _Tx     :: [tx()]
                       }.
 
@@ -201,7 +198,7 @@ rpc_cast(Destination, Module, Function, Args) ->
         rpc ->
             rpc:cast(node_from_destination(Destination), Module, Function, Args);
         gen_rpc ->
-            gen_rpc:ordered_cast(Destination, Module, Function, Args)
+            gen_rpc:cast(Destination, Module, Function, Args)
     end.
 
 %%================================================================================
@@ -284,29 +281,22 @@ call_backend_rw_dirty(Function, Table, Args) ->
 transactional_wrapper(Shard, Fun, Args) ->
     ensure_no_transaction(),
     mria_rlog:wait_for_shards([Shard], infinity),
-    TxFun =
-        fun() ->
-                Result = apply(mria_activity, Fun, Args),
-                {TID, TxStore} = get_internals(),
-                ensure_no_ops_outside_shard(TxStore, Shard),
-                Key = mria_lib:make_key(TID),
-                Ops = dig_ops_for_shard(TxStore, Shard),
-                mria_rlog_tab:write(Shard, Key, Ops),
-                Result
-        end,
-    mnesia:transaction(TxFun).
+    mnesia:transaction(fun() ->
+                               Res = apply(mria_activity, Fun, Args),
+                               {_TID, TxStore} = get_internals(),
+                               ensure_no_ops_outside_shard(TxStore, Shard),
+                               Res
+                       end).
 
 -spec local_transactional_wrapper(atom(), list()) -> mria:t_result(term()).
 local_transactional_wrapper(Activity, Args) ->
     ensure_no_transaction(),
-    TxFun =
-        fun() ->
-                Result = apply(mria_activity, Activity, Args),
-                {_TID, TxStore} = get_internals(),
-                ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
-                Result
-        end,
-    mnesia:transaction(TxFun).
+    mnesia:transaction(fun() ->
+                               Res = apply(mria_activity, Activity, Args),
+                               {_TID, TxStore} = get_internals(),
+                               ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
+                               Res
+                       end).
 
 %% @doc Perform a dirty operation and log changes.
 -spec dirty_wrapper(mria_rlog:shard(), atom(), mria:table(), list()) -> ok.
@@ -389,10 +379,6 @@ find_upstream_node(Shard) ->
         {ok, Node} -> Node;
         timeout    -> error(transaction_timeout)
     end.
-
-dig_ops_for_shard(TxStore, Shard) ->
-    #{match_spec := MS} = mria_config:shard_config(Shard),
-    ets:select(TxStore, MS).
 
 ensure_no_transaction() ->
     case mnesia:get_activity_id() of

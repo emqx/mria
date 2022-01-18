@@ -29,6 +29,10 @@
 start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{}),
     application:load(mnesia),
+    %% for some reason, `erlang:function_exported' does not see
+    %% `mnesia_hook:register_hook/2' even after loading the mnesia
+    %% application.  So this is needed to make it "visible".
+    catch mnesia_hook:module_info(),
     mria_config:load_config(),
     mria_rlog:init(),
     ?tp(notice, "Starting mnesia", #{}),

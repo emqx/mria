@@ -101,7 +101,8 @@ bootstrap_me(RemoteNode, Shard) ->
 %% Called from mnesia post_commit hook:
 -spec dispatch(mria_rlog:shard(), _Tid, _Commit) -> ok.
 dispatch(Shard, Tid, Commit) ->
-    Shard ! {trans, Tid, Commit}.
+    Shard ! {trans, Tid, Commit},
+    ok.
 
 %%================================================================================
 %% gen_server callbacks
@@ -120,11 +121,15 @@ handle_info({mnesia_table_event, {write, Record, ActivityId}}, St) ->
     handle_mnesia_event(Record, ActivityId, St);
 handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     mria_status:notify_agent_disconnect(Pid),
-    St = St0#s{agents = Agents -- [pid()]},
+    St = St0#s{agents = lists:delete(Pid, Agents)},
     {noreply, St};
-handle_info({trans, Tid, Commit}, St = #s{agents = Agents}) ->
-    %% TODO broadcast the message to the agents
-    ....
+handle_info({trans, Tid, Commit}, St = #s{shard = Shard, agents = Agents}) ->
+    lists:foreach(
+      fun(Agent) ->
+              Agent ! {trans, Shard, Tid, Commit}
+      end,
+      Agents),
+    {noreply, St};
 handle_info(Info, St) ->
     ?tp(warning, "Received unknown event",
         #{ info => Info
@@ -155,7 +160,7 @@ handle_continue(post_init, {Parent, Shard}) ->
 handle_cast(_Cast, St) ->
     {noreply, St}.
 
-handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
+handle_call({subscribe, Subscriber, Checkpoint}, _From, State0) ->
     #s{ bootstrap_threshold = BootstrapThreshold
       , tlog_replay         = TlogReplay
       , shard               = Shard
@@ -170,8 +175,8 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
     monitor(process, Pid),
     mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
     TableSpecs = mria_schema:table_specs_of_shard(Shard),
-    State = State#s{ agents = [Pid|Agents]
-                   },
+    State = State0#s{ agents = [Pid | Agents]
+                    },
     {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->
     Pid = maybe_start_child(State#s.bootstrapper_sup, [Subscriber]),
