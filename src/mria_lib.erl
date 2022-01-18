@@ -18,7 +18,6 @@
 -module(mria_lib).
 
 -export([ approx_checkpoint/0
-        , txid_to_checkpoint/1
         , make_key/1
         , import_batch/2
 
@@ -99,10 +98,6 @@
 -spec approx_checkpoint() -> mria_rlog_server:checkpoint().
 approx_checkpoint() ->
     erlang:system_time(millisecond).
-
--spec txid_to_checkpoint(mria_lib:txid()) -> mria_rlog_server:checkpoint().
-txid_to_checkpoint({Checkpoint, _}) ->
-    Checkpoint.
 
 %% Log key should be globally unique.
 %%

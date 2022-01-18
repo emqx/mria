@@ -21,8 +21,6 @@
 %% Mnesia bootstrap
 -export([ensure_table/1]).
 
--export([write/3]).
-
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
@@ -38,11 +36,3 @@ ensure_table(Shard) ->
          }),
     ok = mria:create_table_internal(Shard, null_copies, Opts),
     ok = mria_mnesia:copy_table(Shard, null_copies).
-
-%% @doc Write a transaction log.
--spec write(mria_rlog:shard(), mria_lib:txid(), [mria_lib:op(),...]) -> ok.
-write(Shard, Key, Ops) ->
-    Log = #rlog{ key = Key
-               , ops = Ops
-               },
-    mnesia:write(Shard, Log, write).
