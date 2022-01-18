@@ -7,8 +7,7 @@ jobs:
     run_test_case:
         runs-on: ubuntu-latest
 
-        container:
-            image: erlang:24.0
+        container: ghcr.io/emqx/emqx-builder/mnesia-post-commit-hook:1.13.1-dev-tmg-post-commit-hook-23-ubuntu20.04
 
         steps:
         - uses: actions/checkout@v1
