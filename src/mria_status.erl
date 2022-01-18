@@ -31,7 +31,7 @@
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
          get_shard_stats/1, agents/0, replicants/0,
 
-         notify_replicant_state/2, notify_replicant_import_trans/2,
+         notify_replicant_state/2,
          notify_replicant_replayq_len/2,
          notify_replicant_bootstrap_start/1, notify_replicant_bootstrap_complete/1,
          notify_replicant_bootstrap_import/1,
@@ -44,7 +44,6 @@
 
 -define(SERVER, ?MODULE).
 
--include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %% Tables and table keys:
@@ -203,10 +202,6 @@ get_shard_stats(Shard) ->
 -spec notify_replicant_state(mria_rlog:shard(), atom()) -> ok.
 notify_replicant_state(Shard, State) ->
     set_stat(Shard, ?replicant_state, State).
-
--spec notify_replicant_import_trans(mria_rlog:shard(), mria_rlog_server:checkpoint()) -> ok.
-notify_replicant_import_trans(Shard, Checkpoint) ->
-    set_stat(Shard, ?replicant_import, Checkpoint).
 
 -spec notify_replicant_replayq_len(mria_rlog:shard(), integer()) -> ok.
 notify_replicant_replayq_len(Shard, N) ->
