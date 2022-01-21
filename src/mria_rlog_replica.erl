@@ -160,6 +160,7 @@ handle_tlog_entry(?normal, {Agent, SeqNo, Transaction},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
                         , importer_worker  = ImporterWorker
+                        , shard            = Shard
                         }) ->
     %% Normal flow, transactions are applied directly to the replica:
     ?tp(rlog_replica_import_trans,
@@ -168,6 +169,10 @@ handle_tlog_entry(?normal, {Agent, SeqNo, Transaction},
          , transaction => Transaction
          }),
     ok = mria_replica_importer_worker:import_batch(ImporterWorker, Transaction),
+    %% statistic to give an estimate the replicant lag with respect to
+    %% the core node.
+    Timestamp = erlang:timestamp(),
+    mria_status:notify_replicant_import_trans(Shard, Timestamp),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     }};
 handle_tlog_entry(St, {Agent, SeqNo, Transaction},

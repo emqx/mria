@@ -32,6 +32,7 @@
          get_shard_stats/1, agents/0, replicants/0,
 
          notify_replicant_state/2,
+         notify_replicant_import_trans/2,
          notify_replicant_replayq_len/2,
          notify_replicant_bootstrap_start/1, notify_replicant_bootstrap_complete/1,
          notify_replicant_bootstrap_import/1,
@@ -202,6 +203,10 @@ get_shard_stats(Shard) ->
 -spec notify_replicant_state(mria_rlog:shard(), atom()) -> ok.
 notify_replicant_state(Shard, State) ->
     set_stat(Shard, ?replicant_state, State).
+
+-spec notify_replicant_import_trans(mria_rlog:shard(), erlang:timestamp()) -> ok.
+notify_replicant_import_trans(Shard, Timestamp) ->
+    set_stat(Shard, ?replicant_import, Timestamp).
 
 -spec notify_replicant_replayq_len(mria_rlog:shard(), integer()) -> ok.
 notify_replicant_replayq_len(Shard, N) ->
