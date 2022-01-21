@@ -211,9 +211,6 @@ make_shard_match_spec(Tables) ->
 
 -spec otp_is_compatible() -> boolean().
 otp_is_compatible() ->
-    %% for some reason, `erlang:function_exported' does not see
-    %% `mnesia_hook:register_hook/2' even after loading the mnesia
-    %% application.  So this is needed to make it "visible".
     try mnesia_hook:module_info() of
         _ -> true
     catch
