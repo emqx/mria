@@ -29,6 +29,8 @@
         , cancel_timer/1
         , subscriber_node/1
 
+        , get_internals/0
+
         , call_backend_rw_trans/3
         , call_backend_rw_dirty/3
 
