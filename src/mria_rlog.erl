@@ -156,9 +156,6 @@ detect_shard(#{disc_only_copies := [Op | _]}) ->
     do_detect_shard(Op);
 detect_shard(#{ext := [{ext_copies, [{_, Op}]} | _]}) ->
     do_detect_shard(Op);
-%% FIXME: Should we handle snmp ext type ops? how to test?
-detect_shard(#{ext := [{snmp, [{Operation, MnesiaTab, MnesiaKey, _SnmpKey}]} | _]}) ->
-    do_detect_shard({{MnesiaTab, MnesiaKey}, undefined, Operation});
 detect_shard(_) ->
     undefined.
 
