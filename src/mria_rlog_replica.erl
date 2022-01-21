@@ -156,7 +156,7 @@ push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
 
 %% @private Consume transactions from the core node
 -spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
-handle_tlog_entry(?normal, {Agent, SeqNo, Transaction},
+handle_tlog_entry(?normal, {Agent, SeqNo, _Tid, Transaction},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
                         , importer_worker  = ImporterWorker
@@ -164,9 +164,10 @@ handle_tlog_entry(?normal, {Agent, SeqNo, Transaction},
                         }) ->
     %% Normal flow, transactions are applied directly to the replica:
     ?tp(rlog_replica_import_trans,
-        #{ agent       => Agent
-         , seqno       => SeqNo
-         , transaction => Transaction
+        #{ agent            => Agent
+         , seqno            => SeqNo
+         , transaction      => Transaction
+         , tid              => _Tid
          }),
     ok = mria_replica_importer_worker:import_batch(ImporterWorker, Transaction),
     %% statistic to give an estimate the replicant lag with respect to
@@ -175,7 +176,7 @@ handle_tlog_entry(?normal, {Agent, SeqNo, Transaction},
     mria_status:notify_replicant_import_trans(Shard, Timestamp),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     }};
-handle_tlog_entry(St, {Agent, SeqNo, Transaction},
+handle_tlog_entry(St, {Agent, SeqNo, _Tid, Transaction},
                   D0 = #d{ agent = Agent
                          , next_batch_seqno = SeqNo
                          }) when St =:= ?bootstrap orelse
@@ -186,11 +187,12 @@ handle_tlog_entry(St, {Agent, SeqNo, Transaction},
         #{ agent       => Agent
          , seqno       => SeqNo
          , transaction => Transaction
+         , tid              => _Tid
          }),
     D = buffer_tlog_ops(Transaction, D0),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     }};
-handle_tlog_entry(_State, {Agent, SeqNo, _Transaction},
+handle_tlog_entry(_State, {Agent, SeqNo, _Tid, _Transaction},
              #d{ agent = Agent
                , next_batch_seqno = MySeqNo
                }) when SeqNo > MySeqNo ->
@@ -202,7 +204,7 @@ handle_tlog_entry(_State, {Agent, SeqNo, _Transaction},
                                  , agent          => Agent
                                  }),
     error({gap_in_the_tlog, SeqNo, MySeqNo});
-handle_tlog_entry(State, {Agent, SeqNo, _Transaction},
+handle_tlog_entry(State, {Agent, SeqNo, _Tid, _Transaction},
                   #d{ next_batch_seqno = ExpectedSeqno
                     , agent            = ExpectedAgent
                     }) ->

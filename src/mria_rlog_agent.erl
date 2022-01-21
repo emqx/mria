@@ -138,7 +138,7 @@ handle_state_trans(_OldState, _State, _Data) ->
 
 -spec handle_mnesia_event({mria_rlog:shard(), mria_rlog:commit_records()}, term(), data()) ->
           fsm_result().
-handle_mnesia_event({Shard, Commit}, _ActivityId, D = #d{shard = Shard}) ->
+handle_mnesia_event({Shard, Commit}, ActivityId, D = #d{shard = Shard}) ->
     PushMode = D#d.push_mode,
     SeqNo    = D#d.seqno,
     Ops = maps:fold(
@@ -153,10 +153,10 @@ handle_mnesia_event({Shard, Commit}, _ActivityId, D = #d{shard = Shard}) ->
             Commit),
     ?tp(rlog_realtime_op,
         #{ ops         => Ops
-         , activity_id => _ActivityId
+         , activity_id => ActivityId
          , agent       => self()
          , seqno       => SeqNo
          }),
-    Tx = {self(), SeqNo, [Ops]},
+    Tx = {self(), SeqNo, ActivityId, [Ops]},
     ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
     {keep_state, D#d{seqno = SeqNo + 1}}.
