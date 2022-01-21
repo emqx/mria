@@ -20,6 +20,7 @@
 
 -export([ replicant_no_restarts/1
         , replicant_bootstrap_stages/2
+        , all_intercepted_commit_logs_received/2
         , all_batches_received/1
         , counter_import_check/3
         , no_tlog_gaps/1
@@ -55,6 +56,42 @@ replicant_bootstrap_stages(Node, Trace0) ->
               , #{?snk_kind := state_change, to := normal,       ?snk_meta := #{pid := _Pid}}
               , Trace
               ).
+
+%% Check that all commit logs intercepted are received by an agent
+all_intercepted_commit_logs_received(_ShardNode, Trace0) ->
+    Trace = [ Event
+              || Event = #{ ram_copies := RamCopies
+                          , schema_ops := []
+                          } <- Trace0,
+                 case RamCopies of
+                     [{{mria_schema, _}, _, _} | _] -> false;
+                     _ -> true
+                 end
+            ],
+    ?assert(
+       ?causality(
+          #{ ?snk_kind := mria_rlog_intercept_trans
+           , tid       := _Tid
+           }
+         , #{ ?snk_kind   := rlog_realtime_op
+            , ?snk_meta   := #{node := _ShardNode}
+            , activity_id := _Tid
+            }
+         , Trace
+         )
+      ),
+    ?assert(
+       ?causality(
+          #{ ?snk_kind   := rlog_realtime_op
+           , activity_id := _Tid
+           }
+         , #{ ?snk_kind        := rlog_replica_import_trans
+            , tid              := _Tid
+            }
+         , Trace0
+         )
+      ),
+    ok.
 
 %% Check that the replicant processed all batches sent by its agent
 all_batches_received(Trace0) ->
