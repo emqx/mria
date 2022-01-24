@@ -632,56 +632,54 @@ t_mnesia_post_commit_hook(_) ->
        #{timetrap => 30000},
        try
            Nodes = [_N1, _N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
-           {[ok, ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
-                                                  [ kv_tab1
-                                                  , [ {storage, disc_copies}
-                                                    , {rlog_shard, test_shard}
-                                                    , {record_name, kv_tab}
-                                                    , {attributes, record_info(fields, kv_tab)}
-                                                    ]
-                                                  ]),
-           {[ok, ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
-                                                  [ kv_tab2
-                                                  , [ {storage, disc_only_copies}
-                                                    , {rlog_shard, test_shard}
-                                                    , {record_name, kv_tab}
-                                                    , {attributes, record_info(fields, kv_tab)}
-                                                    ]
-                                                  ]),
-           {[ok, ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
-                                                  [ kv_tab3
-                                                  , [ {storage, ram_copies}
-                                                    , {rlog_shard, test_shard}
-                                                    , {record_name, kv_tab}
-                                                    , {attributes, record_info(fields, kv_tab)}
-                                                    ]
-                                                  ]),
+           lists:foreach(
+             fun({TableName, StorageType}) ->
+                     {[ok, ok, ok, ok], []} =
+                         rpc:multicall(Nodes, mria, create_table,
+                                       [ TableName
+                                       , [ {storage, StorageType}
+                                         , {rlog_shard, test_shard}
+                                         , {record_name, kv_tab}
+                                         , {attributes, record_info(fields, kv_tab)}
+                                         ]
+                                       ])
+             end,
+             [ {kv_tab1, disc_copies}
+             , {kv_tab2, disc_only_copies}
+             , {kv_tab3, ram_copies}
+             , {kv_tab4, rocksdb_copies}
+             ]),
            mria_mnesia_test_util:wait_tables(Nodes),
            %% write some records starting on one of the replicas
            {atomic, _} = rpc:call(N3, mria, transaction,
                                   [test_shard,
                                    fun() ->
-                                           mnesia:write(kv_tab1, {kv_tab, 1, 1}, write),
-                                           mnesia:write(kv_tab2, {kv_tab, 2, 2}, write),
-                                           mnesia:write(kv_tab3, {kv_tab, 3, 3}, write)
+                                           mnesia:write(kv_tab1, {kv_tab, w1, w1}, write),
+                                           mnesia:write(kv_tab2, {kv_tab, w2, w2}, write),
+                                           mnesia:write(kv_tab3, {kv_tab, w3, w3}, write),
+                                           mnesia:write(kv_tab4, {kv_tab, w4, w4}, write),
+                                           ok
                                    end]),
-           ok = rpc:call(N3, mria, dirty_write, [kv_tab1, {kv_tab, 4, 4}]),
-           ok = rpc:call(N3, mria, dirty_write, [kv_tab2, {kv_tab, 5, 5}]),
-           ok = rpc:call(N3, mria, dirty_write, [kv_tab3, {kv_tab, 6, 6}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab1, {kv_tab, dw1, dw1}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab2, {kv_tab, dw2, dw2}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab3, {kv_tab, dw3, dw3}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab4, {kv_tab, dw4, dw4}]),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            %% other replica should get updates
            {atomic, Res} = rpc:call(N4, mria, transaction,
                                     [test_shard,
                                      fun() ->
-                                             [#kv_tab{val = V1}] = mnesia:read(kv_tab1, 1),
-                                             [#kv_tab{val = V2}] = mnesia:read(kv_tab2, 2),
-                                             [#kv_tab{val = V3}] = mnesia:read(kv_tab3, 3),
-                                             [#kv_tab{val = V4}] = mnesia:read(kv_tab1, 4),
-                                             [#kv_tab{val = V5}] = mnesia:read(kv_tab2, 5),
-                                             [#kv_tab{val = V6}] = mnesia:read(kv_tab3, 6),
-                                             {V1, V2, V3, V4, V5, V6}
+                                             [#kv_tab{val = V1}] = mnesia:read(kv_tab1, w1),
+                                             [#kv_tab{val = V2}] = mnesia:read(kv_tab2, w2),
+                                             [#kv_tab{val = V3}] = mnesia:read(kv_tab3, w3),
+                                             [#kv_tab{val = V4}] = mnesia:read(kv_tab4, w4),
+                                             [#kv_tab{val = V5}] = mnesia:read(kv_tab1, dw1),
+                                             [#kv_tab{val = V6}] = mnesia:read(kv_tab2, dw2),
+                                             [#kv_tab{val = V7}] = mnesia:read(kv_tab3, dw3),
+                                             [#kv_tab{val = V8}] = mnesia:read(kv_tab4, dw4),
+                                             {V1, V2, V3, V4, V5, V6, V7, V8}
                                      end]),
-           ?assertEqual({1, 2, 3, 4, 5, 6}, Res),
+           ?assertEqual({w1, w2, w3, w4, dw1, dw2, dw3, dw4}, Res),
            {ok, ShardNode} = rpc:call(N3, mria_status, upstream, [test_shard]),
            {ShardNode, Nodes}
        after
@@ -693,20 +691,23 @@ t_mnesia_post_commit_hook(_) ->
                  || {Table, PersistenceType} <- [ {kv_tab1, disc_copies}
                                                 , {kv_tab2, disc_only_copies}
                                                 , {kv_tab3, ram_copies}
+                                                , {kv_tab4, rocksdb_copies}
                                                 ],
                     N <- Cores
                ],
                [ assert_transaction_commit_record(Trace, N, Table, PersistenceType, Val)
-                 || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, 1}
-                                                     , {kv_tab2, disc_only_copies, 2}
-                                                     , {kv_tab3, ram_copies, 3}
+                 || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, w1}
+                                                     , {kv_tab2, disc_only_copies, w2}
+                                                     , {kv_tab3, ram_copies, w3}
+                                                     , {kv_tab4, rocksdb_copies, w4}
                                                      ],
                     N <- Cores
                ],
                [ assert_dirty_commit_record(Trace, N, Table, PersistenceType, Val)
-                 || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, 4}
-                                                     , {kv_tab2, disc_only_copies, 5}
-                                                     , {kv_tab3, ram_copies, 6}
+                 || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, dw1}
+                                                     , {kv_tab2, disc_only_copies, dw2}
+                                                     , {kv_tab3, ram_copies, dw3}
+                                                     , {kv_tab4, rocksdb_copies, dw4}
                                                      ],
                     N <- Cores
                ],
@@ -779,6 +780,27 @@ assert_create_table_commit_record(Trace, Node, Cores, Name, PersistenceType) ->
     NodeCopies = lists:sort([N || {PT, Ns} <- Props, PT =:= PersistenceType, N <- Ns]),
     ?assertEqual(Cores, NodeCopies).
 
+assert_transaction_commit_record(Trace, Node, Name, rocksdb_copies, Value) ->
+    ct:pal("checking transaction commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [Event] = [ Event
+                || #{ ?snk_meta := #{node := Node0}
+                    , ext := [{ ext_copies
+                              , [{{ext, rocksdb_copies, _Module}, {{Tab, Val}, _, write}}]
+                              }]
+                    } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+                   Node0 =:= Node,
+                   Tab =:= Name,
+                   Val =:= Value],
+    ?assertMatch(
+       #{ ext := [{ ext_copies
+                  , [{ {ext, rocksdb_copies, _Module}
+                     , {{Name, Value}, {kv_tab, Value, Value}, write}
+                     }]
+                  }]
+       , tid := {tid, _, _}
+       },
+       Event);
 assert_transaction_commit_record(Trace, Node, Name, PersistenceType, Value) ->
     ct:pal("checking transaction commit record for node ~p, table ~p~n",
            [Node, Name]),
@@ -795,6 +817,27 @@ assert_transaction_commit_record(Trace, Node, Name, PersistenceType, Value) ->
        },
        Event).
 
+assert_dirty_commit_record(Trace, Node, Name, rocksdb_copies, Value) ->
+    ct:pal("checking dirty commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [Event] = [ Event
+                || #{ ?snk_meta := #{node := Node0}
+                    , ext := [{ ext_copies
+                              , [{{ext, rocksdb_copies, _Module}, {{Tab, Val}, _, write}}]
+                              }]
+                    } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+                   Node0 =:= Node,
+                   Tab =:= Name,
+                   Val =:= Value],
+    ?assertMatch(
+       #{ ext := [{ ext_copies
+                  , [{ {ext, rocksdb_copies, _Module}
+                     , {{Name, Value}, {kv_tab, Value, Value}, write}
+                     }]
+                  }]
+        , tid := {dirty, _}
+        },
+       Event);
 assert_dirty_commit_record(Trace, Node, Name, PersistenceType, Value) ->
     ct:pal("checking dirty commit record for node ~p, table ~p~n",
            [Node, Name]),
