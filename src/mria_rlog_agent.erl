@@ -146,6 +146,9 @@ handle_mnesia_event({Shard, Commit}, ActivityId, Timestamp, D = #d{shard = Shard
                                   K =:= disc_copies;
                                   K =:= disc_only_copies ->
                     Ops ++ Acc;
+               (ext_copies, Ops0, Acc) ->
+                    Ops = [Op || {{ext, _Backend, _Module}, Op} <- Ops0],
+                    Ops ++ Acc;
                (_K, _Ops, Acc) ->
                     Acc
             end,
