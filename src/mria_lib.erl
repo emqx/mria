@@ -47,7 +47,7 @@
 %% Internal exports
 -export([ transactional_wrapper/3
         , local_transactional_wrapper/2
-        , dirty_wrapper/4
+        , dirty_wrapper/3
         ]).
 
 -export_type([ tlog_entry/0
@@ -265,12 +265,12 @@ call_backend_rw_dirty(Function, Table, Args) ->
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
-                    dirty_wrapper(Shard, Function, Table, Args);
+                    dirty_wrapper(Function, Table, Args);
                 false ->
                     %% Run dirty operation via RPC:
                     Core = find_upstream_node(Shard),
                     mria_lib:rpc_call({Core, Shard}, ?MODULE, dirty_wrapper,
-                                      [Shard, Function, Table, Args])
+                                      [Function, Table, Args])
             end
     end.
 
@@ -298,20 +298,9 @@ local_transactional_wrapper(Activity, Args) ->
                        end).
 
 %% @doc Perform a dirty operation and log changes.
--spec dirty_wrapper(mria_rlog:shard(), atom(), mria:table(), list()) -> ok.
-dirty_wrapper(Shard, Fun, Table, Args) ->
-    Ret = apply(mnesia, Fun, [Table|Args]),
-    case Shard of
-        ?LOCAL_CONTENT_SHARD ->
-            Ret;
-        Shard ->
-            %% This may look extremely inconsistent, and it is. But so
-            %% are dirty operations in mnesia...
-            OP = {dirty, Fun, [Table|Args]},
-            Key = mria_lib:make_key(undefined),
-            mnesia:dirty_write(Shard, #rlog{key = Key, ops = OP}),
-            Ret
-    end.
+-spec dirty_wrapper(atom(), mria:table(), list()) -> ok.
+dirty_wrapper(Fun, Table, Args) ->
+    apply(mnesia, Fun, [Table|Args]).
 
 -spec get_internals() -> {mria_lib:mnesia_tid(), ets:tab()}.
 get_internals() ->
