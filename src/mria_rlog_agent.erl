@@ -92,9 +92,9 @@ init({Shard, Subscriber, _ReplaySince}) ->
 
 -spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) ->
           gen_statem:event_handler_result(state()).
-handle_event(info, {trans, Shard, Tid, Commit}, ?normal, D = #d{shard = Shard}) ->
+handle_event(info, {trans, Shard, Tid, Timestamp, Commit}, ?normal, D = #d{shard = Shard}) ->
     %% Tid = ActivityId
-    handle_mnesia_event({Shard, Commit}, Tid, D);
+    handle_mnesia_event({Shard, Commit}, Tid, Timestamp, D);
 %% Common actions:
 handle_event({call, From}, stop, State, D) ->
     handle_stop(State, From, D);
@@ -136,9 +136,9 @@ handle_state_trans(_OldState, _State, _Data) ->
          }),
     keep_state_and_data.
 
--spec handle_mnesia_event({mria_rlog:shard(), mria_rlog:commit_records()}, term(), data()) ->
+-spec handle_mnesia_event({mria_rlog:shard(), mria_rlog:commit_records()}, term(), erlang:timestamp(), data()) ->
           fsm_result().
-handle_mnesia_event({Shard, Commit}, ActivityId, D = #d{shard = Shard}) ->
+handle_mnesia_event({Shard, Commit}, ActivityId, Timestamp, D = #d{shard = Shard}) ->
     PushMode = D#d.push_mode,
     SeqNo    = D#d.seqno,
     Ops = maps:fold(
@@ -157,6 +157,6 @@ handle_mnesia_event({Shard, Commit}, ActivityId, D = #d{shard = Shard}) ->
          , agent       => self()
          , seqno       => SeqNo
          }),
-    Tx = {self(), SeqNo, ActivityId, [Ops]},
+    Tx = {self(), SeqNo, ActivityId, Timestamp, [Ops]},
     ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
     {keep_state, D#d{seqno = SeqNo + 1}}.
