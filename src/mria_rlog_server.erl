@@ -124,9 +124,10 @@ handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     St = St0#s{agents = lists:delete(Pid, Agents)},
     {noreply, St};
 handle_info({trans, Tid, Commit}, St = #s{shard = Shard, agents = Agents}) ->
+    Timestamp = erlang:timestamp(),
     lists:foreach(
       fun(Agent) ->
-              Agent ! {trans, Shard, Tid, Commit}
+              Agent ! {trans, Shard, Tid, Timestamp, Commit}
       end,
       Agents),
     {noreply, St};
