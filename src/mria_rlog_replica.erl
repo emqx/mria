@@ -189,7 +189,7 @@ handle_tlog_entry(St, {Agent, SeqNo, _Tid, _Timestamp, Transaction},
         #{ agent       => Agent
          , seqno       => SeqNo
          , transaction => Transaction
-         , tid              => _Tid
+         , tid         => _Tid
          }),
     D = buffer_tlog_ops(Transaction, D0),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
