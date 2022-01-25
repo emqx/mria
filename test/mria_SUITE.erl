@@ -680,12 +680,11 @@ t_mnesia_post_commit_hook(_) ->
                                              {V1, V2, V3, V4, V5, V6, V7, V8}
                                      end]),
            ?assertEqual({w1, w2, w3, w4, dw1, dw2, dw3, dw4}, Res),
-           {ok, ShardNode} = rpc:call(N3, mria_status, upstream, [test_shard]),
-           {ShardNode, Nodes}
+           Nodes
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun({ShardNode, [N1, N2, _N3, _N4]}, Trace) ->
+       fun([N1, N2, _N3, _N4], Trace) ->
                Cores = [N1, N2],
                [ assert_create_table_commit_record(Trace, N, Cores, Table, PersistenceType)
                  || {Table, PersistenceType} <- [ {kv_tab1, disc_copies}
@@ -711,7 +710,7 @@ t_mnesia_post_commit_hook(_) ->
                                                      ],
                     N <- Cores
                ],
-               mria_rlog_props:all_intercepted_commit_logs_received(ShardNode, Trace),
+               mria_rlog_props:all_intercepted_commit_logs_received(Trace),
                ok
        end).
 

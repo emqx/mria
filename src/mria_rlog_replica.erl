@@ -346,6 +346,11 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
          }),
     case mria_rlog:subscribe(Shard, Node, self(), Checkpoint) of
         {ok, NeedBootstrap, Agent, TableSpecs} ->
+            ?tp(notice, "Connected to the core node",
+                #{ shard => Shard
+                 , node  => Node
+                 , agent => self()
+                 }),
             link(Agent),
             {ok, NeedBootstrap, Node, Agent, TableSpecs};
         Err ->
