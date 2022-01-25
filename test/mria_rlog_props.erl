@@ -77,8 +77,7 @@ all_intercepted_commit_logs_received(Trace0) ->
                       , ?snk_meta := #{node := N}
                       } -> lists:member(N, NodesWithAgents);
                      _ -> true
-                 end
-            ],
+                 end],
     ?assert(
        ?strict_causality(
           #{ ?snk_kind    := mria_rlog_intercept_trans
@@ -86,12 +85,11 @@ all_intercepted_commit_logs_received(Trace0) ->
            } = _CommitRecord
          , #{ ?snk_kind   := rlog_realtime_op
             , activity_id := _Tid
-              , ops         := _ImportOps
+            , ops         := _ImportOps
             }
-          , length(ops_from_commit_record(_CommitRecord)) =:= length(_ImportOps)
+         , length(ops_from_commit_record(_CommitRecord)) =:= length(_ImportOps)
          , Trace
-         )
-      ),
+         )),
     ?assert(
        ?strict_causality(
           #{ ?snk_kind   := rlog_realtime_op
@@ -105,8 +103,7 @@ all_intercepted_commit_logs_received(Trace0) ->
             , tid        := _Tid
             }
          , Trace0
-         )
-      ),
+         )),
     ok.
 
 ops_from_commit_record(#{ ram_copies := Ram
