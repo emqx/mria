@@ -26,6 +26,7 @@
 -export([start_link/0,
          notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
          notify_core_node_up/2, notify_core_node_down/1, get_core_node/2,
+         notify_core_intercept_trans/2,
 
          upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
@@ -52,6 +53,7 @@
 -define(core_node, core_node).
 
 -define(stats_tab, mria_rlog_stats_tab).
+-define(core_intercept, core_intercept).
 -define(replicant_state, replicant_state).
 -define(replicant_import, replicant_import).
 -define(replicant_replayq_len, replicant_replayq_len).
@@ -107,6 +109,10 @@ notify_core_node_up(Shard, Node) ->
 -spec notify_core_node_down(mria_rlog:shard()) -> ok.
 notify_core_node_down(Shard) ->
     do_notify_down(?core_node, Shard).
+
+-spec notify_core_intercept_trans(mria_rlog:shard(), _SeqNo :: integer()) -> ok.
+notify_core_intercept_trans(Shard, SeqNo) ->
+    set_stat(Shard, ?core_intercept, SeqNo).
 
 -spec notify_agent_connect(mria_rlog:shard(), node(), pid()) -> ok.
 notify_agent_connect(Shard, ReplicantNode, AgentPid) ->
@@ -204,9 +210,9 @@ get_shard_stats(Shard) ->
 notify_replicant_state(Shard, State) ->
     set_stat(Shard, ?replicant_state, State).
 
--spec notify_replicant_import_trans(mria_rlog:shard(), erlang:timestamp()) -> ok.
-notify_replicant_import_trans(Shard, Timestamp) ->
-    set_stat(Shard, ?replicant_import, Timestamp).
+-spec notify_replicant_import_trans(mria_rlog:shard(), _SeqNo :: integer()) -> ok.
+notify_replicant_import_trans(Shard, SeqNo) ->
+    set_stat(Shard, ?replicant_import, SeqNo).
 
 -spec notify_replicant_replayq_len(mria_rlog:shard(), integer()) -> ok.
 notify_replicant_replayq_len(Shard, N) ->

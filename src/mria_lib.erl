@@ -87,7 +87,6 @@
 -type tlog_entry() :: { _Sender    :: pid()
                       , _SeqNo     :: integer()
                       , _Tid       :: {tid, term(), term()} | {dirty, term()}
-                      , _Timestamp :: erlang:timestamp()
                       , _Tx        :: [tx()]
                       }.
 
