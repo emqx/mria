@@ -632,23 +632,7 @@ t_mnesia_post_commit_hook(_) ->
        #{timetrap => 30000},
        try
            Nodes = [_N1, _N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
-           lists:foreach(
-             fun({TableName, StorageType}) ->
-                     {[ok, ok, ok, ok], []} =
-                         rpc:multicall(Nodes, mria, create_table,
-                                       [ TableName
-                                       , [ {storage, StorageType}
-                                         , {rlog_shard, test_shard}
-                                         , {record_name, kv_tab}
-                                         , {attributes, record_info(fields, kv_tab)}
-                                         ]
-                                       ])
-             end,
-             [ {kv_tab1, disc_copies}
-             , {kv_tab2, disc_only_copies}
-             , {kv_tab3, ram_copies}
-             , {kv_tab4, rocksdb_copies}
-             ]),
+           ok = create_persistence_type_test_tables(Nodes),
            mria_mnesia_test_util:wait_tables(Nodes),
            %% write some records starting on one of the replicas
            {atomic, _} = rpc:call(N3, mria, transaction,
@@ -666,20 +650,8 @@ t_mnesia_post_commit_hook(_) ->
            ok = rpc:call(N3, mria, dirty_write, [kv_tab4, {kv_tab, dw4, dw4}]),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            %% other replica should get updates
-           {atomic, Res} = rpc:call(N4, mria, transaction,
-                                    [test_shard,
-                                     fun() ->
-                                             [#kv_tab{val = V1}] = mnesia:read(kv_tab1, w1),
-                                             [#kv_tab{val = V2}] = mnesia:read(kv_tab2, w2),
-                                             [#kv_tab{val = V3}] = mnesia:read(kv_tab3, w3),
-                                             [#kv_tab{val = V4}] = mnesia:read(kv_tab4, w4),
-                                             [#kv_tab{val = V5}] = mnesia:read(kv_tab1, dw1),
-                                             [#kv_tab{val = V6}] = mnesia:read(kv_tab2, dw2),
-                                             [#kv_tab{val = V7}] = mnesia:read(kv_tab3, dw3),
-                                             [#kv_tab{val = V8}] = mnesia:read(kv_tab4, dw4),
-                                             {V1, V2, V3, V4, V5, V6, V7, V8}
-                                     end]),
-           ?assertEqual({w1, w2, w3, w4, dw1, dw2, dw3, dw4}, Res),
+           ReplicantNodes = [N3, N4],
+           compare_persistence_type_shard_contents(ReplicantNodes),
            Nodes
        after
            mria_ct:teardown_cluster(Cluster)
@@ -763,6 +735,48 @@ do_cluster_benchmark(#{ backend    := Backend
     after
         mria_ct:teardown_cluster(Cluster)
     end.
+
+create_persistence_type_test_tables(Nodes) ->
+    Success = lists:duplicate(length(Nodes), ok),
+    lists:foreach(
+      fun({TableName, StorageType}) ->
+              {Success, []} =
+                  rpc:multicall(Nodes, mria, create_table,
+                                [ TableName
+                                , [ {storage, StorageType}
+                                  , {rlog_shard, test_shard}
+                                  , {record_name, kv_tab}
+                                  , {attributes, record_info(fields, kv_tab)}
+                                  ]
+                                ])
+      end,
+      [ {kv_tab1, disc_copies}
+      , {kv_tab2, disc_only_copies}
+      , {kv_tab3, ram_copies}
+      , {kv_tab4, rocksdb_copies}
+      ]).
+
+compare_persistence_type_shard_contents(ReplicantNodes) ->
+    lists:foreach(
+      fun(ReplicantNode) ->
+              ct:pal("checking shard contents in replicant ~p~n", [ReplicantNode]),
+              {atomic, Res} =
+                  rpc:call(ReplicantNode, mria, transaction,
+                           [test_shard,
+                            fun() ->
+                                    [#kv_tab{val = V1}] = mnesia:read(kv_tab1, w1),
+                                    [#kv_tab{val = V2}] = mnesia:read(kv_tab2, w2),
+                                    [#kv_tab{val = V3}] = mnesia:read(kv_tab3, w3),
+                                    [#kv_tab{val = V4}] = mnesia:read(kv_tab4, w4),
+                                    [#kv_tab{val = V5}] = mnesia:read(kv_tab1, dw1),
+                                    [#kv_tab{val = V6}] = mnesia:read(kv_tab2, dw2),
+                                    [#kv_tab{val = V7}] = mnesia:read(kv_tab3, dw3),
+                                    [#kv_tab{val = V8}] = mnesia:read(kv_tab4, dw4),
+                                    {V1, V2, V3, V4, V5, V6, V7, V8}
+                            end]),
+              ?assertEqual({w1, w2, w3, w4, dw1, dw2, dw3, dw4}, Res)
+      end,
+      ReplicantNodes).
 
 assert_create_table_commit_record(Trace, Node, Cores, Name, PersistenceType) ->
     ct:pal("checking create table commit record for node ~p, table ~p~n",
