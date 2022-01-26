@@ -40,7 +40,7 @@
         ]).
 
 %% Internal exports
--export([do_bootstrap/2, do_probe/1]).
+-export([do_bootstrap/2, do_probe/1, get_agents/1]).
 
 -export_type([checkpoint/0]).
 
@@ -183,6 +183,8 @@ handle_call({bootstrap, Subscriber}, _From, State) ->
     {reply, {ok, Pid}, State};
 handle_call(probe, _From, State) ->
     {reply, true, State};
+handle_call(get_agents, _From, State = #s{agents = Agents}) ->
+    {reply, Agents, State};
 handle_call(Call, _From, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
 
@@ -247,6 +249,14 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
         _ ->
             {noreply, St0}
     end.
+
+%%================================================================================
+%% Internal exports (testing and debugging)
+%%================================================================================
+
+-spec get_agents(mria_rlog:shard()) -> [pid()].
+get_agents(Shard) ->
+    gen_server:call(Shard, get_agents, infinity).
 
 %%================================================================================
 %% Internal exports (gen_rpc)

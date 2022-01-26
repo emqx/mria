@@ -20,7 +20,7 @@
 
 -export([ replicant_no_restarts/1
         , replicant_bootstrap_stages/2
-        , all_intercepted_commit_logs_received/1
+        , all_intercepted_commit_logs_received/2
         , all_batches_received/1
         , counter_import_check/3
         , no_tlog_gaps/1
@@ -58,11 +58,10 @@ replicant_bootstrap_stages(Node, Trace0) ->
               ).
 
 %% Check that all commit logs intercepted are received by an agent
-all_intercepted_commit_logs_received(Trace0) ->
+all_intercepted_commit_logs_received(Trace0, NodesWithAgents) ->
     %% we consider only core nodes that have following agents, as only
     %% those have a matching effect for the intercept event.
-    NodesWithAgents =
-        lists:usort([Node || #{node := Node} <- ?of_kind("Connected to the core node", Trace0)]),
+    ct:pal("nodes with agents: ~p~n", [NodesWithAgents]),
     Trace = [ Event
               || Event = #{?snk_kind := Kind} <- Trace0,
                  lists:member(Kind, [ mria_rlog_intercept_trans
