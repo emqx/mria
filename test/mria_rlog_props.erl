@@ -64,15 +64,13 @@ all_intercepted_commit_logs_received(Trace0) ->
     NodesWithAgents =
         lists:usort([Node || #{node := Node} <- ?of_kind("Connected to the core node", Trace0)]),
     Trace = [ Event
-              || Event <- ?of_kind([ mria_rlog_intercept_trans
-                                   , rlog_realtime_op
-                                   ], Trace0),
+              || Event = #{?snk_kind := Kind} <- Trace0,
+                 lists:member(Kind, [ mria_rlog_intercept_trans
+                                    , rlog_realtime_op
+                                    ]),
                  case Event of
                      #{schema_ops := [_ | _]} -> false;
                      #{ram_copies := [{{mria_schema, _}, _, _} | _]} -> false;
-                     _ -> true
-                 end,
-                 case Event of
                      #{ ?snk_kind := mria_rlog_intercept_trans
                       , ?snk_meta := #{node := N}
                       } -> lists:member(N, NodesWithAgents);
