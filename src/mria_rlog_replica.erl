@@ -346,7 +346,6 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
             ?tp(notice, "Connected to the core node",
                 #{ shard => Shard
                  , node  => Node
-                 , agent => self()
                  }),
             link(Agent),
             {ok, NeedBootstrap, Node, Agent, TableSpecs};
