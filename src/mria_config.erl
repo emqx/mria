@@ -145,11 +145,15 @@ callback(Name) ->
 
 -spec consistency_check() -> ok.
 consistency_check() ->
-    case {backend(), role()} of
-        {mnesia, replicant} ->
+    case {backend(), role(), otp_is_compatible()} of
+        {mnesia, replicant, _} ->
             ?LOG(critical, "Configuration error: cannot use mnesia DB "
                            "backend on the replicant node", []),
             error(unsupported_backend);
+        {rlog, _, false} ->
+            ?LOG(critical, "Configuration error: cannot use mria DB "
+                           "backend with this version of Erlang/OTP", []),
+            error(unsupported_otp_version);
          _ ->
             ok
     end.
@@ -204,6 +208,14 @@ make_shard_match_spec(Tables) ->
      , []
      , ['$_']
      } || Table <- Tables].
+
+-spec otp_is_compatible() -> boolean().
+otp_is_compatible() ->
+    try mnesia_hook:module_info() of
+        _ -> true
+    catch
+        error:undef -> false
+    end.
 
 -ifdef(TEST).
 

@@ -20,6 +20,7 @@
 
 -export([ replicant_no_restarts/1
         , replicant_bootstrap_stages/2
+        , all_intercepted_commit_logs_received/2
         , all_batches_received/1
         , counter_import_check/3
         , no_tlog_gaps/1
@@ -55,6 +56,60 @@ replicant_bootstrap_stages(Node, Trace0) ->
               , #{?snk_kind := state_change, to := normal,       ?snk_meta := #{pid := _Pid}}
               , Trace
               ).
+
+%% Check that all commit logs intercepted are received by an agent
+all_intercepted_commit_logs_received(Trace0, NodesWithAgents) ->
+    %% we consider only core nodes that have following agents, as only
+    %% those have a matching effect for the intercept event.
+    ct:pal("nodes with agents: ~p~n", [NodesWithAgents]),
+    Trace = [ Event
+              || Event = #{?snk_kind := Kind} <- Trace0,
+                 lists:member(Kind, [ mria_rlog_intercept_trans
+                                    , rlog_realtime_op
+                                    ]),
+                 case Event of
+                     #{schema_ops := [_ | _]} -> false;
+                     #{ram_copies := [{{mria_schema, _}, _, _} | _]} -> false;
+                     #{ ?snk_kind := mria_rlog_intercept_trans
+                      , ?snk_meta := #{node := N}
+                      } -> lists:member(N, NodesWithAgents);
+                     _ -> true
+                 end],
+    ?assert(
+       ?strict_causality(
+          #{ ?snk_kind    := mria_rlog_intercept_trans
+           , tid          := _Tid
+           } = _CommitRecord
+         , #{ ?snk_kind   := rlog_realtime_op
+            , activity_id := _Tid
+            , ops         := _ImportOps
+            }
+         , length(ops_from_commit_record(_CommitRecord)) =:= length(_ImportOps)
+         , Trace
+         )),
+    ?assert(
+       ?strict_causality(
+          #{ ?snk_kind   := rlog_realtime_op
+           , ?snk_meta   := #{subscriber := {_ReplicaNode, _ReplicaPid}}
+           , activity_id := _Tid
+           }
+         , #{ ?snk_kind  := rlog_replica_import_trans
+            , ?snk_meta  := #{ node := _ReplicaNode
+                             , pid  := _ReplicaPid
+                             }
+            , tid        := _Tid
+            }
+         , Trace0
+         )),
+    ok.
+
+ops_from_commit_record(#{ ram_copies := Ram
+                        , disc_copies := Disc
+                        , disc_only_copies := DiscOnly
+                        , ext := ExtCopies
+                        }) ->
+    ExtOps = [Op || {ext_copies, Ops} <- ExtCopies, Op <- Ops],
+    Ram ++ Disc ++ DiscOnly ++ ExtOps.
 
 %% Check that the replicant processed all batches sent by its agent
 all_batches_received(Trace0) ->

@@ -18,7 +18,6 @@
 -module(mria_lib).
 
 -export([ approx_checkpoint/0
-        , txid_to_checkpoint/1
         , make_key/1
         , import_batch/2
 
@@ -48,7 +47,7 @@
 %% Internal exports
 -export([ transactional_wrapper/3
         , local_transactional_wrapper/2
-        , dirty_wrapper/4
+        , dirty_wrapper/3
         ]).
 
 -export_type([ tlog_entry/0
@@ -85,10 +84,10 @@
 
 -type rlog() :: #rlog{}.
 
--type tlog_entry() :: { _Sender :: pid()
-                      , _SeqNo  :: integer()
-                      , _Key    :: txid()
-                      , _Tx     :: [tx()]
+-type tlog_entry() :: { _Sender    :: pid()
+                      , _SeqNo     :: integer()
+                      , _Tid       :: {tid, term(), term()} | {dirty, term()}
+                      , _Tx        :: [tx()]
                       }.
 
 -type subscriber() :: {node(), pid()}.
@@ -102,10 +101,6 @@
 -spec approx_checkpoint() -> mria_rlog_server:checkpoint().
 approx_checkpoint() ->
     erlang:system_time(millisecond).
-
--spec txid_to_checkpoint(mria_lib:txid()) -> mria_rlog_server:checkpoint().
-txid_to_checkpoint({Checkpoint, _}) ->
-    Checkpoint.
 
 %% Log key should be globally unique.
 %%
@@ -269,12 +264,12 @@ call_backend_rw_dirty(Function, Table, Args) ->
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
-                    dirty_wrapper(Shard, Function, Table, Args);
+                    dirty_wrapper(Function, Table, Args);
                 false ->
                     %% Run dirty operation via RPC:
                     Core = find_upstream_node(Shard),
                     mria_lib:rpc_call({Core, Shard}, ?MODULE, dirty_wrapper,
-                                      [Shard, Function, Table, Args])
+                                      [Function, Table, Args])
             end
     end.
 
@@ -284,45 +279,27 @@ call_backend_rw_dirty(Function, Table, Args) ->
 transactional_wrapper(Shard, Fun, Args) ->
     ensure_no_transaction(),
     mria_rlog:wait_for_shards([Shard], infinity),
-    TxFun =
-        fun() ->
-                Result = apply(mria_activity, Fun, Args),
-                {TID, TxStore} = get_internals(),
-                ensure_no_ops_outside_shard(TxStore, Shard),
-                Key = mria_lib:make_key(TID),
-                Ops = dig_ops_for_shard(TxStore, Shard),
-                mria_rlog_tab:write(Shard, Key, Ops),
-                Result
-        end,
-    mnesia:transaction(TxFun).
+    mnesia:transaction(fun() ->
+                               Res = apply(mria_activity, Fun, Args),
+                               {_TID, TxStore} = get_internals(),
+                               ensure_no_ops_outside_shard(TxStore, Shard),
+                               Res
+                       end).
 
 -spec local_transactional_wrapper(atom(), list()) -> mria:t_result(term()).
 local_transactional_wrapper(Activity, Args) ->
     ensure_no_transaction(),
-    TxFun =
-        fun() ->
-                Result = apply(mria_activity, Activity, Args),
-                {_TID, TxStore} = get_internals(),
-                ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
-                Result
-        end,
-    mnesia:transaction(TxFun).
+    mnesia:transaction(fun() ->
+                               Res = apply(mria_activity, Activity, Args),
+                               {_TID, TxStore} = get_internals(),
+                               ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
+                               Res
+                       end).
 
 %% @doc Perform a dirty operation and log changes.
--spec dirty_wrapper(mria_rlog:shard(), atom(), mria:table(), list()) -> ok.
-dirty_wrapper(Shard, Fun, Table, Args) ->
-    Ret = apply(mnesia, Fun, [Table|Args]),
-    case Shard of
-        ?LOCAL_CONTENT_SHARD ->
-            Ret;
-        Shard ->
-            %% This may look extremely inconsistent, and it is. But so
-            %% are dirty operations in mnesia...
-            OP = {dirty, Fun, [Table|Args]},
-            Key = mria_lib:make_key(undefined),
-            mnesia:dirty_write(Shard, #rlog{key = Key, ops = OP}),
-            Ret
-    end.
+-spec dirty_wrapper(atom(), mria:table(), list()) -> ok.
+dirty_wrapper(Fun, Table, Args) ->
+    apply(mnesia, Fun, [Table|Args]).
 
 -spec get_internals() -> {mria_lib:mnesia_tid(), ets:tab()}.
 get_internals() ->
@@ -389,10 +366,6 @@ find_upstream_node(Shard) ->
         {ok, Node} -> Node;
         timeout    -> error(transaction_timeout)
     end.
-
-dig_ops_for_shard(TxStore, Shard) ->
-    #{match_spec := MS} = mria_config:shard_config(Shard),
-    ets:select(TxStore, MS).
 
 ensure_no_transaction() ->
     case mnesia:get_activity_id() of

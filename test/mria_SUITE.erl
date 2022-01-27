@@ -211,7 +211,7 @@ t_rlog_smoke_test(_) ->
            ?force_ordering(#{?snk_kind := trans_gen_counter_update, value := 5},
                            #{?snk_kind := state_change, to := disconnected}),
            %% 2. Make sure the rest of transactions are produced after the agent starts:
-           ?force_ordering(#{?snk_kind := subscribe_realtime_stream},
+           ?force_ordering(#{?snk_kind := rlog_agent_started},
                            #{?snk_kind := trans_gen_counter_update, value := 10}),
            %% 3. Make sure transactions are sent during TLOG replay: (TODO)
            ?force_ordering(#{?snk_kind := state_change, to := bootstrap},
@@ -625,6 +625,71 @@ t_rlog_schema(_) ->
                             ))
        end).
 
+%% Test post commit hook is called on core nodes and replicated.
+t_mnesia_post_commit_hook(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           ok = create_persistence_type_test_tables(Nodes),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           %% get the list of nodes with agents for use in the check stage
+           NodesWithAgents =
+               [ N || N <- [N1, N2],
+                      length(rpc:call(N, mria_rlog_server, get_agents, [test_shard])) > 0],
+           %% write some records starting on one of the replicas
+           {atomic, _} = rpc:call(N3, mria, transaction,
+                                  [test_shard,
+                                   fun() ->
+                                           mnesia:write(kv_tab1, {kv_tab, w1, w1}, write),
+                                           mnesia:write(kv_tab2, {kv_tab, w2, w2}, write),
+                                           mnesia:write(kv_tab3, {kv_tab, w3, w3}, write),
+                                           mnesia:write(kv_tab4, {kv_tab, w4, w4}, write),
+                                           ok
+                                   end]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab1, {kv_tab, dw1, dw1}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab2, {kv_tab, dw2, dw2}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab3, {kv_tab, dw3, dw3}]),
+           ok = rpc:call(N3, mria, dirty_write, [kv_tab4, {kv_tab, dw4, dw4}]),
+           mria_mnesia_test_util:wait_full_replication(Cluster),
+           %% other replica should get updates
+           ReplicantNodes = [N3, N4],
+           compare_persistence_type_shard_contents(ReplicantNodes),
+           {NodesWithAgents, Nodes}
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       fun({NodesWithAgents, [N1, N2, _N3, _N4]}, Trace) ->
+               Cores = [N1, N2],
+               [ assert_create_table_commit_record(Trace, N, Cores, Table, PersistenceType)
+                 || {Table, PersistenceType} <- [ {kv_tab1, disc_copies}
+                                                , {kv_tab2, disc_only_copies}
+                                                , {kv_tab3, ram_copies}
+                                                , {kv_tab4, rocksdb_copies}
+                                                ],
+                    N <- Cores
+               ],
+               [ assert_transaction_commit_record(Trace, N, Table, PersistenceType, Val)
+                 || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, w1}
+                                                     , {kv_tab2, disc_only_copies, w2}
+                                                     , {kv_tab3, ram_copies, w3}
+                                                     , {kv_tab4, rocksdb_copies, w4}
+                                                     ],
+                    N <- Cores
+               ],
+               [ assert_dirty_commit_record(Trace, N, Table, PersistenceType, Val)
+                 || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, dw1}
+                                                     , {kv_tab2, disc_only_copies, dw2}
+                                                     , {kv_tab3, ram_copies, dw3}
+                                                     , {kv_tab4, rocksdb_copies, dw4}
+                                                     ],
+                    N <- Cores
+               ],
+               mria_rlog_props:all_intercepted_commit_logs_received(Trace, NodesWithAgents),
+               ok
+       end).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10
@@ -674,3 +739,134 @@ do_cluster_benchmark(#{ backend    := Backend
     after
         mria_ct:teardown_cluster(Cluster)
     end.
+
+create_persistence_type_test_tables(Nodes) ->
+    Success = lists:duplicate(length(Nodes), ok),
+    lists:foreach(
+      fun({TableName, StorageType}) ->
+              {Success, []} =
+                  rpc:multicall(Nodes, mria, create_table,
+                                [ TableName
+                                , [ {storage, StorageType}
+                                  , {rlog_shard, test_shard}
+                                  , {record_name, kv_tab}
+                                  , {attributes, record_info(fields, kv_tab)}
+                                  ]
+                                ])
+      end,
+      [ {kv_tab1, disc_copies}
+      , {kv_tab2, disc_only_copies}
+      , {kv_tab3, ram_copies}
+      , {kv_tab4, rocksdb_copies}
+      ]).
+
+compare_persistence_type_shard_contents(ReplicantNodes) ->
+    lists:foreach(
+      fun(ReplicantNode) ->
+              ct:pal("checking shard contents in replicant ~p~n", [ReplicantNode]),
+              {atomic, Res} =
+                  rpc:call(ReplicantNode, mria, transaction,
+                           [test_shard,
+                            fun() ->
+                                    [#kv_tab{val = V1}] = mnesia:read(kv_tab1, w1),
+                                    [#kv_tab{val = V2}] = mnesia:read(kv_tab2, w2),
+                                    [#kv_tab{val = V3}] = mnesia:read(kv_tab3, w3),
+                                    [#kv_tab{val = V4}] = mnesia:read(kv_tab4, w4),
+                                    [#kv_tab{val = V5}] = mnesia:read(kv_tab1, dw1),
+                                    [#kv_tab{val = V6}] = mnesia:read(kv_tab2, dw2),
+                                    [#kv_tab{val = V7}] = mnesia:read(kv_tab3, dw3),
+                                    [#kv_tab{val = V8}] = mnesia:read(kv_tab4, dw4),
+                                    {V1, V2, V3, V4, V5, V6, V7, V8}
+                            end]),
+              ?assertEqual({w1, w2, w3, w4, dw1, dw2, dw3, dw4}, Res)
+      end,
+      ReplicantNodes).
+
+assert_create_table_commit_record(Trace, Node, Cores, Name, PersistenceType) ->
+    ct:pal("checking create table commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [ #{ schema_ops := [{op, create_table, Props}]
+       }
+    ] = [ Event
+          || #{ ?snk_meta := #{node := Node0}
+              , schema_ops := [{op, create_table, Props}]
+              } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+             Node0 =:= Node,
+             lists:keyfind(name, 1, Props) =:= {name, Name}
+        ],
+    NodeCopies = lists:sort([N || {PT, Ns} <- Props, PT =:= PersistenceType, N <- Ns]),
+    ?assertEqual(Cores, NodeCopies).
+
+assert_transaction_commit_record(Trace, Node, Name, rocksdb_copies, Value) ->
+    ct:pal("checking transaction commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [Event] = [ Event
+                || #{ ?snk_meta := #{node := Node0}
+                    , ext := [{ ext_copies
+                              , [{{ext, rocksdb_copies, _Module}, {{Tab, Val}, _, write}}]
+                              }]
+                    } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+                   Node0 =:= Node,
+                   Tab =:= Name,
+                   Val =:= Value],
+    ?assertMatch(
+       #{ ext := [{ ext_copies
+                  , [{ {ext, rocksdb_copies, _Module}
+                     , {{Name, Value}, {kv_tab, Value, Value}, write}
+                     }]
+                  }]
+       , tid := {tid, _, _}
+       },
+       Event);
+assert_transaction_commit_record(Trace, Node, Name, PersistenceType, Value) ->
+    ct:pal("checking transaction commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [Event] = [ Event
+                || #{ ?snk_meta := #{node := Node0}
+                    , PersistenceType := [{{Tab, Val}, _, write}]
+                    } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+                   Node0 =:= Node,
+                   Tab =:= Name,
+                   Val =:= Value],
+    ?assertMatch(
+      #{ PersistenceType := [{{Name, Value}, {kv_tab, Value, Value}, write}]
+       , tid := {tid, _, _}
+       },
+       Event).
+
+assert_dirty_commit_record(Trace, Node, Name, rocksdb_copies, Value) ->
+    ct:pal("checking dirty commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [Event] = [ Event
+                || #{ ?snk_meta := #{node := Node0}
+                    , ext := [{ ext_copies
+                              , [{{ext, rocksdb_copies, _Module}, {{Tab, Val}, _, write}}]
+                              }]
+                    } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+                   Node0 =:= Node,
+                   Tab =:= Name,
+                   Val =:= Value],
+    ?assertMatch(
+       #{ ext := [{ ext_copies
+                  , [{ {ext, rocksdb_copies, _Module}
+                     , {{Name, Value}, {kv_tab, Value, Value}, write}
+                     }]
+                  }]
+        , tid := {dirty, _}
+        },
+       Event);
+assert_dirty_commit_record(Trace, Node, Name, PersistenceType, Value) ->
+    ct:pal("checking dirty commit record for node ~p, table ~p~n",
+           [Node, Name]),
+    [Event] = [ Event
+                || #{ ?snk_meta := #{node := Node0}
+                    , PersistenceType := [{{Tab, Val}, _, write}]
+                    } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
+                   Node0 =:= Node,
+                   Tab =:= Name,
+                   Val =:= Value],
+    ?assertMatch(
+      #{ PersistenceType := [{{Name, Value}, {kv_tab, Value, Value}, write}]
+       , tid := {dirty, _}
+       },
+       Event).

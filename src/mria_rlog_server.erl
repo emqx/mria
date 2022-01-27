@@ -26,6 +26,7 @@
         , subscribe/3
         , bootstrap_me/2
         , probe/2
+        , dispatch/3
         ]).
 
 %% gen_server callbacks
@@ -39,7 +40,7 @@
         ]).
 
 %% Internal exports
--export([do_bootstrap/2, do_probe/1]).
+-export([do_bootstrap/2, do_probe/1, get_agents/1]).
 
 -export_type([checkpoint/0]).
 
@@ -59,6 +60,7 @@
         , bootstrapper_sup    :: pid()
         , tlog_replay         :: integer()
         , bootstrap_threshold :: integer()
+        , agents = []         :: [pid()]
         }).
 
 %%================================================================================
@@ -96,12 +98,19 @@ bootstrap_me(RemoteNode, Shard) ->
         Err       -> {error, Err}
     end.
 
+%% Called from mnesia post_commit hook:
+-spec dispatch(mria_rlog:shard(), _Tid, _Commit) -> ok.
+dispatch(Shard, Tid, Commit) ->
+    Shard ! {trans, Tid, Commit},
+    ok.
+
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
 
 init({Parent, Shard}) ->
     process_flag(trap_exit, true),
+    process_flag(message_queue_data, off_heap),
     logger:set_process_metadata(#{ domain => [mria, rlog, server]
                                  , shard => Shard
                                  }),
@@ -110,8 +119,16 @@ init({Parent, Shard}) ->
 
 handle_info({mnesia_table_event, {write, Record, ActivityId}}, St) ->
     handle_mnesia_event(Record, ActivityId, St);
-handle_info({'DOWN', _MRef, process, Pid, _Info}, St) ->
+handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     mria_status:notify_agent_disconnect(Pid),
+    St = St0#s{agents = lists:delete(Pid, Agents)},
+    {noreply, St};
+handle_info({trans, Tid, Commit}, St = #s{shard = Shard, agents = Agents}) ->
+    lists:foreach(
+      fun(Agent) ->
+              Agent ! {trans, Shard, Tid, Commit}
+      end,
+      Agents),
     {noreply, St};
 handle_info(Info, St) ->
     ?tp(warning, "Received unknown event",
@@ -143,12 +160,13 @@ handle_continue(post_init, {Parent, Shard}) ->
 handle_cast(_Cast, St) ->
     {noreply, St}.
 
-handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
+handle_call({subscribe, Subscriber, Checkpoint}, _From, State0) ->
     #s{ bootstrap_threshold = BootstrapThreshold
       , tlog_replay         = TlogReplay
       , shard               = Shard
       , agent_sup           = AgentSup
-      } = State,
+      , agents              = Agents
+      } = State0,
     {NeedBootstrap, ReplaySince} = needs_bootstrap( BootstrapThreshold
                                                   , TlogReplay
                                                   , Checkpoint
@@ -157,12 +175,16 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State) ->
     monitor(process, Pid),
     mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
     TableSpecs = mria_schema:table_specs_of_shard(Shard),
+    State = State0#s{ agents = [Pid | Agents]
+                    },
     {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->
     Pid = maybe_start_child(State#s.bootstrapper_sup, [Subscriber]),
     {reply, {ok, Pid}, State};
 handle_call(probe, _From, State) ->
     {reply, true, State};
+handle_call(get_agents, _From, State = #s{agents = Agents}) ->
+    {reply, Agents, State};
 handle_call(Call, _From, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
 
@@ -227,6 +249,14 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
         _ ->
             {noreply, St0}
     end.
+
+%%================================================================================
+%% Internal exports (testing and debugging)
+%%================================================================================
+
+-spec get_agents(mria_rlog:shard()) -> [pid()].
+get_agents(Shard) ->
+    gen_server:call(Shard, get_agents, infinity).
 
 %%================================================================================
 %% Internal exports (gen_rpc)

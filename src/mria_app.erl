@@ -29,6 +29,7 @@
 start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{}),
     mria_config:load_config(),
+    mria_rlog:init(),
     ?tp(notice, "Starting mnesia", #{}),
     mria_mnesia:ensure_schema(),
     mria_mnesia:ensure_started(),
