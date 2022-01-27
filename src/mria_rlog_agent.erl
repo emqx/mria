@@ -29,6 +29,9 @@
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
 
+%% Internal exports
+-export([get_subscriber/1]).
+
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
@@ -98,6 +101,8 @@ handle_event(info, {trans, Shard, Tid, Commit}, ?normal, D = #d{shard = Shard}) 
 %% Common actions:
 handle_event({call, From}, stop, State, D) ->
     handle_stop(State, From, D);
+handle_event({call, From}, get_subscriber, _State, #d{subscriber = Subscriber}) ->
+    {keep_state_and_data, [{reply, From, Subscriber}]};
 handle_event(enter, OldState, State, D) ->
     handle_state_trans(OldState, State, D);
 handle_event(EventType, Event, State, D) ->
@@ -165,3 +170,11 @@ handle_mnesia_event({Shard, Commit}, ActivityId, D = #d{shard = Shard}) ->
     ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
     mria_status:notify_core_intercept_trans(Shard, SeqNo),
     {keep_state, D#d{seqno = SeqNo + 1}}.
+
+%%================================================================================
+%% Internal exports (testing and debugging)
+%%================================================================================
+
+-spec get_subscriber(pid()) -> pid().
+get_subscriber(Agent) ->
+    gen_statem:call(Agent, get_subscriber, infinity).

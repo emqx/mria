@@ -634,10 +634,18 @@ t_mnesia_post_commit_hook(_) ->
            Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
            ok = create_persistence_type_test_tables(Nodes),
            mria_mnesia_test_util:wait_tables(Nodes),
-           %% get the list of nodes with agents for use in the check stage
-           NodesWithAgents =
-               [ N || N <- [N1, N2],
-                      length(rpc:call(N, mria_rlog_server, get_agents, [test_shard])) > 0],
+           %% get the list of pairs of nodes with agents for use in
+           %% the check stage.  we don't filter the trace because
+           %% there might be reconnection noise there.
+           Cores = [N1, N2],
+           AgentReplicantNodePairs =
+               lists:usort(
+                 [ {UpstreamNode, DownstreamNode}
+                   || UpstreamNode <- Cores,
+                      Agents <- [rpc:call(UpstreamNode, mria_rlog_server, get_agents, [test_shard])],
+                      Agent <- Agents,
+                      {DownstreamNode, _SubscriberPid} <-
+                          [rpc:call(UpstreamNode, mria_rlog_agent, get_subscriber, [Agent])]]),
            %% write some records starting on one of the replicas
            {atomic, _} = rpc:call(N3, mria, transaction,
                                   [test_shard,
@@ -656,11 +664,12 @@ t_mnesia_post_commit_hook(_) ->
            %% other replica should get updates
            ReplicantNodes = [N3, N4],
            compare_persistence_type_shard_contents(ReplicantNodes),
-           {NodesWithAgents, Nodes}
+           ?tp(test_end, #{}),
+           {AgentReplicantNodePairs, Nodes}
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun({NodesWithAgents, [N1, N2, _N3, _N4]}, Trace) ->
+       fun({AgentReplicantNodePairs, [N1, N2, _N3, _N4]}, Trace) ->
                Cores = [N1, N2],
                [ assert_create_table_commit_record(Trace, N, Cores, Table, PersistenceType)
                  || {Table, PersistenceType} <- [ {kv_tab1, disc_copies}
@@ -686,7 +695,7 @@ t_mnesia_post_commit_hook(_) ->
                                                      ],
                     N <- Cores
                ],
-               mria_rlog_props:all_intercepted_commit_logs_received(Trace, NodesWithAgents),
+               mria_rlog_props:all_intercepted_commit_logs_received(Trace, AgentReplicantNodePairs),
                ok
        end).
 
