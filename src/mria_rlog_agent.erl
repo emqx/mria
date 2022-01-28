@@ -24,7 +24,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/3, stop/1]).
+-export([start_link/4, stop/1]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
@@ -54,8 +54,8 @@
 %% API functions
 %%--------------------------------------------------------------------
 
-start_link(Shard, Subscriber, ReplaySince) ->
-    gen_statem:start_link(?MODULE, {Shard, Subscriber, ReplaySince}, []).
+start_link(Shard, Subscriber, ReplaySince, SeqNo) ->
+    gen_statem:start_link(?MODULE, {Shard, Subscriber, ReplaySince, SeqNo}, []).
 
 stop(Pid) ->
     try
@@ -73,8 +73,9 @@ stop(Pid) ->
 
 callback_mode() -> [handle_event_function, state_enter].
 
--spec init({mria_rlog:shard(), mria_lib:subscriber(), mria_lib:txid()}) -> {ok, state(), data()}.
-init({Shard, Subscriber, _ReplaySince}) ->
+-spec init({mria_rlog:shard(), mria_lib:subscriber(), mria_lib:txid(), integer()}) ->
+          {ok, state(), data()}.
+init({Shard, Subscriber, _ReplaySince, SeqNo}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain     => [mria, rlog, agent]
@@ -84,6 +85,7 @@ init({Shard, Subscriber, _ReplaySince}) ->
     D = #d{ shard          = Shard
           , subscriber     = Subscriber
           , push_mode      = mria_config:tlog_push_mode()
+          , seqno          = SeqNo
           },
     ?tp(info, rlog_agent_started,
         #{ shard => Shard

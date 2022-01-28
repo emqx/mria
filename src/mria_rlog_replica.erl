@@ -291,20 +291,22 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentS
         #{ node => node()
          }),
     case try_connect(Shard, Checkpoint) of
-        {ok, _BootstrapNeeded = true, Node, ConnPid, TableSpecs} ->
+        {ok, _BootstrapNeeded = true, Node, ConnPid, TableSpecs, SeqNo} ->
             D = #d{ shard            = Shard
                   , parent_sup       = ParentSup
                   , agent            = ConnPid
                   , remote_core_node = Node
+                  , next_batch_seqno = SeqNo
                   },
             post_connect(Shard, TableSpecs),
             {next_state, ?bootstrap, D};
-        {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs} ->
+        {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs, SeqNo} ->
             D = #d{ shard            = Shard
                   , parent_sup       = ParentSup
                   , agent            = ConnPid
                   , remote_core_node = Node
                   , checkpoint       = Checkpoint
+                  , next_batch_seqno = SeqNo
                   },
             post_connect(Shard, TableSpecs),
             {next_state, ?normal, D};
@@ -322,6 +324,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentS
                 , node()
                 , pid()
                 , [mria_schema:entry()]
+                , integer()
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
@@ -333,6 +336,7 @@ try_connect(Shard, Checkpoint) ->
                 , node()
                 , pid()
                 , [mria_schema:entry()]
+                , integer()
                 }
               | {error, term()}.
 try_connect([], _, _) ->
@@ -342,13 +346,13 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
         #{ node => Node
          }),
     case mria_rlog:subscribe(Shard, Node, self(), Checkpoint) of
-        {ok, NeedBootstrap, Agent, TableSpecs} ->
+        {ok, NeedBootstrap, Agent, TableSpecs, SeqNo} ->
             ?tp(notice, "Connected to the core node",
                 #{ shard => Shard
                  , node  => Node
                  }),
             link(Agent),
-            {ok, NeedBootstrap, Node, Agent, TableSpecs};
+            {ok, NeedBootstrap, Node, Agent, TableSpecs, SeqNo};
         Err ->
             ?tp(info, "Failed to connect to the core node",
                 #{ node => Node

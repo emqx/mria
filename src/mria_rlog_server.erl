@@ -61,6 +61,7 @@
         , tlog_replay         :: integer()
         , bootstrap_threshold :: integer()
         , agents = []         :: [pid()]
+        , seqno  = 0          :: integer()
         }).
 
 %%================================================================================
@@ -85,6 +86,7 @@ probe(Node, Shard) ->
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
           , [mria_schema:entry()]
+          , integer()
           }.
 subscribe(Shard, Subscriber, Checkpoint) ->
     gen_server:call(Shard, {subscribe, Subscriber, Checkpoint}, infinity).
@@ -123,12 +125,13 @@ handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     mria_status:notify_agent_disconnect(Pid),
     St = St0#s{agents = lists:delete(Pid, Agents)},
     {noreply, St};
-handle_info({trans, Tid, Commit}, St = #s{shard = Shard, agents = Agents}) ->
+handle_info({trans, Tid, Commit}, St0 = #s{shard = Shard, agents = Agents}) ->
     lists:foreach(
       fun(Agent) ->
               Agent ! {trans, Shard, Tid, Commit}
       end,
       Agents),
+    St = St0#s{seqno = St0#s.seqno + 1},
     {noreply, St};
 handle_info(Info, St) ->
     ?tp(warning, "Received unknown event",
@@ -165,18 +168,19 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State0) ->
       , shard               = Shard
       , agent_sup           = AgentSup
       , agents              = Agents
+      , seqno               = SeqNo
       } = State0,
     {NeedBootstrap, ReplaySince} = needs_bootstrap( BootstrapThreshold
                                                   , TlogReplay
                                                   , Checkpoint
                                                   ),
-    Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
+    Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince, SeqNo]),
     monitor(process, Pid),
     mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
     TableSpecs = mria_schema:table_specs_of_shard(Shard),
     State = State0#s{ agents = [Pid | Agents]
                     },
-    {reply, {ok, NeedBootstrap, Pid, TableSpecs}, State};
+    {reply, {ok, NeedBootstrap, Pid, TableSpecs, SeqNo}, State};
 handle_call({bootstrap, Subscriber}, _From, State) ->
     Pid = maybe_start_child(State#s.bootstrapper_sup, [Subscriber]),
     {reply, {ok, Pid}, State};
