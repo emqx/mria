@@ -631,21 +631,9 @@ t_mnesia_post_commit_hook(_) ->
     ?check_trace(
        #{timetrap => 30000},
        try
-           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           Nodes = [_N1, _N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
            ok = create_persistence_type_test_tables(Nodes),
            mria_mnesia_test_util:wait_tables(Nodes),
-           %% Get the list of pairs of nodes with agents for use in
-           %% the check stage.  We don't filter the trace because
-           %% there might be reconnection noise there.
-           Cores = [N1, N2],
-           AgentReplicantNodePairs =
-               lists:usort(
-                 [ {UpstreamNode, DownstreamNode}
-                   || UpstreamNode <- Cores,
-                      Agents <- [rpc:call(UpstreamNode, mria_rlog_server, get_agents, [test_shard])],
-                      Agent <- Agents,
-                      {DownstreamNode, _SubscriberPid} <-
-                          [rpc:call(UpstreamNode, mria_rlog_agent, get_subscriber, [Agent])]]),
            %% write some records starting on one of the replicas
            {atomic, _} = rpc:call(N3, mria, transaction,
                                   [test_shard,
@@ -665,11 +653,11 @@ t_mnesia_post_commit_hook(_) ->
            ReplicantNodes = [N3, N4],
            compare_persistence_type_shard_contents(ReplicantNodes),
            ?tp(test_end, #{}),
-           {AgentReplicantNodePairs, Nodes}
+           Nodes
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun({AgentReplicantNodePairs, [N1, N2, _N3, _N4]}, Trace) ->
+       fun([N1, N2, _N3, _N4], Trace) ->
                Cores = [N1, N2],
                [ assert_create_table_commit_record(Trace, N, Cores, Table, PersistenceType)
                  || {Table, PersistenceType} <- [ {kv_tab1, disc_copies}
@@ -695,7 +683,8 @@ t_mnesia_post_commit_hook(_) ->
                                                      ],
                     N <- Cores
                ],
-               mria_rlog_props:all_intercepted_commit_logs_received(Trace, AgentReplicantNodePairs),
+               {Trace1, _} = ?split_trace_at(test_end, Trace),
+               mria_rlog_props:all_intercepted_commit_logs_received(Trace1),
                ok
        end).
 
