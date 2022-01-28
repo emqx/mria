@@ -7,7 +7,17 @@ jobs:
     run_test_case:
         runs-on: ubuntu-latest
 
-        container: ghcr.io/emqx/emqx-builder/5.0-5:1.13.2-24.1.5-4-ubuntu20.04
+        strategy:
+          matrix:
+            os:
+              - ubuntu20.04
+            otp:
+              - 24.1.5-4
+            elixir:
+              - 1.13.2
+            arch:
+              - amd64
+        container: ghcr.io/emqx/emqx-builder/5.0-5:${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.os }}
 
         steps:
         - uses: actions/checkout@v1
@@ -16,6 +26,18 @@ jobs:
           run: |
             apt update
             apt install -y cmake
+
+        - name: Get deps git refs for cache
+          id: deps-refs
+          run: |
+            scripts/get-dep-refs.sh
+
+        - name: load rocksdb cache
+          uses: actions/cache@v2
+          with:
+            path: |
+              _build/default/lib/rocksdb/
+            key: ${{ matrix.os }}-${{ matrix.otp }}-${{ matrix.arch }}-${{ steps.deps-refs.outputs.DEP_ROCKSDB_REF }}
 
         - name: Compile
           run: |
