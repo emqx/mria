@@ -634,8 +634,8 @@ t_mnesia_post_commit_hook(_) ->
            Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
            ok = create_persistence_type_test_tables(Nodes),
            mria_mnesia_test_util:wait_tables(Nodes),
-           %% get the list of pairs of nodes with agents for use in
-           %% the check stage.  we don't filter the trace because
+           %% Get the list of pairs of nodes with agents for use in
+           %% the check stage.  We don't filter the trace because
            %% there might be reconnection noise there.
            Cores = [N1, N2],
            AgentReplicantNodePairs =
