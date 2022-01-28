@@ -165,3 +165,7 @@ handle_mnesia_event({Shard, Commit}, ActivityId, D = #d{shard = Shard}) ->
     ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
     mria_status:notify_core_intercept_trans(Shard, SeqNo),
     {keep_state, D#d{seqno = SeqNo + 1}}.
+
+%%================================================================================
+%% Internal exports (testing and debugging)
+%%================================================================================
