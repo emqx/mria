@@ -27,7 +27,7 @@
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
 
 %% Internal exports:
--export([do_push_tlog_entry/2, push_tlog_entry/4]).
+-export([do_push_tlog_entry/2, push_tlog_entry/4, import_batch/1]).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -59,7 +59,6 @@
         , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
         , next_batch_seqno = 0         :: integer()
         , replayq                      :: replayq:q() | undefined
-        , importer_worker              :: pid() | undefined
         }).
 
 -type data() :: #d{}.
@@ -156,20 +155,28 @@ push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
 
 %% @private Consume transactions from the core node
 -spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
-handle_tlog_entry(?normal, {Agent, SeqNo, _Tid, Transaction},
+handle_tlog_entry(?normal, {Agent, SeqNo, _Tid, Transactions},
                   D = #d{ agent            = Agent
                         , next_batch_seqno = SeqNo
-                        , importer_worker  = ImporterWorker
                         , shard            = Shard
                         }) ->
     %% Normal flow, transactions are applied directly to the replica:
     ?tp(rlog_replica_import_trans,
         #{ agent            => Agent
          , seqno            => SeqNo
-         , transaction      => Transaction
+         , transaction      => Transactions
          , tid              => _Tid
          }),
-    ok = mria_replica_importer_worker:import_batch(ImporterWorker, Transaction),
+    {Pid, Ref} = spawn_monitor(?MODULE, import_batch, [Transactions]),
+    receive
+        {'DOWN', Ref, process, Pid, normal} ->
+            ok;
+        {'DOWN', Ref, process, Pid, Reason} ->
+            exit({bad_import_result, Reason})
+    after
+        5_000 ->
+            exit(timeout)
+    end,
     %% statistic to give an estimate the replicant lag with respect to
     %% the core node.
     mria_status:notify_replicant_import_trans(Shard, SeqNo),
@@ -369,8 +376,7 @@ buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
     D#d{replayq = Q}.
 
 -spec enter_normal(data()) -> fsm_result().
-enter_normal(D = #d{shard = Shard, agent = Agent, parent_sup = ParentSup}) ->
-    ImporterWorker = mria_replicant_shard_sup:get_importer_worker(ParentSup),
+enter_normal(D = #d{shard = Shard, agent = Agent}) ->
     mria_status:notify_shard_up(Shard, Agent),
     %% Now we can enable local reads:
     set_where_to_read(node(), Shard),
@@ -378,8 +384,7 @@ enter_normal(D = #d{shard = Shard, agent = Agent, parent_sup = ParentSup}) ->
         #{ node => node()
          , shard => D#d.shard
          }),
-    {keep_state, D#d{ importer_worker = ImporterWorker
-                    }}.
+    keep_state_and_data.
 
 -spec handle_unknown(term(), term(), state(), data()) -> fsm_result().
 handle_unknown(EventType, Event, State, Data) ->
@@ -414,6 +419,10 @@ clear_table(Table) ->
         {aborted, {no_exists, _}} -> ok
     end.
 
+%%================================================================================
+%% Internal funcions
+%%================================================================================
+
 %% @private Dirty hack: patch mnesia internal table (see
 %% implementation of `mnesia:dirty_rpc')
 -spec set_where_to_read(node(), mria_rlog:shard()) -> ok.
@@ -440,3 +449,6 @@ post_connect(Shard, TableSpecs) ->
     Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
     mria_config:load_shard_config(Shard, Tables),
     ok = mria_schema:converge_replicant(Shard, TableSpecs).
+
+import_batch(Ops) ->
+    ok = mria_lib:import_batch(transaction, Ops).

@@ -22,7 +22,6 @@
 
 %% API:
 -export([ start_link/1
-        , get_importer_worker/1
         , start_bootstrap_client/4
         ]).
 
@@ -36,11 +35,6 @@
 -spec start_link(mria_rlog:shard()) -> {ok, pid()}.
 start_link(Shard) ->
     supervisor:start_link(?MODULE, Shard).
-
--spec get_importer_worker(pid()) -> pid().
-get_importer_worker(SupPid) ->
-    {ok, Pid} = mria_lib:sup_child_pid(SupPid, importer_worker),
-    Pid.
 
 -spec start_bootstrap_client(pid(), mria_rlog:shard(), node(), pid()) -> pid().
 start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
@@ -62,13 +56,7 @@ init(Shard) ->
                 , intensity => 0
                 , period    => 1
                 },
-    Children = [ #{ id       => importer_worker
-                  , start    => {mria_replica_importer_worker, start_link, [Shard]}
-                  , restart  => permanent
-                  , type     => worker
-                  , shutdown => 1000
-                  }
-               , #{ id       => replica
+    Children = [ #{ id       => replica
                   , start    => {mria_rlog_replica, start_link, [self(), Shard]}
                   , restart  => permanent
                   , shutdown => 1000
