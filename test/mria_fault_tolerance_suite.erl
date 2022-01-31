@@ -119,6 +119,48 @@ t_sum_verify(_) ->
                            )
        end).
 
+t_rlog_replica_reconnect(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    NTrans = 200,
+    CounterKey = counter_key,
+    ?check_trace(
+       #{timetrap => NTrans * 10 + 30000},
+       try
+           Nodes = [N1, _N2] = mria_ct:start_cluster(mria_async, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           {atomic, _} = rpc:call(N1, mria_transaction_gen, create_data, []),
+           %% consume a few transactions in the first incarnation
+           ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans - 101]),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           CrashRef = ?inject_crash( #{?snk_meta := #{domain := [mria, rlog, replica | _]}}
+                                   , snabbkaffe_nemesis:recover_after(1)
+                                   ),
+           %% consume a few more in the second incarnation
+           ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans]),
+           mria_mnesia_test_util:stabilize(5000),
+           snabbkaffe_nemesis:fix_crash(CrashRef),
+           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           Nodes
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       fun(Trace) ->
+               ?assert(
+                  ?strict_causality(
+                     #{ ?snk_kind := "Connected to the core node"
+                      , seqno     := _N
+                      }
+                    , #{ ?snk_kind := "Connected to the core node"
+                       , seqno     := _M
+                       }
+                    , _N < _M
+                    , Trace
+                    )),
+               ok
+       end).
+
 %% Remove the injected errors and check table consistency
 complete_test(CrashRef, Cluster, Nodes) ->
     mria_mnesia_test_util:stabilize(5100),
