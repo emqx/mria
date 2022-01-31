@@ -463,7 +463,7 @@ t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => 30_000},
        try
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 4
                           , #{?snk_kind := state_change, to := bootstrap}

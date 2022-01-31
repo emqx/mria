@@ -135,7 +135,7 @@ import_transaction(_, {dirty, Fun, Args}) ->
          , table => hd(Args)
          , args  => tl(Args)
          }),
-    ok = apply(mnesia, Fun, Args);
+    mnesia:async_dirty(fun() -> ok = apply(mnesia, Fun, Args) end);
 import_transaction(transaction, Ops) ->
     ?tp(rlog_import_trans,
         #{ type => transaction
@@ -150,7 +150,7 @@ import_transaction(dirty, Ops) ->
         #{ type => dirty
          , ops  => Ops
          }),
-    lists:foreach(fun import_op_dirty/1, Ops).
+    lists:foreach(fun(Op) -> mnesia:async_dirty(fun import_op_dirty/1, [Op]) end, Ops).
 
 -spec import_op(op()) -> ok.
 import_op(Op) ->

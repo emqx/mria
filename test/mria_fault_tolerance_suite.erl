@@ -131,7 +131,7 @@ t_sum_verify(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
-       #{timetrap => 60000},
+       #{timetrap => 60_000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),

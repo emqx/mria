@@ -175,7 +175,7 @@ verify_trans_sum_loop(N, Delay) ->
         do_trans_gen(),
     %% Perform r/o transaction:
     case do_trans_verify(Delay) of
-        {atomic, true} ->
+        {atomic, {true, _}} ->
             verify_trans_sum_loop(N - 1, Delay);
         Result ->
             ?tp(verify_trans_sum,
@@ -204,12 +204,12 @@ do_trans_verify(Delay) ->
                       %% The replica hasn't got any data yet, ignore.
                       %% FIXME: https://github.com/emqx/mria/issues/2
                       timer:sleep(Delay),
-                      true;
+                      {true, #{expected => undefined, sum => undefined}};
                   _ ->
                       Sum = sum_keys(),
                       timer:sleep(Delay),
                       [#test_tab{val = Expected}] = mnesia:read(test_tab, sum),
-                      Sum == Expected
+                      {Sum == Expected, #{expected => Expected, sum => Sum}}
               end
       end).
 
