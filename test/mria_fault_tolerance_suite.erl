@@ -69,6 +69,38 @@ t_agent_restart(_) ->
                ?assert(length(?of_kind(snabbkaffe_crash, Trace)) > 1)
        end).
 
+%% Check that an agent dies if its subscriber dies.
+t_rlog_agent_linked_to_subscriber(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 10000},
+       try
+           Nodes = [_N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           ReplicantPid = erpc:call(N2, erlang, whereis, [test_shard]),
+           Ref = monitor(process, ReplicantPid),
+           exit(ReplicantPid, kill),
+           receive
+               {'DOWN', Ref, process, ReplicantPid, killed} ->
+                   ok
+           end,
+           ?tp(test_end, #{}),
+           {N2, ReplicantPid}
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       fun(Subscriber, Trace0) ->
+               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace0),
+               ?assertMatch(
+                  [#{ ?snk_kind  := rlog_agent_terminating
+                    , subscriber := Subscriber
+                    , shard      := test_shard
+                    , reason     := {subscriber_died, killed}
+                    }],
+                  ?of_kind(rlog_agent_terminating, Trace)),
+               ok
+       end).
+
 t_rand_error_injection(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     CounterKey = counter,
