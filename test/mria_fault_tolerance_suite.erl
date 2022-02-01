@@ -175,13 +175,18 @@ t_rlog_replica_reconnect(_) ->
            snabbkaffe_nemesis:fix_crash(CrashRef),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           ?tp(test_end, #{}),
            Nodes
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(Trace) ->
+       fun(Trace0) ->
+               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace0),
                ?assert(
-                  ?strict_causality(
+                  %% we use only `causality' here because an odd
+                  %% number of restarts will create unmatched events
+                  %% in the trace.
+                  ?causality(
                      #{ ?snk_kind := "Connected to the core node"
                       , seqno     := _N
                       }
