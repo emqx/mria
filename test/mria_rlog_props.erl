@@ -59,19 +59,20 @@ replicant_bootstrap_stages(Node, Trace0) ->
 
 %% Check that all commit logs intercepted are received by an agent
 all_intercepted_commit_logs_received(Trace0) ->
-    AgentReplicantNodePairs1 =
+    ReplicantAgentNodePairs1 =
         [ {UpstreamNode, DownstreamNode}
           || #{ ?snk_kind := "Connected to the core node"
               , ?snk_meta := #{node := DownstreamNode}
               , node      := UpstreamNode
               } <- Trace0],
-    AgentReplicantNodePairs =
+    ReplicantAgentNodePairs =
         lists:foldl(
           fun({UpstreamNode, DownstreamNode}, Acc) ->
                   maps:put(DownstreamNode, UpstreamNode, Acc)
           end,
           #{},
-          AgentReplicantNodePairs1),
+          ReplicantAgentNodePairs1),
+    ct:pal("replicant and agent node pairs: ~p~n", [ReplicantAgentNodePairs]),
     Trace = [ Event
               || Event = #{?snk_kind := Kind} <- Trace0,
                  lists:member(Kind, [ mria_rlog_intercept_trans
@@ -97,7 +98,7 @@ all_intercepted_commit_logs_received(Trace0) ->
                length([Op || Batch <- _ImportOps, Op <- Batch])
           , Trace
           ))
-     || {DownstreamNode, UpstreamNode} <- maps:to_list(AgentReplicantNodePairs)],
+     || {DownstreamNode, UpstreamNode} <- maps:to_list(ReplicantAgentNodePairs)],
     ok.
 
 ops_from_commit_record(#{ ram_copies := Ram
