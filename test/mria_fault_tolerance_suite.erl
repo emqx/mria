@@ -84,6 +84,7 @@ t_rlog_agent_linked_to_subscriber(_) ->
                {'DOWN', Ref, process, ReplicantPid, killed} ->
                    ok
            end,
+           ?block_until(#{?snk_kind := rlog_agent_started}, 1_000),
            ?tp(test_end, #{}),
            {N2, ReplicantPid}
        after
@@ -95,7 +96,7 @@ t_rlog_agent_linked_to_subscriber(_) ->
                   [#{ ?snk_kind  := rlog_agent_terminating
                     , subscriber := Subscriber
                     , shard      := test_shard
-                    , reason     := {subscriber_died, killed}
+                    , reason     := {shutdown, {subscriber_died, killed}}
                     }],
                   ?of_kind(rlog_agent_terminating, Trace)),
                ok

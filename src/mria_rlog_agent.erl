@@ -102,7 +102,7 @@ handle_event(enter, OldState, State, D) ->
     handle_state_trans(OldState, State, D);
 handle_event(info, {'EXIT', SubscriberPid, Reason}, _State,
              #d{subscriber = {_Node, SubscriberPid}}) ->
-    {stop, {subscriber_died, Reason}};
+    {stop, {shutdown, {subscriber_died, Reason}}};
 handle_event(EventType, Event, State, D) ->
     handle_unknown(EventType, Event, State, D).
 
