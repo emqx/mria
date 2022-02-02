@@ -50,15 +50,19 @@
 %% Timeouts:
 -define(local_replay_loop, local_replay_loop).
 -define(reconnect, reconnect).
+-define(import_batch, import_batch).
+
+-define(IMPORT_BATCH_PERIOD, 1000). %% ms
 
 -record(d,
-        { shard                        :: mria_rlog:shard()
-        , parent_sup                   :: pid()
-        , remote_core_node = undefined :: node() | undefined
-        , agent                        :: pid() | undefined
-        , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
-        , next_batch_seqno = 0         :: integer()
-        , replayq                      :: replayq:q() | undefined
+        { shard                                      :: mria_rlog:shard()
+        , parent_sup                                 :: pid()
+        , remote_core_node = undefined               :: node() | undefined
+        , agent                                      :: pid() | undefined
+        , checkpoint       = undefined               :: mria_rlog_server:checkpoint() | undefined
+        , next_batch_seqno = 0                       :: integer()
+        , replayq                                    :: replayq:q() | undefined
+        , import_batch_timer                         :: reference() | undefined
         }).
 
 -type data() :: #d{}.
@@ -89,12 +93,13 @@ init({ParentSup, Shard}) ->
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]
                                     , shard  => Shard
                                     }),
+    %% TODO: put in mria_config?
     ?tp(info, rlog_replica_start,
         #{ node => node()
          , shard => Shard
          }),
-    D = #d{ shard           = Shard
-          , parent_sup      = ParentSup
+    D = #d{ shard               = Shard
+          , parent_sup          = ParentSup
           },
     {ok, ?disconnected, D}.
 
@@ -123,6 +128,11 @@ handle_event(timeout, ?local_replay_loop, ?local_replay, D) ->
 handle_event(enter, OldState, ?normal, D) ->
     handle_state_trans(OldState, ?normal, D),
     enter_normal(D);
+handle_event(info, {timeout, TRef, ?import_batch}, ?normal,
+             D = #d{import_batch_timer = TRef}) ->
+    handle_import_batch(D);
+handle_event(timeout, ?import_batch, ?normal, D) ->
+    handle_import_batch(D);
 %% Common events:
 handle_event(enter, OldState, State, Data) ->
     handle_state_trans(OldState, State, Data);
@@ -156,29 +166,20 @@ push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
 %% @private Consume transactions from the core node
 -spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
 handle_tlog_entry(?normal, {Agent, SeqNo, Tid, Transactions},
-                  D = #d{ agent            = Agent
-                        , next_batch_seqno = SeqNo
-                        , shard            = Shard
-                        }) ->
+                  D0 = #d{ agent            = Agent
+                         , next_batch_seqno = SeqNo
+                         , replayq          = Q0
+                         }) ->
     %% Normal flow, transactions are applied directly to the replica:
-    ?tp(rlog_replica_import_trans,
+    ?tp(rlog_replica_buffer_trans,
         #{ agent            => Agent
          , seqno            => SeqNo
          , transaction      => Transactions
          , tid              => Tid
          }),
-    case Tid of
-        {dirty, _} ->
-            %% Since async_dirty operations do not do selective
-            %% receives, we may run them in this process without much
-            %% concern about possible long message queues.
-            ok = mria_lib:import_batch(dirty, Transactions);
-        {tid, _, _} ->
-            import_batch_in_worker(Transactions)
-    end,
-    %% statistic to give an estimate the replicant lag with respect to
-    %% the core node.
-    mria_status:notify_replicant_import_trans(Shard, SeqNo),
+    Q = replayq:append(Q0, [{Tid, SeqNo, Transactions}]),
+    D1 = D0#d{replayq = Q},
+    D = ensure_import_batch_timer(D1),
     {keep_state, D#d{ next_batch_seqno = SeqNo + 1
                     }};
 handle_tlog_entry(St, {Agent, SeqNo, _Tid, Transaction},
@@ -221,6 +222,36 @@ handle_tlog_entry(State, {Agent, SeqNo, _Tid, _Transaction},
          , seqno_expected => ExpectedSeqno
          }),
     keep_state_and_data.
+
+%% -spec handle_import_batch(state()) -> fsm_result().
+handle_import_batch(D0 = #d{ replayq          = Q0
+                           , shard            = Shard
+                           , agent            = _Agent
+                           }) ->
+    {Q, AckRef, Transactions} = replayq:pop(Q0, #{}),
+    %% Normal flow, transactions are applied directly to the replica:
+    ?tp(rlog_replica_import_batch,
+        #{ agent       => _Agent
+         , transaction => Transactions
+         }),
+    SeqNo = lists:foldl(
+              fun(Batch = {_Tid, SeqNo, _Txns}, _Acc) ->
+                      handle_import_transaction(Batch),
+                      SeqNo
+              end,
+              0,
+              Transactions),
+    ok = replayq:ack(Q, AckRef),
+    %% statistic to give an estimate the replicant lag with respect to
+    %% the core node.
+    mria_status:notify_replicant_import_trans(Shard, SeqNo),
+    D = D0#d{replayq = Q},
+    case replayq:is_empty(Q) of
+        true ->
+            {keep_state, D};
+        false ->
+            {keep_state, D, [{timeout, 0, ?import_batch}]}
+    end.
 
 -spec initiate_bootstrap(data()) -> fsm_result().
 initiate_bootstrap(D = #d{shard = Shard, remote_core_node = Remote, parent_sup = ParentSup}) ->
@@ -277,9 +308,9 @@ replay_local(D0 = #d{replayq = Q0, shard = Shard}) ->
     ok = replayq:ack(Q, AckRef),
     case replayq:is_empty(Q) of
         true ->
-            replayq:close(Q),
-            D = D0#d{replayq = undefined},
-            {next_state, ?normal, D};
+            %% we reuse the same replayq for batching tlogs, so don't
+            %% close it.
+            {next_state, ?normal, D0};
         false ->
             D = D0#d{replayq = Q},
             {keep_state, D, [{timeout, 0, ?local_replay_loop}]}
@@ -466,3 +497,29 @@ import_batch_in_worker(Ops) ->
 import_batch(Ops) ->
     ok = mria_lib:import_batch(transaction, Ops),
     exit(imported).
+
+handle_import_transaction({Tid, _SeqNo, Transactions}) ->
+    ?tp(rlog_replica_import_trans,
+        #{ transactions     => Transactions
+         , tid              => Tid
+         , seqno            => _SeqNo
+         }),
+    case Tid of
+        {dirty, _} ->
+            %% Since async_dirty operations do not do selective
+            %% receives, we may run them in this process without much
+            %% concern about possible long message queues.
+            ok = mria_lib:import_batch(dirty, Transactions);
+        {tid, _, _} ->
+            import_batch_in_worker(Transactions)
+    end.
+
+ensure_import_batch_timer(D = #d{import_batch_timer = OldTimer}) ->
+    case OldTimer of
+        undefined ->
+            ImportBatchPeriod = application:get_env(mria, import_batch_period, ?IMPORT_BATCH_PERIOD),
+            NewTRef = erlang:start_timer(ImportBatchPeriod, self(), ?import_batch),
+            D#d{import_batch_timer = NewTRef};
+        _TRef ->
+            D
+    end.
