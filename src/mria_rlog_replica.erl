@@ -167,13 +167,13 @@ handle_tlog_entry(?normal, {Agent, SeqNo, Tid, Transactions},
          , transaction      => Transactions
          , tid              => Tid
          }),
-    case is_dirty_transaction(Tid) of
-        true ->
+    case Tid of
+        {dirty, _} ->
             %% Since async_dirty operations do not do selective
             %% receives, we may run them in this process without much
             %% concern about possible long message queues.
             ok = mria_lib:import_batch(transaction, Transactions);
-        false ->
+        {tid, _, _} ->
             import_batch_in_worker(Transactions)
     end,
     %% statistic to give an estimate the replicant lag with respect to
@@ -449,9 +449,6 @@ post_connect(Shard, TableSpecs) ->
     mria_config:load_shard_config(Shard, Tables),
     ok = mria_schema:converge_replicant(Shard, TableSpecs).
 
-is_dirty_transaction({dirty, _}) -> true;
-is_dirty_transaction({tid, _, _}) -> false.
-
 import_batch_in_worker(Ops) ->
     {Pid, Ref} = spawn_monitor(?MODULE, import_batch, [Ops]),
     receive
@@ -459,9 +456,6 @@ import_batch_in_worker(Ops) ->
             ok;
         {'DOWN', Ref, process, Pid, Reason} ->
             exit({bad_import_result, Reason})
-    after
-        5_000 ->
-            exit(importer_timeout)
     end.
 
 import_batch(Ops) ->
