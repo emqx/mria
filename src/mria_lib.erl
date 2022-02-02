@@ -150,7 +150,7 @@ import_transaction(dirty, Ops) ->
         #{ type => dirty
          , ops  => Ops
          }),
-    lists:foreach(fun(Op) -> mnesia:async_dirty(fun import_op_dirty/1, [Op]) end, Ops).
+    mnesia:async_dirty(fun() -> lists:foreach(fun import_op_dirty/1, Ops) end).
 
 -spec import_op(op()) -> ok.
 import_op(Op) ->

@@ -172,7 +172,7 @@ handle_tlog_entry(?normal, {Agent, SeqNo, Tid, Transactions},
             %% Since async_dirty operations do not do selective
             %% receives, we may run them in this process without much
             %% concern about possible long message queues.
-            ok = mria_lib:import_batch(transaction, Transactions);
+            ok = mria_lib:import_batch(dirty, Transactions);
         {tid, _, _} ->
             import_batch_in_worker(Transactions)
     end,
