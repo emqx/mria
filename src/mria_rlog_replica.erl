@@ -450,6 +450,11 @@ post_connect(Shard, TableSpecs) ->
     ok = mria_schema:converge_replicant(Shard, TableSpecs).
 
 import_batch_in_worker(Ops) ->
+    %% We spawn an ephemeral worker here and import the operations in
+    %% it to avoid selective receives during the mnesia transaction,
+    %% which can be quite costly if the replica message queue is long
+    %% during high loads.  Also, by using an ephemeral worker instead
+    %% of a long lived one, we avoid doing garbage collection in it.
     {Pid, Ref} = spawn_monitor(?MODULE, import_batch, [Ops]),
     receive
         {'DOWN', Ref, process, Pid, imported} ->
