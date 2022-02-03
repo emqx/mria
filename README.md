@@ -18,6 +18,10 @@ The default unpatched mnesia has two modes of table access:
 Mria aims to find the middle ground between the two approaches: data is read locally on all nodes, but only a few nodes actively participate in the transaction.
 This allows to improve write throughput of the cluster without sacrificing read latency, at the cost of strong consistency guarantees.
 
+## Logo
+
+![](doc/logo.jpg "Mriya logo")
+
 ## Modes of operation
 
 Mria works in two modes:
