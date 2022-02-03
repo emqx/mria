@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -135,7 +135,7 @@ import_transaction(_, {dirty, Fun, Args}) ->
          , table => hd(Args)
          , args  => tl(Args)
          }),
-    ok = apply(mnesia, Fun, Args);
+    ok = mnesia:async_dirty(fun erlang:apply/2, [Fun|Args]);
 import_transaction(transaction, Ops) ->
     ?tp(rlog_import_trans,
         #{ type => transaction
@@ -150,7 +150,10 @@ import_transaction(dirty, Ops) ->
         #{ type => dirty
          , ops  => Ops
          }),
-    lists:foreach(fun import_op_dirty/1, Ops).
+    ok = mnesia:async_dirty(
+           fun() ->
+                   lists:foreach(fun import_op_dirty/1, Ops)
+           end).
 
 -spec import_op(op()) -> ok.
 import_op(Op) ->
