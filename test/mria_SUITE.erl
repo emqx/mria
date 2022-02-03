@@ -378,6 +378,8 @@ t_rlog_dirty_operations(_) ->
                                                     , upstream            := _
                                                     , bootstrap_time      := _
                                                     , bootstrap_num_keys  := _
+                                                    , lag                 := _
+                                                    , message_queue_len   := _
                                                     }}
                          }, rpc:call(N3, mria_rlog, status, []))
        after
