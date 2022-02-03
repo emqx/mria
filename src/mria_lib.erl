@@ -19,7 +19,7 @@
 
 -export([ approx_checkpoint/0
         , make_key/1
-        , import_batch/2
+        , import_transaction/2
 
         , rpc_call/4
         , rpc_cast/4
@@ -122,11 +122,6 @@ make_key(undefined) ->
 %%================================================================================
 %% Transaction import
 %%================================================================================
-
-%% @doc Import transaction ops to the local database
--spec import_batch(transaction | dirty, [tx()]) -> ok.
-import_batch(ImportType, Batch) ->
-    lists:foreach(fun(Tx) -> import_transaction(ImportType, Tx) end, Batch).
 
 -spec import_transaction(transaction | dirty, tx()) -> ok.
 import_transaction(_, {dirty, Fun, Args}) ->

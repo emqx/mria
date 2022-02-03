@@ -19,4 +19,6 @@
 
 -define(LOCAL_CONTENT_SHARD, undefined).
 
+-define(IMPORTED(REF), {imported, REF}).
+
 -endif.
