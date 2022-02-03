@@ -208,7 +208,16 @@ shards_down() ->
 get_shard_stats(Shard) ->
     case mria_rlog:role() of
         core ->
-            #{}; %% TODO
+            Weight = case mria_lb:core_node_weight(Shard) of
+                         undefined          -> undefined;
+                         {ok, {Load, _, _}} -> Load
+                     end,
+            Replicants = [N || {S, N, _} <- mria_status:agents(), S =:= Shard],
+            #{ last_intercepted_trans => get_stat(Shard, ?core_intercept)
+             , weight                 => Weight
+             , replicants             => Replicants
+             , server_mql             => get_mql(Shard)
+             };
         replicant ->
             case upstream_node(Shard) of
                 {ok, Upstream} -> ok;
