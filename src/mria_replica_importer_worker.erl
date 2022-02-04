@@ -27,7 +27,7 @@
 
 %% API:
 -export([ set_initial_seqno/2
-        , import_batch/3
+        , import_batch/4
         , start_link/1
         ]).
 
@@ -54,9 +54,9 @@
 start_link(Shard) ->
     gen_server:start_link(?MODULE, Shard, []).
 
--spec import_batch(pid(), reference(), [mria_rlog:tx()]) -> ok.
-import_batch(Server, Ref, Tx) ->
-    gen_server:cast(Server, {import_batch, self(), Ref, Tx}).
+-spec import_batch(transaction | dirty, pid(), reference(), [mria_rlog:tx()]) -> ok.
+import_batch(ImportType, Server, Ref, Tx) ->
+    gen_server:cast(Server, {import_batch, ImportType, self(), Ref, Tx}).
 
 -spec set_initial_seqno(pid(), non_neg_integer()) -> ok.
 set_initial_seqno(Server, SeqNo) ->
@@ -83,8 +83,11 @@ handle_call(Call, _From, St) ->
 handle_info(_Info, St) ->
     {noreply, St}.
 
-handle_cast({import_batch, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
-    ok = import_batch(Batch),
+handle_cast({import_batch, ImportType, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
+    ok = case ImportType of
+             dirty       -> import_batch_dirty(Batch);
+             transaction -> import_batch(Batch)
+         end,
     SeqNo = SeqNo0 + length(Batch),
     mria_status:notify_replicant_import_trans(Shard, SeqNo),
     ReplyTo ! #imported{ref = Ref},
@@ -95,6 +98,21 @@ handle_cast(_Cast, St) ->
 %%================================================================================
 %% Transaction import
 %%================================================================================
+
+-spec import_batch_dirty([mria_rlog:tx()]) -> ok.
+import_batch_dirty(Batch) ->
+    mnesia:async_dirty(fun do_import_batch_dirty/1, [Batch]).
+
+-spec do_import_batch_dirty([mria_rlog:tx()]) -> ok.
+do_import_batch_dirty(Batch) ->
+    lists:foreach(fun({_TID, Ops}) ->
+                          ?tp(rlog_import_dirty,
+                              #{ tid => _TID
+                               , ops => Ops
+                               }),
+                          lists:foreach(fun import_op_dirty/1, Ops)
+                  end,
+                  Batch).
 
 -spec import_batch([mria_rlog:tx()]) -> ok.
 import_batch([]) ->

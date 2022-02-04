@@ -104,8 +104,8 @@ init({ParentSup, Shard}) ->
 %% Main loop:
 handle_event(info, Tx = #entry{}, State, D) ->
     handle_tlog_entry(State, Tx, D);
-handle_event(info, #imported{ref = Ref}, _State, D = #d{importer_ref = Ref}) ->
-    handle_importer_ack(D);
+handle_event(info, #imported{ref = Ref}, State, D = #d{importer_ref = Ref}) ->
+    handle_importer_ack(State, D);
 %% Events specific to `disconnected' state:
 handle_event(enter, OldState, ?disconnected, D) ->
     handle_state_trans(OldState, ?disconnected, D),
@@ -175,7 +175,7 @@ handle_tlog_entry(St, #entry{sender = Agent, seqno = SeqNo, tx = {_Tid, _Transac
             {keep_state, D};
        true ->
             %% Restart replay loop after idle:
-            async_replay(D)
+            async_replay(St, D)
     end;
 handle_tlog_entry(_State, #entry{sender = Agent, seqno = SeqNo},
                               #d{agent  = Agent, next_batch_seqno = MySeqNo})
@@ -234,7 +234,7 @@ initiate_bootstrap(D) ->
 
 -spec initiate_local_replay(data()) -> fsm_result().
 initiate_local_replay(D) ->
-    async_replay(D).
+    async_replay(?local_replay, D).
 
 -spec handle_bootstrap_complete(mria_rlog_server:checkpoint(), data()) -> fsm_result().
 handle_bootstrap_complete(Checkpoint, D) ->
@@ -259,18 +259,27 @@ handle_agent_down(State, Reason, D) ->
             exit(agent_died)
     end.
 
--spec async_replay(data()) -> fsm_result().
-async_replay(D0 = #d{replayq = Q0, importer_worker = Importer, importer_ref = false}) ->
+-spec async_replay(state(), data()) -> fsm_result().
+async_replay(State, D0) ->
+    #d{ replayq = Q0
+      , importer_worker = Importer
+      , importer_ref = false
+      , shard = Shard
+      } = D0,
     {Q, AckRef, Items} = replayq:pop(Q0, #{count_limit => mria_config:replay_batch_size()}),
     ok = replayq:ack(Q, AckRef),
+    ImportType = case mria_config:dirty_shard(Shard) orelse State =/= ?normal of
+                     true  -> dirty;
+                     false -> transaction
+                 end,
     %% The reply will arrive asynchronously:
     Ref = make_ref(),
-    mria_replica_importer_worker:import_batch(Importer, Ref, Items),
+    mria_replica_importer_worker:import_batch(ImportType, Importer, Ref, Items),
     D = D0#d{replayq = Q, importer_ref = Ref},
     {keep_state, D}.
 
--spec handle_importer_ack(data()) -> fsm_result().
-handle_importer_ack(D0 = #d{replayq = Q, shard = Shard}) ->
+-spec handle_importer_ack(state(), data()) -> fsm_result().
+handle_importer_ack(State, D0 = #d{replayq = Q, shard = Shard}) ->
     mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D = D0#d{importer_ref = false},
     case replayq:is_empty(Q) of
@@ -278,7 +287,7 @@ handle_importer_ack(D0 = #d{replayq = Q, shard = Shard}) ->
             %% TODO: use a more reliable way to enter normal state
             {next_state, ?normal, D};
         false ->
-            async_replay(D)
+            async_replay(State, D)
     end.
 
 -spec initiate_reconnect(data()) -> fsm_result().
