@@ -14,6 +14,8 @@
 
 -define(LOCAL_CONTENT_SHARD, undefined).
 
+-define(IS_DIRTY(TID), (element(1, (TID)) =:= dirty)).
+
 %% Messages
 
 -record(entry,

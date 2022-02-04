@@ -89,7 +89,7 @@ handle_cast({import_batch, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = 
                                      , ops   => Tx
                                      , shard => Shard
                                      }),
-                                mria_lib:import_transaction(transaction, Tx),
+                                mria_lib:import_commit(transaction, Tx),
                                 Acc + 1
                         end,
                         SeqNo0,

@@ -177,7 +177,7 @@ handle_call({subscribe, Subscriber, Checkpoint}, _From, State0) ->
                                                   , TlogReplay
                                                   , Checkpoint
                                                   ),
-    Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince, SeqNo]),
+    Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
     monitor(process, Pid),
     mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
     TableSpecs = mria_schema:table_specs_of_shard(Shard),

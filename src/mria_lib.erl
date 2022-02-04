@@ -19,7 +19,7 @@
 
 -export([ approx_checkpoint/0
         , make_key/1
-        , import_transaction/2
+        , import_commit/2
 
         , rpc_call/4
         , rpc_cast/4
@@ -97,32 +97,20 @@ make_key(undefined) ->
 %% Transaction import
 %%================================================================================
 
--spec import_transaction(transaction | dirty, mria_rlog:tx()) -> ok.
-import_transaction(_, {dirty, Fun, Args}) ->
-    ?tp(import_dirty_op,
-        #{ op    => Fun
-         , table => hd(Args)
-         , args  => tl(Args)
+-spec import_commit(transaction | dirty, mria_rlog:tx()) -> ok.
+import_commit(ImportMode, {TID, Ops}) when ImportMode =:= dirty;
+                                           ?IS_DIRTY(TID) ->
+    ?tp(rlog_import_dirty,
+        #{ tid => TID
+         , ops => Ops
          }),
-    ok = mnesia:async_dirty(fun erlang:apply/2, [mnesia, Fun, Args]);
-import_transaction(transaction, Ops) ->
+    ok = mnesia:async_dirty(fun lists:foreach/2, [fun import_op_dirty/1, Ops]);
+import_commit(transaction, {_TID, Ops}) ->
     ?tp(rlog_import_trans,
-        #{ type => transaction
-         , ops  => Ops
+        #{ tid => _TID
+         , ops => Ops
          }),
-    {atomic, ok} = mnesia:transaction(
-                     fun() ->
-                             lists:foreach(fun import_op/1, Ops)
-                     end);
-import_transaction(dirty, Ops) ->
-    ?tp(rlog_import_trans,
-        #{ type => dirty
-         , ops  => Ops
-         }),
-    ok = mnesia:async_dirty(
-           fun() ->
-                   lists:foreach(fun import_op_dirty/1, Ops)
-           end).
+    {atomic, ok} = mnesia:transaction(fun lists:foreach/2, [fun import_op/1, Ops]).
 
 -spec import_op(mria_rlog:op()) -> ok.
 import_op(Op) ->
