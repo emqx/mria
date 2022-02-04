@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ all_intercepted_commit_logs_received(Trace0) ->
     Trace = [ Event
               || Event = #{?snk_kind := Kind} <- Trace0,
                  lists:member(Kind, [ mria_rlog_intercept_trans
-                                    , rlog_replica_import_trans
+                                    , rlog_replica_store_trans
                                     ]),
                  case Event of
                      #{schema_ops := [_ | _]} -> false;
@@ -88,26 +88,15 @@ all_intercepted_commit_logs_received(Trace0) ->
            #{ ?snk_kind    := mria_rlog_intercept_trans
             , ?snk_meta    := #{node := UpstreamNode}
             , tid          := _Tid
-            } = _CommitRecord
-          , #{ ?snk_kind   := rlog_replica_import_trans
+            }
+          , #{ ?snk_kind   := rlog_replica_store_trans
              , ?snk_meta   := #{node := DownstreamNode}
              , tid         := _Tid
-             , transaction := _ImportOps
              }
-          , length(ops_from_commit_record(_CommitRecord)) =:=
-               length([Op || Batch <- _ImportOps, Op <- Batch])
           , Trace
           ))
      || {DownstreamNode, UpstreamNode} <- maps:to_list(ReplicantAgentNodePairs)],
     ok.
-
-ops_from_commit_record(#{ ram_copies := Ram
-                        , disc_copies := Disc
-                        , disc_only_copies := DiscOnly
-                        , ext := ExtCopies
-                        }) ->
-    ExtOps = [Op || {ext_copies, Ops} <- ExtCopies, Op <- Ops],
-    Ram ++ Disc ++ DiscOnly ++ ExtOps.
 
 %% Check that the replicant processed all batches sent by its agent
 all_batches_received(Trace0) ->

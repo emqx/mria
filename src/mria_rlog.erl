@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,13 +37,21 @@
 -export_type([ shard/0
              , role/0
              , shard_config/0
-             , commit_records/0
+             , change_type/0
+             , op/0
+             , tx/0
+             , seqno/0
+             , entry/0
              ]).
 
 -include("mria_rlog.hrl").
 -include_lib("mnesia/src/mnesia.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
+
+%%================================================================================
+%% Type declarations
+%%================================================================================
 
 -type shard() :: atom().
 
@@ -53,13 +61,17 @@
                          , match_spec := ets:match_spec()
                          }.
 
--type commit_records() :: #{ node => node()
-                           , ram_copies => list()
-                           , disc_copies => list()
-                           , disc_only_copies => list()
-                           , ext => list()
-                           , schema_ops => list()
-                           }.
+-type change_type() :: write | delete | delete_object | clear_table.
+
+-type op() :: {{mria:table(), term()}, term(), change_type()}.
+
+-type tx() :: {mria_mnesia:tid(), [op()]}.
+
+-type entry() :: #entry{}.
+
+%% Note: seqno is specific for the core node, not for the entire
+%% cluster!
+-type seqno() :: non_neg_integer().
 
 status() ->
     Backend = backend(),

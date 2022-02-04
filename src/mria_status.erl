@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@
 
          upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
-         get_shard_stats/1, agents/0, replicants/0,
+         get_shard_stats/1, agents/0, replicants/0, get_shard_lag/1,
 
          notify_replicant_state/2,
          notify_replicant_import_trans/2,
@@ -43,6 +43,9 @@
 
 %% gen_server callbacks:
 -export([init/1, terminate/2, handle_call/3, handle_cast/2]).
+
+%% Internal exports:
+-export([get_stat/2]).
 
 -define(SERVER, ?MODULE).
 
@@ -110,7 +113,7 @@ notify_core_node_up(Shard, Node) ->
 notify_core_node_down(Shard) ->
     do_notify_down(?core_node, Shard).
 
--spec notify_core_intercept_trans(mria_rlog:shard(), _SeqNo :: integer()) -> ok.
+-spec notify_core_intercept_trans(mria_rlog:shard(), mria_rlog:seqno()) -> ok.
 notify_core_intercept_trans(Shard, SeqNo) ->
     set_stat(Shard, ?core_intercept, SeqNo).
 
@@ -141,6 +144,23 @@ agents() ->
 -spec replicants() -> [node()].
 replicants() ->
     lists:usort([N || {_, N, _} <- agents()]).
+
+-spec get_shard_lag(mria_rlog:shard()) -> non_neg_integer() | disconnected.
+get_shard_lag(Shard) ->
+    case {mria_rlog:role(), upstream_node(Shard)} of
+        {core, _} ->
+            0;
+        {replicant, disconnected} ->
+            disconnected;
+        {replicant, {ok, Upstream}} ->
+            case erpc:call(Upstream, ?MODULE, get_stat, [Shard, ?core_intercept], 1000) of
+                undefined ->
+                    0;
+                RemoteSeqNo ->
+                    MySeqNo = get_stat(Shard, ?replicant_import),
+                    RemoteSeqNo - MySeqNo
+            end
+    end.
 
 %% Get a healthy core node that has the specified shard, and can
 %% accept or RPC calls.
@@ -188,7 +208,16 @@ shards_down() ->
 get_shard_stats(Shard) ->
     case mria_rlog:role() of
         core ->
-            #{}; %% TODO
+            Weight = case mria_lb:core_node_weight(Shard) of
+                         undefined          -> undefined;
+                         {ok, {Load, _, _}} -> Load
+                     end,
+            Replicants = [N || {S, N, _} <- mria_status:agents(), S =:= Shard],
+            #{ last_intercepted_trans => get_stat(Shard, ?core_intercept)
+             , weight                 => Weight
+             , replicants             => Replicants
+             , server_mql             => get_mql(Shard)
+             };
         replicant ->
             case upstream_node(Shard) of
                 {ok, Upstream} -> ok;
@@ -200,7 +229,19 @@ get_shard_stats(Shard) ->
              , bootstrap_time      => get_bootstrap_time(Shard)
              , bootstrap_num_keys  => get_stat(Shard, ?replicant_bootstrap_import)
              , upstream            => Upstream
+             , lag                 => get_shard_lag(Shard)
+             , message_queue_len   => get_mql(Shard)
              }
+    end.
+
+-spec get_mql(mria_rlog:shard()) -> non_neg_integer() | undefined.
+get_mql(Shard) ->
+    case whereis(Shard) of
+        undefined ->
+            undefined;
+        Pid ->
+            {message_queue_len, MQL} = process_info(Pid, message_queue_len),
+            MQL
     end.
 
 %% Note on the implementation: `rlog_replicant' and `rlog_agent'
@@ -210,7 +251,7 @@ get_shard_stats(Shard) ->
 notify_replicant_state(Shard, State) ->
     set_stat(Shard, ?replicant_state, State).
 
--spec notify_replicant_import_trans(mria_rlog:shard(), _SeqNo :: integer()) -> ok.
+-spec notify_replicant_import_trans(mria_rlog:shard(), mria_rlog:seqno()) -> ok.
 notify_replicant_import_trans(Shard, SeqNo) ->
     set_stat(Shard, ?replicant_import, SeqNo).
 

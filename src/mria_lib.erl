@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 
 -export([ approx_checkpoint/0
         , make_key/1
-        , import_batch/2
+        , import_commit/2
 
         , rpc_call/4
         , rpc_cast/4
@@ -50,14 +50,7 @@
         , dirty_wrapper/3
         ]).
 
--export_type([ tlog_entry/0
-             , subscriber/0
-             , change_type/0
-             , op/0
-             , tx/0
-             , mnesia_tid/0
-             , txid/0
-             , rlog/0
+-export_type([ subscriber/0
              , rpc_destination/0
              ]).
 
@@ -70,25 +63,6 @@
 %%================================================================================
 %% Type declarations
 %%================================================================================
-
--type mnesia_tid() :: #tid{}.
--type txid() :: {mria_rlog_server:checkpoint(), pid()}.
-
--type change_type() :: write | delete | delete_object | clear_table.
-
--type op() :: {{mria:table(), term()}, term(), change_type()}.
-
--type dirty() :: {dirty, _Fun :: atom(), _Args :: list()}.
-
--type tx() :: [op()] | dirty().
-
--type rlog() :: #rlog{}.
-
--type tlog_entry() :: { _Sender    :: pid()
-                      , _SeqNo     :: integer()
-                      , _Tid       :: {tid, term(), term()} | {dirty, term()}
-                      , _Tx        :: [tx()]
-                      }.
 
 -type subscriber() :: {node(), pid()}.
 
@@ -107,7 +81,7 @@ approx_checkpoint() ->
 %% it is a tuple of a timestamp (ts) and the node id (node_id), where
 %% ts is at millisecond precision to ensure it is locally monotonic and
 %% unique, and transaction pid, should ensure global uniqueness.
--spec make_key(mria_lib:mnesia_tid() | undefined) -> mria_lib:txid().
+-spec make_key(mria_mnesia:tid() | undefined) -> _.
 make_key(#tid{pid = Pid}) ->
     {approx_checkpoint(), Pid};
 make_key(undefined) ->
@@ -123,36 +97,22 @@ make_key(undefined) ->
 %% Transaction import
 %%================================================================================
 
-%% @doc Import transaction ops to the local database
--spec import_batch(transaction | dirty, [tx()]) -> ok.
-import_batch(ImportType, Batch) ->
-    lists:foreach(fun(Tx) -> import_transaction(ImportType, Tx) end, Batch).
-
--spec import_transaction(transaction | dirty, tx()) -> ok.
-import_transaction(_, {dirty, Fun, Args}) ->
-    ?tp(import_dirty_op,
-        #{ op    => Fun
-         , table => hd(Args)
-         , args  => tl(Args)
+-spec import_commit(transaction | dirty, mria_rlog:tx()) -> ok.
+import_commit(ImportMode, {TID, Ops}) when ImportMode =:= dirty;
+                                           ?IS_DIRTY(TID) ->
+    ?tp(rlog_import_dirty,
+        #{ tid => TID
+         , ops => Ops
          }),
-    ok = apply(mnesia, Fun, Args);
-import_transaction(transaction, Ops) ->
+    ok = mnesia:async_dirty(fun lists:foreach/2, [fun import_op_dirty/1, Ops]);
+import_commit(transaction, {_TID, Ops}) ->
     ?tp(rlog_import_trans,
-        #{ type => transaction
-         , ops  => Ops
+        #{ tid => _TID
+         , ops => Ops
          }),
-    {atomic, ok} = mnesia:transaction(
-                     fun() ->
-                             lists:foreach(fun import_op/1, Ops)
-                     end);
-import_transaction(dirty, Ops) ->
-    ?tp(rlog_import_trans,
-        #{ type => dirty
-         , ops  => Ops
-         }),
-    lists:foreach(fun import_op_dirty/1, Ops).
+    {atomic, ok} = mnesia:transaction(fun lists:foreach/2, [fun import_op/1, Ops]).
 
--spec import_op(op()) -> ok.
+-spec import_op(mria_rlog:op()) -> ok.
 import_op(Op) ->
     case Op of
         {{Tab, _K}, Record, write} ->
@@ -165,7 +125,7 @@ import_op(Op) ->
             mria_activity:clear_table(Tab)
     end.
 
--spec import_op_dirty(op()) -> ok.
+-spec import_op_dirty(mria_rlog:op()) -> ok.
 import_op_dirty({{Tab, '_'}, '_', clear_table}) ->
     mnesia:clear_table(Tab);
 import_op_dirty({{Tab, _K}, Record, delete_object}) ->
@@ -301,7 +261,7 @@ local_transactional_wrapper(Activity, Args) ->
 dirty_wrapper(Fun, Table, Args) ->
     apply(mnesia, Fun, [Table|Args]).
 
--spec get_internals() -> {mria_lib:mnesia_tid(), ets:tab()}.
+-spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
 get_internals() ->
     case mnesia:get_activity_id() of
         {_, TID, #tidstore{store = TxStore}} ->

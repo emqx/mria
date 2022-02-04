@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@
 -include("mria_rlog.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
-
 
 %% Start and stop mnesia
 -export([ %% TODO: remove it
@@ -56,7 +55,27 @@
         , wait_for_tables/1
         ]).
 
+%% Various internal types
+-export_type([ tid/0
+             , commit_records/0
+             ]).
+
 -deprecated({copy_table, 1, next_major_release}).
+
+%%--------------------------------------------------------------------
+%% Types
+%%--------------------------------------------------------------------
+
+-type tid() :: {tid, integer(), pid()}
+             | {dirty, pid()}.
+
+-type commit_records() :: #{ node => node()
+                           , ram_copies => list()
+                           , disc_copies => list()
+                           , disc_only_copies => list()
+                           , ext => list()
+                           , schema_ops => list()
+                           }.
 
 %%--------------------------------------------------------------------
 %% Start and init mnesia
@@ -173,7 +192,7 @@ cluster_view() ->
                    || Status <- [running, stopped]]).
 
 %% @doc Cluster nodes.
--spec(cluster_nodes(all | running | stopped) -> [node()]).
+-spec(cluster_nodes(all | running | stopped | cores) -> [node()]).
 cluster_nodes(all) ->
     Running = running_nodes(),
     %% Note: stopped replicant nodes won't appear in the list
@@ -181,7 +200,9 @@ cluster_nodes(all) ->
 cluster_nodes(running) ->
     running_nodes();
 cluster_nodes(stopped) ->
-    cluster_nodes(all) -- cluster_nodes(running).
+    cluster_nodes(all) -- cluster_nodes(running);
+cluster_nodes(cores) ->
+    db_nodes().
 
 %% @doc Running nodes.
 -spec(running_nodes() -> list(node())).
@@ -213,7 +234,7 @@ db_nodes() ->
 
 %% @doc Is this node in mnesia cluster?
 is_node_in_cluster() ->
-    mria_mnesia:cluster_nodes(all) =/= [node()].
+    cluster_nodes(cores) =/= [node()].
 
 %% @doc Is the node in mnesia cluster?
 -spec(is_node_in_cluster(node()) -> boolean()).

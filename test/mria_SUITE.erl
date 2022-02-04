@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -378,6 +378,8 @@ t_rlog_dirty_operations(_) ->
                                                     , upstream            := _
                                                     , bootstrap_time      := _
                                                     , bootstrap_num_keys  := _
+                                                    , lag                 := _
+                                                    , message_queue_len   := _
                                                     }}
                          }, rpc:call(N3, mria_rlog, status, []))
        after

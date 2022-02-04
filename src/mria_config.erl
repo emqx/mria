@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@
         , rpc_module/0
         , tlog_push_mode/0
         , strict_mode/0
+        , replay_batch_size/0
+        , set_replay_batch_size/1
 
         , load_config/0
         , erase_all_config/0
@@ -96,12 +98,21 @@ tlog_push_mode() ->
 strict_mode() ->
     persistent_term:get(?mria(strict_mode), false).
 
+-spec replay_batch_size() -> non_neg_integer().
+replay_batch_size() ->
+    persistent_term:get(?mria(replay_batch_size), 1000).
+
+-spec set_replay_batch_size(non_neg_integer()) -> ok.
+set_replay_batch_size(N) ->
+    persistent_term:put(?mria(replay_batch_size), N).
+
 -spec load_config() -> ok.
 load_config() ->
     copy_from_env(rlog_rpc_module),
     copy_from_env(db_backend),
     copy_from_env(node_role),
     copy_from_env(strict_mode),
+    copy_from_env(replay_batch_size),
     copy_from_env(tlog_push_mode),
     consistency_check().
 

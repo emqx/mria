@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -84,7 +84,8 @@ t_rlog_agent_linked_to_subscriber(_) ->
                {'DOWN', Ref, process, ReplicantPid, killed} ->
                    ok
            end,
-           ?block_until(#{?snk_kind := rlog_agent_started}, 1_000),
+           ?block_until(#{?snk_kind := rlog_agent_started}),
+           mria_mnesia_test_util:wait_tables(Nodes),
            ?tp(test_end, #{}),
            {N2, ReplicantPid}
        after
@@ -180,18 +181,8 @@ t_rlog_replica_reconnect(_) ->
            mria_ct:teardown_cluster(Cluster)
        end,
        fun(Trace) ->
-               ?assert(
-                  ?strict_causality(
-                     #{ ?snk_kind := "Connected to the core node"
-                      , seqno     := _N
-                      }
-                    , #{ ?snk_kind := "Connected to the core node"
-                       , seqno     := _M
-                       }
-                    , _N < _M
-                    , Trace
-                    )),
-               ok
+               Seqnos = ?projection(seqno, ?of_kind("Connected to the core node", Trace)),
+               snabbkaffe:strictly_increasing(Seqnos)
        end).
 
 %% Remove the injected errors and check table consistency
