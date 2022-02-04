@@ -84,7 +84,8 @@ t_rlog_agent_linked_to_subscriber(_) ->
                {'DOWN', Ref, process, ReplicantPid, killed} ->
                    ok
            end,
-           ?block_until(#{?snk_kind := rlog_agent_started}, 1_000),
+           ?block_until(#{?snk_kind := rlog_agent_started}),
+           mria_mnesia_test_util:wait_tables(Nodes),
            ?tp(test_end, #{}),
            {N2, ReplicantPid}
        after
