@@ -58,12 +58,14 @@
 -type role() :: core | replicant.
 
 -type shard_config() :: #{ tables := [mria:table()]
-                         , match_spec := ets:match_spec()
                          }.
 
 -type change_type() :: write | delete | delete_object | clear_table.
 
--type op() :: {{mria:table(), term()}, term(), change_type()}.
+-type op() :: {write, mria:table(), mria_mnesia:record()}
+            | {delete, mria:table(), _Key}
+            | {delete_object, mria:table(), mria_mnesia:record()}
+            | {clear_table, mria:table()}.
 
 -type tx() :: {mria_mnesia:tid(), [op()]}.
 

@@ -56,7 +56,9 @@
         ]).
 
 %% Various internal types
--export_type([ tid/0
+-export_type([ record/0
+             , tid/0
+             , op/0
              , commit_records/0
              ]).
 
@@ -68,6 +70,10 @@
 
 -type tid() :: {tid, integer(), pid()}
              | {dirty, pid()}.
+
+-type record() :: tuple().
+
+-type op() :: {{mria:table(), _Key}, record(), mria_rlog:change_type()}.
 
 -type commit_records() :: #{ node => node()
                            , ram_copies => list()

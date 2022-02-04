@@ -257,10 +257,10 @@ transform_commit(Tid, Commit) ->
             fun(K, Ops, Acc) when K =:= ram_copies;
                                   K =:= disc_copies;
                                   K =:= disc_only_copies ->
-                    Ops ++ Acc;
+                    [transform_op(Op) || Op <- Ops] ++ Acc;
                (ext, Ops0, Acc) ->
-                    Ops = [Op || {ext_copies, Ops1} <- Ops0,
-                                 {{ext, _Backend, _Module}, Op} <- Ops1],
+                    Ops = [transform_op(Op) || {ext_copies, Ops1} <- Ops0,
+                                               {{ext, _Backend, _Module}, Op} <- Ops1],
                     Ops ++ Acc;
                (_K, _Ops, Acc) ->
                     Acc
@@ -268,6 +268,16 @@ transform_commit(Tid, Commit) ->
             [],
             Commit),
     {Tid, Ops}.
+
+-spec transform_op(mria_mnesia:op()) -> mria_rlog:op().
+transform_op({{Tab, _Key}, Rec, write}) ->
+    {write, Tab, Rec};
+transform_op({{Tab, Key}, _Rec, delete}) ->
+    {delete, Tab, Key};
+transform_op({{Tab, _Key}, Rec, delete_object}) ->
+    {delete_object, Tab, Rec};
+transform_op({{Tab, '_'}, '_', clear_table}) ->
+    {clear_table, Tab}.
 
 %%================================================================================
 %% Internal exports (gen_rpc)

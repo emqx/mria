@@ -325,7 +325,7 @@ t_core_node_competing_writes(_) ->
        end,
        fun(Trace) ->
                Events = [Val || #{?snk_kind := rlog_import_trans, ops := Ops} <- Trace,
-                                {{test_tab, _}, {test_tab, _Key, Val}, write} <- Ops],
+                                {write, test_tab, {test_tab, _Key, Val}} <- Ops],
                %% Check that the number of imported transaction equals to the expected number:
                ?assertEqual(NOper * 2, length(Events)),
                %% Check that the ops have been imported in order:

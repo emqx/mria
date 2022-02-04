@@ -115,25 +115,28 @@ import_commit(transaction, {_TID, Ops}) ->
 -spec import_op(mria_rlog:op()) -> ok.
 import_op(Op) ->
     case Op of
-        {{Tab, _K}, Record, write} ->
-            mnesia:write(Tab, Record, write);
-        {{Tab, K}, _Record, delete} ->
-            mnesia:delete({Tab, K});
-        {{Tab, _K}, Record, delete_object} ->
-            mnesia:delete_object(Tab, Record, write);
-        {{Tab, _K}, '_', clear_table} ->
+        {write, Tab, Rec} ->
+            mnesia:write(Tab, Rec, write);
+        {delete, Tab, Key} ->
+            mnesia:delete({Tab, Key});
+        {delete_object, Tab, Rec} ->
+            mnesia:delete_object(Tab, Rec, write);
+        {clear_table, Tab} ->
             mria_activity:clear_table(Tab)
     end.
 
 -spec import_op_dirty(mria_rlog:op()) -> ok.
-import_op_dirty({{Tab, '_'}, '_', clear_table}) ->
-    mnesia:clear_table(Tab);
-import_op_dirty({{Tab, _K}, Record, delete_object}) ->
-    mnesia:dirty_delete_object(Tab, Record);
-import_op_dirty({{Tab, K}, _Record, delete}) ->
-    mnesia:dirty_delete({Tab, K});
-import_op_dirty({{Tab, _K}, Record, write}) ->
-    mnesia:dirty_write(Tab, Record).
+import_op_dirty(Op) ->
+    case Op of
+        {write, Tab, Rec} ->
+            mnesia:dirty_write(Tab, Rec);
+        {delete, Tab, Key} ->
+            mnesia:dirty_delete({Tab, Key});
+        {delete_object, Tab, Rec} ->
+            mnesia:dirty_delete_object(Tab, Rec);
+        {clear_table, Tab} ->
+            mnesia:clear_table(Tab)
+    end.
 
 %%================================================================================
 %% RPC
