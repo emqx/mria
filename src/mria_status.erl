@@ -113,7 +113,7 @@ notify_core_node_up(Shard, Node) ->
 notify_core_node_down(Shard) ->
     do_notify_down(?core_node, Shard).
 
--spec notify_core_intercept_trans(mria_rlog:shard(), _SeqNo :: integer()) -> ok.
+-spec notify_core_intercept_trans(mria_rlog:shard(), mria_rlog:seqno()) -> ok.
 notify_core_intercept_trans(Shard, SeqNo) ->
     set_stat(Shard, ?core_intercept, SeqNo).
 
@@ -242,7 +242,7 @@ get_mql(Shard) ->
 notify_replicant_state(Shard, State) ->
     set_stat(Shard, ?replicant_state, State).
 
--spec notify_replicant_import_trans(mria_rlog:shard(), _SeqNo :: integer()) -> ok.
+-spec notify_replicant_import_trans(mria_rlog:shard(), mria_rlog:seqno()) -> ok.
 notify_replicant_import_trans(Shard, SeqNo) ->
     set_stat(Shard, ?replicant_import, SeqNo).
 

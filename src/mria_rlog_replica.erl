@@ -102,7 +102,7 @@ init({ParentSup, Shard}) ->
 
 -spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) -> fsm_result().
 %% Main loop:
-handle_event(info, {tlog_entry, Tx}, State, D) ->
+handle_event(info, Tx = #entry{}, State, D) ->
     handle_tlog_entry(State, Tx, D);
 handle_event(info, ?IMPORTED(Ref), _State, D = #d{importer_ref = Ref}) ->
     handle_importer_ack(D);
@@ -145,20 +145,20 @@ terminate(_Reason, _State, #d{}) ->
 %%================================================================================
 
 %% This function is called by the remote core node.
--spec push_tlog_entry(sync | async, mria_rlog:shard(), mria_lib:subscriber(), mria_lib:tlog_entry()) -> ok.
-push_tlog_entry(async, _Shard, {_Node, Pid}, Batch) ->
-    do_push_tlog_entry(Pid, Batch), %% Note: here Pid is remote
+-spec push_tlog_entry(sync | async, mria_rlog:shard(), mria_lib:subscriber(), mria_rlog:entry()) -> ok.
+push_tlog_entry(async, _Shard, {_Node, Pid}, TLOGEntry) ->
+    do_push_tlog_entry(Pid, TLOGEntry), %% Note: here Pid is remote
     ok;
-push_tlog_entry(sync, Shard, {Node, Pid}, Batch) ->
-    mria_lib:rpc_call({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, Batch]).
+push_tlog_entry(sync, Shard, {Node, Pid}, TLOGEntry) ->
+    mria_lib:rpc_call({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, TLOGEntry]).
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
 %% @private Consume transactions from the core node
--spec handle_tlog_entry(state(), mria_lib:tlog_entry(), data()) -> fsm_result().
-handle_tlog_entry(St, {Agent, SeqNo, _Tid, Transaction},
+-spec handle_tlog_entry(state(), mria_rlog:entry(), data()) -> fsm_result().
+handle_tlog_entry(St, #entry{sender = Agent, seqno = SeqNo, tx = {_Tid, _Transaction} = Tx},
                   D0 = #d{ agent            = Agent
                          , next_batch_seqno = SeqNo
                          , importer_ref     = ImporterRef
@@ -166,10 +166,10 @@ handle_tlog_entry(St, {Agent, SeqNo, _Tid, Transaction},
     ?tp(rlog_replica_store_trans,
         #{ agent       => Agent
          , seqno       => SeqNo
-         , transaction => Transaction
+         , transaction => _Transaction
          , tid         => _Tid
          }),
-    D1 = buffer_tlog_ops(Transaction, D0),
+    D1 = buffer_tlog_ops(Tx, D0),
     D = D1#d{next_batch_seqno = SeqNo + 1},
     if is_reference(ImporterRef) orelse St =:= ?bootstrap ->
             {keep_state, D};
@@ -177,10 +177,9 @@ handle_tlog_entry(St, {Agent, SeqNo, _Tid, Transaction},
             %% Restart replay loop after idle:
             async_replay(D)
     end;
-handle_tlog_entry(_State, {Agent, SeqNo, _Tid, _Transaction},
-             #d{ agent = Agent
-               , next_batch_seqno = MySeqNo
-               }) when SeqNo > MySeqNo ->
+handle_tlog_entry(_State, #entry{sender = Agent, seqno = SeqNo},
+                              #d{agent  = Agent, next_batch_seqno = MySeqNo})
+  when SeqNo > MySeqNo ->
     %% Gap in the TLOG. Consuming it now will cause inconsistency, so we must restart.
     %% TODO: sometimes it should be possible to restart gracefully to
     %% salvage the bootstrapped data.
@@ -189,7 +188,7 @@ handle_tlog_entry(_State, {Agent, SeqNo, _Tid, _Transaction},
                                  , agent          => Agent
                                  }),
     error({gap_in_the_tlog, SeqNo, MySeqNo});
-handle_tlog_entry(State, {Agent, SeqNo, _Tid, _Transaction},
+handle_tlog_entry(State, #entry{sender = Agent, seqno = SeqNo},
                   #d{ next_batch_seqno = ExpectedSeqno
                     , agent            = ExpectedAgent
                     }) ->
@@ -365,9 +364,9 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
             try_connect(Rest, Shard, Checkpoint)
     end.
 
--spec buffer_tlog_ops(mria_lib:tx(), data()) -> data().
+-spec buffer_tlog_ops(mria_rlog:tx(), data()) -> data().
 buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
-    Q = replayq:append(Q0, Transaction),
+    Q = replayq:append(Q0, [Transaction]),
     mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D#d{replayq = Q}.
 
@@ -400,12 +399,12 @@ handle_state_trans(OldState, State, Data) ->
     mria_status:notify_replicant_state(Data#d.shard, State),
     keep_state_and_data.
 
--spec do_push_tlog_entry(pid(), mria_lib:tlog_entry()) -> ok.
-do_push_tlog_entry(Pid, Batch) ->
+-spec do_push_tlog_entry(pid(), mria_rlog:entry()) -> ok.
+do_push_tlog_entry(Pid, TLOGEntry) ->
     ?tp(receive_tlog_entry,
-        #{ entry => Batch
+        #{ entry => TLOGEntry
          }),
-    Pid ! {tlog_entry, Batch},
+    Pid ! TLOGEntry,
     ok.
 
 -spec clear_table(atom()) -> ok.

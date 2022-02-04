@@ -1,11 +1,6 @@
 -ifndef(MRIA_RLOG_HRL).
 -define(MRIA_RLOG_HRL, true).
 
--record(rlog,
-        { key :: mria_lib:txid()
-        , ops :: mria_lib:tx()
-        }).
-
 -define(schema, mria_schema).
 
 %% Note to self: don't forget to update all the match specs in
@@ -18,6 +13,13 @@
         }).
 
 -define(LOCAL_CONTENT_SHARD, undefined).
+
+
+-record(entry,
+        { sender :: pid()
+        , seqno  :: mria_rlog:seqno()
+        , tx     :: mria_rlog:tx()
+        }).
 
 -define(IMPORTED(REF), {imported, REF}).
 

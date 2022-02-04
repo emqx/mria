@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -101,7 +101,7 @@ bootstrap_me(RemoteNode, Shard) ->
     end.
 
 %% Called from mnesia post_commit hook:
--spec dispatch(mria_rlog:shard(), _Tid, _Commit) -> ok.
+-spec dispatch(mria_rlog:shard(), mria_mnesia:tid(), mria_mnesia:commit_records()) -> ok.
 dispatch(Shard, Tid, Commit) ->
     Shard ! {trans, Tid, Commit},
     ok.
@@ -125,13 +125,16 @@ handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     mria_status:notify_agent_disconnect(Pid),
     St = St0#s{agents = lists:delete(Pid, Agents)},
     {noreply, St};
-handle_info({trans, Tid, Commit}, St0 = #s{shard = Shard, agents = Agents}) ->
+handle_info({trans, Tid, CommitRecord}, St0) ->
+    #s{shard = Shard, agents = Agents, seqno = SeqNo} = St0,
+    mria_status:notify_core_intercept_trans(Shard, SeqNo),
+    Tx = transform_commit(Tid, CommitRecord),
     lists:foreach(
       fun(Agent) ->
-              Agent ! {trans, Shard, Tid, Commit}
+              mria_rlog_agent:dispatch(Agent, SeqNo, Tx)
       end,
       Agents),
-    St = St0#s{seqno = St0#s.seqno + 1},
+    St = St0#s{seqno = SeqNo + 1},
     {noreply, St};
 handle_info(Info, St) ->
     ?tp(warning, "Received unknown event",
@@ -251,9 +254,24 @@ handle_mnesia_event(#?schema{mnesia_table = NewTab, shard = ChangedShard}, Activ
             {noreply, St0}
     end.
 
-%%================================================================================
-%% Internal exports (testing and debugging)
-%%================================================================================
+-spec transform_commit(mria_mnesia:tid(), mria_mnesia:commit_records()) ->
+          mria_rlog:tx().
+transform_commit(Tid, Commit) ->
+    Ops = maps:fold(
+            fun(K, Ops, Acc) when K =:= ram_copies;
+                                  K =:= disc_copies;
+                                  K =:= disc_only_copies ->
+                    Ops ++ Acc;
+               (ext, Ops0, Acc) ->
+                    Ops = [Op || {ext_copies, Ops1} <- Ops0,
+                                 {{ext, _Backend, _Module}, Op} <- Ops1],
+                    Ops ++ Acc;
+               (_K, _Ops, Acc) ->
+                    Acc
+            end,
+            [],
+            Commit),
+    {Tid, Ops}.
 
 %%================================================================================
 %% Internal exports (gen_rpc)

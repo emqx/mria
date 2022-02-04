@@ -54,7 +54,7 @@
 start_link(Shard) ->
     gen_server:start_link(?MODULE, Shard, []).
 
--spec import_batch(pid(), reference(), [mria_lib:tx()]) -> ok.
+-spec import_batch(pid(), reference(), [mria_rlog:tx()]) -> ok.
 import_batch(Server, Ref, Tx) ->
     gen_server:cast(Server, {import_batch, self(), Ref, Tx}).
 

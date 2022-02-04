@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/4, stop/1]).
+-export([start_link/3, stop/1, dispatch/3]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
@@ -42,7 +42,6 @@
 -record(d,
         { shard                :: mria_rlog:shard()
         , subscriber           :: mria_lib:subscriber()
-        , seqno          = 0   :: integer()
         , push_mode            :: sync | async
         }).
 
@@ -54,8 +53,8 @@
 %% API functions
 %%--------------------------------------------------------------------
 
-start_link(Shard, Subscriber, ReplaySince, SeqNo) ->
-    gen_statem:start_link(?MODULE, {Shard, Subscriber, ReplaySince, SeqNo}, []).
+start_link(Shard, Subscriber, ReplaySince) ->
+    gen_statem:start_link(?MODULE, {Shard, Subscriber, ReplaySince}, []).
 
 stop(Pid) ->
     try
@@ -67,15 +66,20 @@ stop(Pid) ->
             ok
     end.
 
+-spec dispatch(pid(), mria_rlog:seqno(), mria_rlog:tx()) -> ok.
+dispatch(AgentPid, SeqNo, TLOGEntry) ->
+    AgentPid ! {trans, SeqNo, TLOGEntry},
+    ok.
+
 %%--------------------------------------------------------------------
 %% gen_statem callbacks
 %%--------------------------------------------------------------------
 
 callback_mode() -> [handle_event_function, state_enter].
 
--spec init({mria_rlog:shard(), mria_lib:subscriber(), mria_lib:txid(), integer()}) ->
+-spec init({mria_rlog:shard(), mria_lib:subscriber(), integer()}) ->
           {ok, state(), data()}.
-init({Shard, Subscriber, _ReplaySince, SeqNo}) ->
+init({Shard, Subscriber, _ReplaySince}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain     => [mria, rlog, agent]
@@ -85,7 +89,6 @@ init({Shard, Subscriber, _ReplaySince, SeqNo}) ->
     D = #d{ shard          = Shard
           , subscriber     = Subscriber
           , push_mode      = mria_config:tlog_push_mode()
-          , seqno          = SeqNo
           },
     ?tp(info, rlog_agent_started,
         #{ shard => Shard
@@ -94,9 +97,8 @@ init({Shard, Subscriber, _ReplaySince, SeqNo}) ->
 
 -spec handle_event(gen_statem:event_type(), _EventContent, state(), data()) ->
           gen_statem:event_handler_result(state()).
-handle_event(info, {trans, Shard, Tid, Commit}, ?normal, D = #d{shard = Shard}) ->
-    %% Tid = ActivityId
-    handle_mnesia_event({Shard, Commit}, Tid, D);
+handle_event(info, {trans, SeqNo, TLOGEntry}, ?normal, D) ->
+    handle_mnesia_event(SeqNo, TLOGEntry, D);
 %% Common actions:
 handle_event({call, From}, stop, State, D) ->
     handle_stop(State, From, D);
@@ -146,36 +148,23 @@ handle_state_trans(_OldState, _State, _Data) ->
          }),
     keep_state_and_data.
 
--spec handle_mnesia_event({mria_rlog:shard(), mria_rlog:commit_records()}, term(), data()) ->
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+-spec handle_mnesia_event(mria_rlog:seqno(), mria_rlog:tx(), data()) ->
           fsm_result().
-handle_mnesia_event({Shard, Commit}, ActivityId, D = #d{shard = Shard}) ->
+handle_mnesia_event(SeqNo, Tx = {_Tid, _Ops}, D = #d{shard = Shard}) ->
     PushMode = D#d.push_mode,
-    SeqNo    = D#d.seqno,
-    Ops = maps:fold(
-            fun(K, Ops, Acc) when K =:= ram_copies;
-                                  K =:= disc_copies;
-                                  K =:= disc_only_copies ->
-                    Ops ++ Acc;
-               (ext, Ops0, Acc) ->
-                    Ops = [Op || {ext_copies, Ops1} <- Ops0,
-                                 {{ext, _Backend, _Module}, Op} <- Ops1],
-                    Ops ++ Acc;
-               (_K, _Ops, Acc) ->
-                    Acc
-            end,
-            [],
-            Commit),
     ?tp(rlog_realtime_op,
-        #{ ops         => Ops
-         , activity_id => ActivityId
+        #{ ops         => _Ops
+         , activity_id => _Tid
          , agent       => self()
          , seqno       => SeqNo
          }),
-    Tx = {self(), SeqNo, ActivityId, [Ops]},
-    ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, Tx),
-    mria_status:notify_core_intercept_trans(Shard, SeqNo),
-    {keep_state, D#d{seqno = SeqNo + 1}}.
-
-%%================================================================================
-%% Internal exports (testing and debugging)
-%%================================================================================
+    TLOGEntry = #entry{ sender = self()
+                      , seqno  = SeqNo
+                      , tx     = Tx
+                      },
+    ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, TLOGEntry),
+    keep_state_and_data.
