@@ -36,7 +36,6 @@
         , handle_cast/2
         , handle_info/2
         , handle_continue/2
-        , code_change/3
         ]).
 
 %% Internal exports
@@ -191,9 +190,6 @@ handle_call(probe, _From, State) ->
     {reply, true, State};
 handle_call(Call, _From, St) ->
     {reply, {error, {unknown_call, Call}}, St}.
-
-code_change(_OldVsn, St, _Extra) ->
-    {ok, St}.
 
 terminate(_Reason, St) ->
     {ok, St}.
