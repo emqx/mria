@@ -72,6 +72,7 @@ init(Shard) ->
                                  }),
     ?tp(mria_replica_importer_worker_start, #{shard => Shard}),
     State = #s{shard = Shard},
+    register(list_to_atom(atom_to_list(Shard) ++ "_importer_worker"), self()),
     {ok, State}.
 
 handle_call({set_initial_seqno, SeqNo}, _From, St) ->

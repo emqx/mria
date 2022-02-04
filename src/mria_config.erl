@@ -23,6 +23,7 @@
         , tlog_push_mode/0
         , strict_mode/0
         , replay_batch_size/0
+        , set_replay_batch_size/1
 
         , load_config/0
         , erase_all_config/0
@@ -99,7 +100,11 @@ strict_mode() ->
 
 -spec replay_batch_size() -> non_neg_integer().
 replay_batch_size() ->
-    persistent_term:get(?mria(replay_batch_size), 100).
+    persistent_term:get(?mria(replay_batch_size), 1000).
+
+-spec set_replay_batch_size(non_neg_integer()) -> ok.
+set_replay_batch_size(N) ->
+    persistent_term:put(?mria(replay_batch_size), N).
 
 -spec load_config() -> ok.
 load_config() ->
