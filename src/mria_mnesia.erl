@@ -192,7 +192,7 @@ cluster_view() ->
                    || Status <- [running, stopped]]).
 
 %% @doc Cluster nodes.
--spec(cluster_nodes(all | running | stopped) -> [node()]).
+-spec(cluster_nodes(all | running | stopped | cores) -> [node()]).
 cluster_nodes(all) ->
     Running = running_nodes(),
     %% Note: stopped replicant nodes won't appear in the list
@@ -200,7 +200,9 @@ cluster_nodes(all) ->
 cluster_nodes(running) ->
     running_nodes();
 cluster_nodes(stopped) ->
-    cluster_nodes(all) -- cluster_nodes(running).
+    cluster_nodes(all) -- cluster_nodes(running);
+cluster_nodes(cores) ->
+    db_nodes().
 
 %% @doc Running nodes.
 -spec(running_nodes() -> list(node())).
@@ -232,7 +234,7 @@ db_nodes() ->
 
 %% @doc Is this node in mnesia cluster?
 is_node_in_cluster() ->
-    mria_mnesia:cluster_nodes(all) =/= [node()].
+    cluster_nodes(cores) =/= [node()].
 
 %% @doc Is the node in mnesia cluster?
 -spec(is_node_in_cluster(node()) -> boolean()).
