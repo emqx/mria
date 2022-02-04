@@ -126,7 +126,7 @@ handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     {noreply, St};
 handle_info({trans, Tid, CommitRecord}, St0) ->
     #s{shard = Shard, agents = Agents, seqno = SeqNo} = St0,
-    mria_status:notify_core_intercept_trans(Shard, SeqNo),
+    mria_status:notify_core_intercept_trans(Shard, SeqNo + 1),
     Tx = transform_commit(Tid, CommitRecord),
     lists:foreach(
       fun(Agent) ->

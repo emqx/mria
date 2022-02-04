@@ -84,12 +84,12 @@ handle_info(_Info, St) ->
 
 handle_cast({import_batch, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
     SeqNo = lists:foldl(fun(Tx, Acc) ->
+                                mria_lib:import_commit(transaction, Tx),
                                 ?tp(rlog_replica_import_trans,
                                     #{ seqno => Acc
                                      , ops   => Tx
                                      , shard => Shard
                                      }),
-                                mria_lib:import_commit(transaction, Tx),
                                 Acc + 1
                         end,
                         SeqNo0,
