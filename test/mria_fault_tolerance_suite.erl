@@ -182,7 +182,7 @@ t_rlog_replica_reconnect(_) ->
        end,
        fun(Trace) ->
                Seqnos = ?projection(seqno, ?of_kind("Connected to the core node", Trace)),
-               snabbkaffe:strictly_increasing(Seqnos)
+               snabbkaffe:increasing(Seqnos)
        end).
 
 %% Remove the injected errors and check table consistency

@@ -124,7 +124,6 @@ load_shard_config(Shard, Tables) ->
          }),
     create_shard_rlookup(Shard, Tables),
     Config = #{ tables => Tables
-              , match_spec => make_shard_match_spec(Tables)
               },
     ok = persistent_term:put(?shard_config(Shard), Config).
 
@@ -212,13 +211,6 @@ erase_all_config() ->
                    end
                  , persistent_term:get()
                  ).
-
--spec make_shard_match_spec([mria:table()]) -> ets:match_spec().
-make_shard_match_spec(Tables) ->
-    [{ {{Table, '_'}, '_', '_'}
-     , []
-     , ['$_']
-     } || Table <- Tables].
 
 -spec otp_is_compatible() -> boolean().
 otp_is_compatible() ->

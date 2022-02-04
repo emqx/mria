@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ wait_full_replication(Cluster, Timeout) ->
     Ref = make_ref(),
     emit_last_transaction(CoreNode, Ref),
     [{ok, _} = ?block_until(#{ ?snk_kind := rlog_import_trans
-                             , ops       := [{{?TABLE, '$seal'}, #?TABLE{key = '$seal', val = Ref}, write}]
+                             , ops       := [{write, ?TABLE, #?TABLE{key = '$seal', val = Ref}}]
                              , ?snk_meta := #{node := N}
                              }, Timeout, infinity)
      || #{node := N, role := replicant} <- Cluster],

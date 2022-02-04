@@ -143,9 +143,9 @@ no_tlog_gaps(Trace) ->
 %%================================================================================
 
 do_counter_import_check(CounterKey, Trace) ->
-    Writes = [element(3, Rec) || #{ ?snk_kind := rlog_import_trans
-                                  , ops := [{{test_tab, K}, Rec, write}]
-                                  } <- Trace, K =:= CounterKey],
+    Writes = [Val || #{ ?snk_kind := rlog_import_trans
+                      , ops := [{write, test_tab, {test_tab, K, Val}}]
+                      } <- Trace, K =:= CounterKey],
     ?assert(check_transaction_replay_sequence(Writes)),
     length(Writes).
 
