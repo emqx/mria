@@ -30,7 +30,7 @@
 
          upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
-         get_shard_stats/1, agents/0, replicants/0, get_shard_lag/1,
+         get_shard_stats/1, agents/0, agents/1, replicants/0, get_shard_lag/1,
 
          notify_replicant_state/2,
          notify_replicant_import_trans/2,
@@ -141,6 +141,15 @@ agents() ->
             ets:select(?stats_tab, [{{{?agent_pid, '$1', '$2'}, '$3'}, [], [{{'$1', '$2', '$3'}}]}])
     end.
 
+-spec agents(mria_rlog:shard()) -> [{_Remote :: node(), _Agent :: pid()}].
+agents(Shard) ->
+    case ets:whereis(?stats_tab) of
+        undefined ->
+            [];
+        _ ->
+            ets:select(?stats_tab, [{{{?agent_pid, Shard, '$1'}, '$2'}, [], [{{'$1', '$2'}}]}])
+    end.
+
 -spec replicants() -> [node()].
 replicants() ->
     lists:usort([N || {_, N, _} <- agents()]).
@@ -212,7 +221,7 @@ get_shard_stats(Shard) ->
                          undefined          -> undefined;
                          {ok, {Load, _, _}} -> Load
                      end,
-            Replicants = [N || {S, N, _} <- mria_status:agents(), S =:= Shard],
+            Replicants = [N || {N, _} <- mria_status:agents(Shard)],
             #{ last_intercepted_trans => get_stat(Shard, ?core_intercept)
              , weight                 => Weight
              , replicants             => Replicants
