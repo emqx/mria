@@ -84,19 +84,68 @@ handle_info(_Info, St) ->
     {noreply, St}.
 
 handle_cast({import_batch, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
-    SeqNo = lists:foldl(fun(Tx, Acc) ->
-                                mria_lib:import_commit(transaction, Tx),
-                                ?tp(rlog_replica_import_trans,
-                                    #{ seqno => Acc
-                                     , ops   => Tx
-                                     , shard => Shard
-                                     }),
-                                Acc + 1
-                        end,
-                        SeqNo0,
-                        Batch),
+    ok = import_batch(Batch),
+    SeqNo = SeqNo0 + length(Batch),
     mria_status:notify_replicant_import_trans(Shard, SeqNo),
     ReplyTo ! #imported{ref = Ref},
     {noreply, St#s{seqno = SeqNo}};
 handle_cast(_Cast, St) ->
     {noreply, St}.
+
+%%================================================================================
+%% Transaction import
+%%================================================================================
+
+-spec import_batch([mria_rlog:tx()]) -> ok.
+import_batch([]) ->
+    ok;
+import_batch(L = [{TID, _Ops}|_]) when ?IS_DIRTY(TID) ->
+    Rest = mnesia:async_dirty(fun do_import_batch/2, [dirty, L]),
+    import_batch(Rest);
+import_batch(L = [{TID, _Ops}|_]) when ?IS_TRANS(TID) ->
+    {atomic, Rest} = mnesia:transaction(fun do_import_batch/2, [transaction, L]),
+    import_batch(Rest).
+
+-spec do_import_batch(dirty | transaction, [mria_rlog:tx()]) -> [mria_rlog:tx()].
+do_import_batch(dirty, [{TID, Ops} | Rest]) when ?IS_DIRTY(TID) ->
+    ?tp(rlog_import_dirty,
+        #{ tid => TID
+         , ops => Ops
+         }),
+    lists:foreach(fun import_op_dirty/1, Ops),
+    do_import_batch(dirty, Rest);
+do_import_batch(transaction, [{TID, Ops} | Rest]) when ?IS_TRANS(TID) ->
+    ?tp(rlog_import_trans,
+        #{ tid => TID
+         , ops => Ops
+         }),
+    lists:foreach(fun import_op/1, Ops),
+    do_import_batch(transaction, Rest);
+do_import_batch(_, L) ->
+    L.
+
+-spec import_op(mria_rlog:op()) -> ok.
+import_op(Op) ->
+    case Op of
+        {write, Tab, Rec} ->
+            mnesia:write(Tab, Rec, write);
+        {delete, Tab, Key} ->
+            mnesia:delete({Tab, Key});
+        {delete_object, Tab, Rec} ->
+            mnesia:delete_object(Tab, Rec, write);
+        {clear_table, Tab} ->
+            mria_activity:clear_table(Tab)
+    end.
+
+-spec import_op_dirty(mria_rlog:op()) -> ok.
+import_op_dirty(Op) ->
+    case Op of
+        {write, Tab, Rec} ->
+            mnesia:dirty_write(Tab, Rec);
+        {delete, Tab, Key} ->
+            mnesia:dirty_delete({Tab, Key});
+        {delete_object, Tab, Rec} ->
+            mnesia:dirty_delete_object(Tab, Rec);
+        {clear_table, Tab} ->
+            mnesia:clear_table(Tab)
+    end.

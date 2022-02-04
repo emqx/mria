@@ -19,7 +19,6 @@
 
 -export([ approx_checkpoint/0
         , make_key/1
-        , import_commit/2
 
         , rpc_call/4
         , rpc_cast/4
@@ -92,51 +91,6 @@ make_key(undefined) ->
 %% make_key_in_past(Dt) ->
 %%     {TS, Node} = make_key(),
 %%     {TS - Dt, Node}.
-
-%%================================================================================
-%% Transaction import
-%%================================================================================
-
--spec import_commit(transaction | dirty, mria_rlog:tx()) -> ok.
-import_commit(ImportMode, {TID, Ops}) when ImportMode =:= dirty;
-                                           ?IS_DIRTY(TID) ->
-    ?tp(rlog_import_dirty,
-        #{ tid => TID
-         , ops => Ops
-         }),
-    ok = mnesia:async_dirty(fun lists:foreach/2, [fun import_op_dirty/1, Ops]);
-import_commit(transaction, {_TID, Ops}) ->
-    ?tp(rlog_import_trans,
-        #{ tid => _TID
-         , ops => Ops
-         }),
-    {atomic, ok} = mnesia:transaction(fun lists:foreach/2, [fun import_op/1, Ops]).
-
--spec import_op(mria_rlog:op()) -> ok.
-import_op(Op) ->
-    case Op of
-        {write, Tab, Rec} ->
-            mnesia:write(Tab, Rec, write);
-        {delete, Tab, Key} ->
-            mnesia:delete({Tab, Key});
-        {delete_object, Tab, Rec} ->
-            mnesia:delete_object(Tab, Rec, write);
-        {clear_table, Tab} ->
-            mria_activity:clear_table(Tab)
-    end.
-
--spec import_op_dirty(mria_rlog:op()) -> ok.
-import_op_dirty(Op) ->
-    case Op of
-        {write, Tab, Rec} ->
-            mnesia:dirty_write(Tab, Rec);
-        {delete, Tab, Key} ->
-            mnesia:dirty_delete({Tab, Key});
-        {delete_object, Tab, Rec} ->
-            mnesia:dirty_delete_object(Tab, Rec);
-        {clear_table, Tab} ->
-            mnesia:clear_table(Tab)
-    end.
 
 %%================================================================================
 %% RPC
