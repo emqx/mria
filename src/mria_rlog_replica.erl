@@ -104,7 +104,7 @@ init({ParentSup, Shard}) ->
 %% Main loop:
 handle_event(info, Tx = #entry{}, State, D) ->
     handle_tlog_entry(State, Tx, D);
-handle_event(info, ?IMPORTED(Ref), _State, D = #d{importer_ref = Ref}) ->
+handle_event(info, #imported{ref = Ref}, _State, D = #d{importer_ref = Ref}) ->
     handle_importer_ack(D);
 %% Events specific to `disconnected' state:
 handle_event(enter, OldState, ?disconnected, D) ->
@@ -116,7 +116,7 @@ handle_event(timeout, ?reconnect, ?disconnected, D) ->
 handle_event(enter, OldState, ?bootstrap, D) ->
     handle_state_trans(OldState, ?bootstrap, D),
     initiate_bootstrap(D);
-handle_event(info, {bootstrap_complete, _Pid, Checkpoint}, ?bootstrap, D) ->
+handle_event(info, #bootstrap_complete{checkpoint = Checkpoint}, ?bootstrap, D) ->
     handle_bootstrap_complete(Checkpoint, D);
 %% Events specific to `local_replay' state:
 handle_event(enter, OldState, ?local_replay, D) ->

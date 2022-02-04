@@ -14,6 +14,7 @@
 
 -define(LOCAL_CONTENT_SHARD, undefined).
 
+%% Messages
 
 -record(entry,
         { sender :: pid()
@@ -21,6 +22,13 @@
         , tx     :: mria_rlog:tx()
         }).
 
--define(IMPORTED(REF), {imported, REF}).
+-record(imported,
+        { ref :: reference()
+        }).
+
+-record(bootstrap_complete,
+        { sender :: pid()
+        , checkpoint
+        }).
 
 -endif.

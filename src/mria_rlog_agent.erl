@@ -24,7 +24,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/3, stop/1, dispatch/3]).
+-export([start_link/4, stop/1, dispatch/3]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
@@ -53,8 +53,8 @@
 %% API functions
 %%--------------------------------------------------------------------
 
-start_link(Shard, Subscriber, ReplaySince) ->
-    gen_statem:start_link(?MODULE, {Shard, Subscriber, ReplaySince}, []).
+start_link(Shard, Subscriber, ReplaySince, SeqNo) ->
+    gen_statem:start_link(?MODULE, {Shard, Subscriber, ReplaySince, SeqNo}, []).
 
 stop(Pid) ->
     try

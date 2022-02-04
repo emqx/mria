@@ -95,7 +95,7 @@ handle_cast({import_batch, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = 
                         SeqNo0,
                         Batch),
     mria_status:notify_replicant_import_trans(Shard, SeqNo),
-    ReplyTo ! ?IMPORTED(Ref),
+    ReplyTo ! #imported{ref = Ref},
     {noreply, St#s{seqno = SeqNo}};
 handle_cast(_Cast, St) ->
     {noreply, St}.

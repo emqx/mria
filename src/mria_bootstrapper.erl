@@ -35,6 +35,7 @@
 %% Internal exports:
 -export([do_push_batch/2, do_complete/3]).
 
+-include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %%================================================================================
@@ -132,7 +133,7 @@ handle_cast(_Cast, St) ->
 
 handle_call({complete, Server, Checkpoint}, From, St = #client{server = Server, parent = Parent, shard = Shard}) ->
     ?tp(info, shard_bootstrap_complete, #{}),
-    Parent ! {bootstrap_complete, self(), Checkpoint},
+    Parent ! #bootstrap_complete{sender = self(), checkpoint = Checkpoint},
     gen_server:reply(From, ok),
     mria_status:notify_replicant_bootstrap_complete(Shard),
     {stop, normal, St};
