@@ -66,7 +66,7 @@
 %% Types
 %%--------------------------------------------------------------------
 
--type tid() :: {integer(), pid()}
+-type tid() :: {tid, integer(), pid()}
              | {dirty, pid()}.
 
 -type commit_records() :: #{ node => node()
