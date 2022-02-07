@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -214,7 +214,7 @@ core_node_weight(Shard) ->
         undefined ->
             undefined;
         _Pid ->
-            NAgents = length(mria_status:agents()),
+            NAgents = length(mria_status:agents(Shard)),
             %% TODO: Add OLP check
             Load = 1.0 * NAgents,
             %% The return values will be lexicographically sorted. Load will
