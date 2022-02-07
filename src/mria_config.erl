@@ -29,6 +29,8 @@
         , erase_all_config/0
 
           %% Shard config:
+        , set_dirty_shard/2
+        , dirty_shard/1
         , load_shard_config/2
         , erase_shard_config/1
         , shard_rlookup/1
@@ -61,6 +63,7 @@
 
 -define(shard_rlookup(TABLE), {mria_shard_rlookup, TABLE}).
 -define(shard_config(SHARD), {mria_shard_config, SHARD}).
+-define(is_dirty(SHARD), {mria_is_dirty_shard, SHARD}).
 
 -define(mria(Key), {mria, Key}).
 
@@ -115,6 +118,14 @@ load_config() ->
     copy_from_env(replay_batch_size),
     copy_from_env(tlog_push_mode),
     consistency_check().
+
+-spec set_dirty_shard(mria_rlog:shard(), boolean()) -> ok.
+set_dirty_shard(Shard, IsDirty) ->
+    ok = persistent_term:put(?is_dirty(Shard), IsDirty).
+
+-spec dirty_shard(mria_rlog:shard()) -> boolean().
+dirty_shard(Shard) ->
+    persistent_term:get(?is_dirty(Shard), false).
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
 load_shard_config(Shard, Tables) ->

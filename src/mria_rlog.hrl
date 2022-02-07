@@ -16,6 +16,8 @@
 
 -define(IS_DIRTY(TID), (element(1, (TID)) =:= dirty)).
 
+-define(IS_TRANS(TID), (element(1, (TID)) =:= tid)).
+
 %% Messages
 
 -record(entry,
