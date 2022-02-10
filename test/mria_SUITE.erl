@@ -685,7 +685,7 @@ t_mnesia_post_commit_hook(_) ->
                                                      ],
                     N <- Cores
                ],
-               {Trace1, _} = ?split_trace_at(test_end, Trace),
+               {Trace1, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace),
                mria_rlog_props:all_intercepted_commit_logs_received(Trace1),
                ok
        end).
