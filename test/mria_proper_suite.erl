@@ -43,14 +43,15 @@ t_import_transactions(Config0) when is_list(Config0) ->
                          numtests => 100,
                          timeout  => 100000
                         }} | Config0],
-    ?run_prop(Config, prop()).
+    ClusterConfig = [core, core, replicant, replicant],
+    ?run_prop(Config, prop(ClusterConfig)).
 
-prop() ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+prop(ClusterConfig) ->
+    Cluster = mria_ct:cluster(ClusterConfig, mria_mnesia_test_util:common_env()),
     snabbkaffe:fix_ct_logging(),
     ?forall_trace(
        Cmds, commands(?MODULE),
-       #{timetrap => 10000},
+       #{timetrap => 20000},
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
            ok = mria_mnesia_test_util:wait_tables(Nodes),
@@ -65,6 +66,18 @@ prop() ->
                ?assertMatch(ok, Result),
                true
        end).
+
+t_import_transactions_mixed_cluster(Config0) when is_list(Config0) ->
+    Config = [{proper, #{max_size => 300,
+                         numtests => 100,
+                         timeout  => 100000
+                        }} | Config0],
+    ClusterConfig = [ core
+                    , {core, [{mria, db_backend, mnesia}]}
+                    , replicant
+                    , replicant
+                    ],
+    ?run_prop(Config, prop(ClusterConfig)).
 
 %%================================================================================
 %% Proper generators
@@ -215,10 +228,10 @@ restart_mria(Node) ->
     {ok, _} = rpc:call(Node, application, ensure_all_started, [mria]).
 
 core_node() ->
-    mria_ct:node_id(n1).
+    oneof([mria_ct:node_id(n1), mria_ct:node_id(n2)]).
 
 replicant_node() ->
-    mria_ct:node_id(n2).
+    oneof([mria_ct:node_id(n3), mria_ct:node_id(n4)]).
 
 get_records(Node, Table) ->
     Records = rpc:call(Node, ets, tab2list, [Table]),

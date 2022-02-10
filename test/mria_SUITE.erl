@@ -690,6 +690,40 @@ t_mnesia_post_commit_hook(_) ->
                ok
        end).
 
+t_replicant_receives_commits_from_pure_mnesia(_) ->
+    Cluster = mria_ct:cluster( [ core
+                               , {core, [{mria, db_backend, mnesia}]}
+                               , replicant
+                               , replicant
+                               ]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [_N1, N2, _N3, _N4] = mria_ct:start_cluster(mria, Cluster),
+           ?assertEqual({ok, mnesia}, erpc:call(N2, application, get_env, [mria, db_backend])),
+           %% generate operations in the pure mnesia node
+           %% 1. transaction
+           ?assertEqual(
+              {atomic, ok},
+              erpc:call(N2, mria, transaction,
+                        [test_shard, fun() -> mnesia:write({test_tab, 1, 1}) end])),
+           %% 2. dirty write
+           ?assertEqual(ok, erpc:call(N2, mria, dirty_write, [{test_tab, 2, 2}])),
+           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           ?tp(test_end, #{}),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       fun(Trace0) ->
+               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace0),
+               mria_rlog_props:all_intercepted_commit_logs_received(Trace),
+               ok
+       end).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10
