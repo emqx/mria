@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% Test database consistency with random transactions
--module(mria_proper_suite).
+-module(mria_proper_mixed_cluster_suite).
 
 -compile(export_all).
 -compile(nowarn_export_all).
@@ -27,12 +27,15 @@
 %% Testcases
 %%================================================================================
 
-t_import_transactions(Config0) when is_list(Config0) ->
+t_import_transactions_mixed_cluster(Config0) when is_list(Config0) ->
     Config = [{proper, #{max_size => 300,
                          numtests => 100,
                          timeout  => 100000
                         }} | Config0],
-    ClusterConfig = [core, replicant],
+    ClusterConfig = [ core
+                    , {core, [{mria, db_backend, mnesia}]}
+                    , replicant
+                    ],
     ?run_prop(Config, mria_proper_utils:prop(ClusterConfig, ?MODULE)).
 
 %%================================================================================
@@ -41,7 +44,7 @@ t_import_transactions(Config0) when is_list(Config0) ->
 
 %% Initial model value at system start. Should be deterministic.
 initial_state() ->
-    #s{cores = [n1], replicants = [n2]}.
+    #s{cores = [n1, n2], replicants = [n3]}.
 
 command(State) -> mria_proper_utils:command(State).
 precondition(State, Op) -> mria_proper_utils:precondition(State, Op).
