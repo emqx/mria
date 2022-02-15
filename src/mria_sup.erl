@@ -23,7 +23,8 @@
 -export([init/1]).
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    Backend = mria_rlog:backend(),
+    supervisor:start_link({local, ?MODULE}, ?MODULE, Backend).
 
 stop() ->
     mria_lib:shutdown_process(?MODULE).
@@ -31,8 +32,20 @@ stop() ->
 is_running() ->
     is_pid(whereis(?MODULE)).
 
-init([]) ->
-    {ok, {{one_for_all, 0, 3600},
+-spec init(mria:backend()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
+init(mnesia) ->
+    {ok, {#{ strategy => one_for_all
+           , intensity => 0
+           , period => 3600
+           },
+          [child(mria_membership, worker),
+           child(mria_node_monitor, worker)
+          ]}};
+init(rlog) ->
+    {ok, {#{ strategy => one_for_all
+           , intensity => 0
+           , period => 3600
+           },
           [child(mria_membership, worker),
            child(mria_node_monitor, worker),
            child(mria_rlog_sup, supervisor)
