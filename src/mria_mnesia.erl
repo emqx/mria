@@ -212,17 +212,7 @@ cluster_nodes(cores) ->
         core ->
             db_nodes();
         replicant ->
-            case mria_status:shards_up() of
-                [Shard | _] ->
-                    {ok, CoreNode} = mria_status:upstream_node(Shard),
-                    case mria_lib:rpc_call(CoreNode, ?MODULE, ?FUNCTION_NAME, [cores]) of
-                        {badrpc, _} -> [];
-                        {badtcp, _} -> [];
-                        Result      -> Result
-                    end;
-                [] ->
-                    []
-            end
+            mria_lb:core_nodes()
     end.
 
 %% @doc Running nodes.
