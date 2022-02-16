@@ -130,8 +130,8 @@ check_state(Cmds, #s{bag = Bag, set = Set}, Node) ->
     compare_lists(set, Node, Cmds, lists:sort(maps:to_list(Set)), get_records(Node, test_tab)).
 
 compare_lists(Type, Node, Cmds, Expected, Got) ->
-    Unexpected = Expected -- Got,
-    Missing = Got -- Expected,
+    Missing = Expected -- Got,
+    Unexpected = Got -- Expected,
     Comment = [ {node, Node}
               , {cmds, Cmds}
               , {unexpected, Unexpected}
