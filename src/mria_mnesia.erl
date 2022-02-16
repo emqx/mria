@@ -208,7 +208,22 @@ cluster_nodes(running) ->
 cluster_nodes(stopped) ->
     cluster_nodes(all) -- cluster_nodes(running);
 cluster_nodes(cores) ->
-    db_nodes().
+    case mria_rlog:role() of
+        core ->
+            db_nodes();
+        replicant ->
+            case mria_status:shards_up() of
+                [Shard | _] ->
+                    {ok, CoreNode} = mria_status:upstream_node(Shard),
+                    case mria_lib:rpc_call(CoreNode, ?MODULE, ?FUNCTION_NAME, [cores]) of
+                        {badrpc, _} -> [];
+                        {badtcp, _} -> [];
+                        Result      -> Result
+                    end;
+                [] ->
+                    []
+            end
+    end.
 
 %% @doc Running nodes.
 -spec(running_nodes() -> list(node())).
@@ -234,7 +249,8 @@ running_nodes() ->
     end.
 
 %% @doc List Mnesia DB nodes.  Used by `mria_lb' to check if nodes
-%% reported by core discovery callback are in the same cluster.
+%% reported by core discovery callback are in the same cluster.  This
+%% should be called only on the core nodes themselves.
 db_nodes() ->
     mnesia:system_info(db_nodes).
 
