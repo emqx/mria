@@ -36,6 +36,10 @@ prop(ClusterConfig, PropModule) ->
        try
            Nodes = mria_ct:start_cluster(mria, Cluster),
            ok = mria_mnesia_test_util:wait_tables(Nodes),
+           io:format(user, ">>>>>>>>~n roles ~p~n",
+                  [erpc:multicall(Nodes, mria_rlog, role, [])]),
+           io:format(user, ">>>>>>>>~n backends ~p~n",
+                  [erpc:multicall(Nodes, mria_rlog, backend, [])]),
            {History, State, Result} = run_commands(PropModule, Cmds),
            mria_mnesia_test_util:wait_full_replication(Cluster),
            [check_state(Cmds, State, Node) || Node <- Nodes],
@@ -108,10 +112,13 @@ command(State) ->
 precondition(_State, {call, _Mod, _Fun, _Args}) ->
     true.
 
-postcondition(_State, {call, _Mod, _Fun, _Args}, _Res) ->
+postcondition(_State, _Op = {call, _Mod, _Fun, _Args}, _Res) ->
+    ?tp(postcondition, #{state => _State, op => _Op, res => _Res}),
     true.
 
-next_state(State, _Res, {call, ?MODULE, execute, [_, Args]}) ->
+next_state(State, _Res, _Op1 = {call, ?MODULE, execute, [_, Args]}) ->
+    ?tp(proper_next_state, #{state => State, res => _Res, op => _Op1}),
+    io:format(user, "~n>>>>>>> next state~n  ~p~n", [#{state => State, res => _Res, op => _Op1}]),
     case Args of
         {clear_table, test_tab} ->
             State#s{set = #{}};
@@ -161,28 +168,37 @@ symbolic_exec_op({delete_object, test_bag, Rec}, State = #s{bag = Old}) ->
     Bag = lists:delete(Rec, Old),
     State#s{bag = Bag}.
 
-execute_op({write, Tab, Key, Val}) ->
+execute_op(Op = {write, Tab, Key, Val}) ->
+    ?tp(error, "execute op >>>>>>>", #{me => node(), op => Op}),
     ok = mnesia:write({Tab, Key, Val});
-execute_op({delete, Tab, Key}) ->
+execute_op(Op = {delete, Tab, Key}) ->
+    ?tp(error, "execute op >>>>>>>", #{me => node(), op => Op}),
     ok = mnesia:delete({Tab, Key});
-execute_op({delete_object, Tab, {K, V}}) ->
+execute_op(Op = {delete_object, Tab, {K, V}}) ->
+    ?tp(error, "execute op >>>>>>>", #{me => node(), op => Op}),
     ok = mnesia:delete_object({Tab, K, V}).
 
-execute_op_dirty({write, Tab, Key, Val}) ->
+execute_op_dirty(Op = {write, Tab, Key, Val}) ->
+    ?tp(error, "execute op dirty >>>>>>>", #{me => node(), op => Op}),
     ok = mria:dirty_write({Tab, Key, Val});
-execute_op_dirty({delete, Tab, Key}) ->
+execute_op_dirty(Op = {delete, Tab, Key}) ->
+    ?tp(error, "execute op dirty >>>>>>>", #{me => node(), op => Op}),
     ok = mria:dirty_delete({Tab, Key});
-execute_op_dirty({delete_object, Tab, {K, V}}) ->
+execute_op_dirty(Op = {delete_object, Tab, {K, V}}) ->
+    ?tp(error, "execute op dirty >>>>>>>", #{me => node(), op => Op}),
     ok = mria:dirty_delete_object({Tab, K, V}).
 
 execute(Node, {clear_table, Tab}) ->
+    ?tp(proper_execute_clear, #{me => node(), target => Node, tab => Tab}),
     {atomic, ok} = rpc:call(Node, mria, clear_table, [Tab]);
 execute(Node, {transaction, Ops}) ->
+    ?tp(proper_execute_trans, #{me => node(), target => Node, ops => Ops}),
     Fun = fun() ->
                   lists:foreach(fun execute_op/1, Ops)
           end,
     {atomic, ok} = rpc:call(Node, mria, transaction, [test_shard, Fun]);
 execute(Node, {dirty, Op}) ->
+    ?tp(proper_execute_dirty, #{me => node(), target => Node, op => Op}),
     ok = rpc:call(Node, ?MODULE, execute_op_dirty, [Op]).
 
 restart_mria(Node) ->
@@ -190,6 +206,7 @@ restart_mria(Node) ->
     {ok, _} = rpc:call(Node, application, ensure_all_started, [mria]).
 
 participant(#s{cores = Cores, replicants = Replicants}) ->
+    %% oneof([cluster_node(Cores), cluster_node(Replicants)]).
     cluster_node(Cores ++ Replicants).
 
 cluster_node(Names) ->

@@ -703,6 +703,7 @@ t_replicant_receives_commits_from_pure_mnesia(_) ->
        try
            Nodes = [_N1, N2, _N3, _N4] = mria_ct:start_cluster(mria, Cluster),
            ?assertEqual({ok, mnesia}, erpc:call(N2, application, get_env, [mria, db_backend])),
+           ?assertEqual(mnesia, erpc:call(N2, mria_rlog, backend, [])),
            %% generate operations in the pure mnesia node
            %% 1. transaction
            ?assertEqual(
