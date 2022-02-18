@@ -196,5 +196,11 @@ cluster_node(Names) ->
     oneof([mria_ct:node_id(Name) || Name <- Names]).
 
 get_records(Node, Table) ->
-    Records = rpc:call(Node, ets, tab2list, [Table]),
+    {atomic, Records} =
+        rpc:call(Node, mria, ro_transaction,
+                 [ test_shard
+                 , fun() ->
+                           mnesia:foldr(fun(Record, Acc) -> [Record | Acc] end, [], Table)
+                   end]
+                ),
     lists:sort([{K, V} || {_, K, V} <- Records]).
