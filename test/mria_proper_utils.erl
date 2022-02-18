@@ -197,7 +197,7 @@ cluster_node(Names) ->
 
 get_records(Node, Table) ->
     {atomic, Records} =
-        rpc:call(Node, mria, ro_transaction,
+        rpc:call(Node, mria, transaction,
                  [ test_shard
                  , fun() ->
                            mnesia:foldr(fun(Record, Acc) -> [Record | Acc] end, [], Table)
