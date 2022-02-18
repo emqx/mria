@@ -47,6 +47,18 @@ initial_state() ->
     #s{cores = [n1, n2], replicants = [n3]}.
 
 command(State) -> mria_proper_utils:command(State).
+precondition(_State, {call, _Mod, execute, [_Node, Op]}) ->
+    %% With more than one core, a race condition involving a
+    %% `dirty_write' / `dirty_delete' pair of ops happening on
+    %% different cores can arise: one of the cores might process the
+    %% dirty ops in a different order than what the state machine
+    %% expects, thus violating the model consistency.  Since this is
+    %% inherent to mnesia, for this test we simply forbid dirty
+    %% operations altogether.
+    case Op of
+        {dirty, _} -> false;
+        _ -> true
+    end;
 precondition(State, Op) -> mria_proper_utils:precondition(State, Op).
 postcondition(State, Op, Res) -> mria_proper_utils:postcondition(State, Op, Res).
 next_state(State, Res, Op) -> mria_proper_utils:next_state(State, Res, Op).
