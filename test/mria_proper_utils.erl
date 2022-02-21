@@ -130,8 +130,8 @@ check_state(Cmds, #s{bag = Bag, set = Set}, Node) ->
     compare_lists(set, Node, Cmds, lists:sort(maps:to_list(Set)), get_records(Node, test_tab)).
 
 compare_lists(Type, Node, Cmds, Expected, Got) ->
-    Unexpected = Expected -- Got,
-    Missing = Got -- Expected,
+    Missing = Expected -- Got,
+    Unexpected = Got -- Expected,
     Comment = [ {node, Node}
               , {cmds, Cmds}
               , {unexpected, Unexpected}
@@ -196,5 +196,11 @@ cluster_node(Names) ->
     oneof([mria_ct:node_id(Name) || Name <- Names]).
 
 get_records(Node, Table) ->
-    Records = rpc:call(Node, ets, tab2list, [Table]),
+    {atomic, Records} =
+        rpc:call(Node, mria, transaction,
+                 [ test_shard
+                 , fun() ->
+                           mnesia:foldr(fun(Record, Acc) -> [Record | Acc] end, [], Table)
+                   end]
+                ),
     lists:sort([{K, V} || {_, K, V} <- Records]).
