@@ -20,7 +20,6 @@
 -export([ role/0
         , backend/0
         , rpc_module/0
-        , tlog_push_mode/0
         , strict_mode/0
         , replay_batch_size/0
         , set_replay_batch_size/1
@@ -36,6 +35,9 @@
         , shard_rlookup/1
         , shard_config/1
         , core_node_discovery_callback/0
+
+        , set_shard_transport/2
+        , shard_transport/1
 
           %% Callbacks
         , register_callback/2
@@ -64,6 +66,8 @@
 -define(shard_rlookup(TABLE), {mria_shard_rlookup, TABLE}).
 -define(shard_config(SHARD), {mria_shard_config, SHARD}).
 -define(is_dirty(SHARD), {mria_is_dirty_shard, SHARD}).
+-define(shard_transport(SHARD), {mria_shard_transport, SHARD}).
+-define(shard_transport, mria_shard_transport).
 
 -define(mria(Key), {mria, Key}).
 
@@ -92,10 +96,6 @@ role() ->
 rpc_module() ->
     persistent_term:get(?mria(rlog_rpc_module), gen_rpc).
 
--spec tlog_push_mode() -> sync | async.
-tlog_push_mode() ->
-    persistent_term:get(?mria(tlog_push_mode), async).
-
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().
 strict_mode() ->
@@ -116,16 +116,31 @@ load_config() ->
     copy_from_env(node_role),
     copy_from_env(strict_mode),
     copy_from_env(replay_batch_size),
-    copy_from_env(tlog_push_mode),
+    copy_from_env(shard_transport),
     consistency_check().
 
 -spec set_dirty_shard(mria_rlog:shard(), boolean()) -> ok.
+set_dirty_shard(Shard, IsDirty) when IsDirty =:= true;
+                                     IsDirty =:= false ->
+    ok = persistent_term:put(?is_dirty(Shard), IsDirty);
 set_dirty_shard(Shard, IsDirty) ->
-    ok = persistent_term:put(?is_dirty(Shard), IsDirty).
+    error({badarg, Shard, IsDirty}).
 
 -spec dirty_shard(mria_rlog:shard()) -> boolean().
 dirty_shard(Shard) ->
     persistent_term:get(?is_dirty(Shard), false).
+
+-spec set_shard_transport(mria_rlog:shard(), mria_rlog:transport()) -> ok.
+set_shard_transport(Shard, Transport) when Transport =:= gen_rpc;
+                                           Transport =:= distr ->
+    ok = persistent_term:put(?shard_transport(Shard), Transport);
+set_shard_transport(Shard, Transport) ->
+    error({badarg, Shard, Transport}).
+
+-spec shard_transport(mria_rlog:shard()) -> mria_rlog:transport().
+shard_transport(Shard) ->
+    Default = persistent_term:get(?mria(shard_transport), gen_rpc),
+    persistent_term:get(?shard_transport(Shard), Default).
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
 load_shard_config(Shard, Tables) ->
@@ -166,6 +181,14 @@ callback(Name) ->
 
 -spec consistency_check() -> ok.
 consistency_check() ->
+    case rpc_module() of
+        gen_rpc -> ok;
+        rpc     -> ok
+    end,
+    case persistent_term:get(?mria(shard_transport), gen_rpc) of
+        distr   -> ok;
+        gen_rpc -> ok
+    end,
     case {backend(), role(), otp_is_compatible()} of
         {mnesia, replicant, _} ->
             ?LOG(critical, "Configuration error: cannot use mnesia DB "
