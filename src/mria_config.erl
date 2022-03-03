@@ -139,7 +139,7 @@ set_shard_transport(Shard, Transport) ->
 
 -spec shard_transport(mria_rlog:shard()) -> mria_rlog:transport().
 shard_transport(Shard) ->
-    Default = persistent_term:get(?mria(shard_transport), gen_rpc),
+    Default = persistent_term:get(?mria(?shard_transport), gen_rpc),
     persistent_term:get(?shard_transport(Shard), Default).
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
