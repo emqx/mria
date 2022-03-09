@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -101,7 +101,7 @@ ring() ->
 ring(Status) ->
     lists:keysort(#member.hash, members(Status)).
 
--spec(local_member() -> member()).
+-spec(local_member() -> member() | false).
 local_member() ->
     lookup_member(node()).
 
@@ -238,7 +238,8 @@ init([]) ->
                       end,
     LocalMember = with_hash(#member{node = node(), guid = mria_guid:gen(),
                                     status = up, mnesia = IsMnesiaRunning,
-                                    ltime = erlang:timestamp()
+                                    ltime = erlang:timestamp(),
+                                    role = mria_rlog:role()
                                    }),
     true = ets:insert(membership, LocalMember),
     lists:foreach(fun(Node) ->
@@ -275,11 +276,13 @@ handle_call(Req, _From, State) ->
 
 handle_cast({node_up, Node}, State) ->
     ?LOG(info, "Node ~s up", [Node]),
+    %% Replicants do not get added to the list in practice because
+    %% they don't start in the cluster.
     case mria_mnesia:is_node_in_cluster(Node) of
         true ->
             Member = case lookup(Node) of
                        [M] -> M#member{status = up};
-                       []  -> #member{node = Node, status = up}
+                       []  -> #member{node = Node, status = up, role = mria_rlog:role(Node)}
                      end,
             insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)});
         false -> ignore
@@ -303,7 +306,7 @@ handle_cast({joining, Node}, State) ->
     ?LOG(info, "Node ~s joining", [Node]),
     insert(case lookup(Node) of
                [Member] -> Member#member{status = joining};
-               []       -> #member{node = Node, status = joining}
+               []       -> #member{node = Node, status = joining, role = mria_rlog:role(Node)}
            end),
     notify({node, joining, Node}, State),
     {noreply, State};
@@ -344,7 +347,7 @@ handle_cast({mnesia_up, Node}, State) ->
                [Member] ->
                    Member#member{status = up, mnesia = running};
                [] ->
-                   #member{node = Node, status = up, mnesia = running}
+                   #member{node = Node, status = up, mnesia = running, role = mria_rlog:role(Node)}
            end),
     spawn(?MODULE, pong, [Node, local_member()]),
     notify({mnesia, up, Node}, State),
