@@ -78,7 +78,7 @@ handle_msg(Msg = {create_splitview, Node}, Autoheal = #autoheal{delay = Delay, t
     ensure_cancel_timer(TRef),
     case mria_membership:is_all_alive() of
         true ->
-            Nodes = mria_mnesia:cluster_nodes(all),
+            Nodes = mria_mnesia:cluster_nodes(cores),
             case rpc:multicall(Nodes, mria_mnesia, cluster_view, []) of
                 {Views, []} ->
                     SplitView = lists:sort(fun compare_view/2, lists:usort(Views)),
@@ -134,7 +134,7 @@ heal_partition([]) ->
 heal_partition([{_, []}]) ->
     [];
 %% Partial partitions happened.
-heal_partition([{Nodes, []}|_]) ->
+heal_partition([{Nodes, []} | _]) ->
     reboot_minority(Nodes -- [node()]);
 heal_partition([{Majority, Minority}, {Minority, Majority}]) ->
     reboot_minority(Minority);
