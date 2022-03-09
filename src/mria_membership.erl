@@ -19,6 +19,7 @@
 -behaviour(gen_server).
 
 -include("mria.hrl").
+-include_lib("snabbkaffe/include/trace.hrl").
 
 -export([start_link/0, stop/0]).
 
@@ -73,6 +74,9 @@
         , code_change/3
         ]).
 
+%% internal exports
+-export([make_new_local_member/0]).
+
 -record(state, {monitors, events}).
 
 -type(event_type() :: partition | membership).
@@ -107,7 +111,10 @@ local_member() ->
 
 -spec(lookup_member(node()) -> member() | false).
 lookup_member(Node) ->
-    case ets:lookup(membership, Node) of [M] -> M; [] -> false end.
+    case ets:lookup(membership, Node) of
+        [M] -> M;
+        [] -> false
+    end.
 
 -spec(is_member(node()) -> boolean()).
 is_member(Node) ->
@@ -231,24 +238,13 @@ call(Req) ->
 
 init([]) ->
     process_flag(trap_exit, true),
+    logger:set_process_metadata(#{domain => [mria, membership]}),
     _ = ets:new(membership, [ordered_set, protected, named_table, {keypos, 2}]),
-    IsMnesiaRunning = case lists:member(node(), mria_mnesia:running_nodes()) of
-                          true  -> running;
-                          false -> stopped
-                      end,
-    LocalMember = with_hash(#member{node = node(), guid = mria_guid:gen(),
-                                    status = up, mnesia = IsMnesiaRunning,
-                                    ltime = erlang:timestamp(),
-                                    role = mria_rlog:role()
-                                   }),
-    true = ets:insert(membership, LocalMember),
-    lists:foreach(fun(Node) ->
-                      spawn(?MODULE, ping, [Node, LocalMember])
-                  end, mria_mnesia:cluster_nodes(all) -- [node()]),
+    case mria_rlog:role() of
+        core -> initialize_members();
+        replicant -> ok
+    end,
     {ok, #state{monitors = [], events = []}}.
-
-with_hash(Member = #member{node = Node, guid = Guid}) ->
-    Member#member{hash = erlang:phash2({Node, Guid}, trunc(math:pow(2, 32) - 1))}.
 
 handle_call({monitor, {Type, PidOrFun, true}}, _From, State) ->
     reply(ok, add_monitor({Type, PidOrFun}, State));
@@ -321,11 +317,13 @@ handle_cast({healing, Node}, State) ->
     {noreply, State};
 
 handle_cast({ping, Member = #member{node = Node}}, State) ->
+    ?tp(mria_membership_ping, #{member => Member}),
     pong(Node, local_member()),
     insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)}),
     {noreply, State};
 
 handle_cast({pong, Member = #member{node = Node}}, State) ->
+    ?tp(mria_membership_pong, #{member => Member}),
     insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)}),
     {noreply, State};
 
@@ -396,11 +394,38 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
+make_new_local_member() ->
+    IsMnesiaRunning = case lists:member(node(), mria_mnesia:running_nodes()) of
+                          true  -> running;
+                          false -> stopped
+                      end,
+    with_hash(#member{node = node(), guid = mria_guid:gen(),
+                      status = up, mnesia = IsMnesiaRunning,
+                      ltime = erlang:timestamp(),
+                      role = mria_rlog:role()
+                     }).
+
+initialize_members() ->
+    LocalMember = make_new_local_member(),
+    true = ets:insert(membership, LocalMember),
+    lists:foreach(fun(Node) ->
+                          spawn(?MODULE, ping, [Node, LocalMember])
+                  end, mria_mnesia:cluster_nodes(all) -- [node()]).
+
+with_hash(Member = #member{node = Node, guid = Guid}) ->
+    Member#member{hash = erlang:phash2({Node, Guid}, trunc(math:pow(2, 32) - 1))}.
+
 lookup(Node) ->
     ets:lookup(membership, Node).
 
-insert(Member) ->
-    ets:insert(membership, Member#member{ltime = erlang:timestamp()}).
+%% only insert core nodes into table; replicants do not take part
+%% in autoheal and leadership.
+insert(#member{role = replicant}) ->
+    true;
+insert(Member0) ->
+    Member = Member0#member{ltime = erlang:timestamp()},
+    ?tp(mria_membership_insert, #{member => Member}),
+    ets:insert(membership, Member).
 
 reply(Reply, State) ->
     {reply, Reply, State}.
