@@ -1,6 +1,6 @@
 {application, mria,
  [{description, "Async replication for Mnesia"},
-  {vsn, "0.1.0"},
+  {vsn, "git"},
   {mod, {mria_app,[]}},
   {registered,
    [mria_sup,
@@ -23,6 +23,6 @@
    ]},
   {modules, []},
   {licenses, ["Apache 2.0"]},
-  {maintainers, ["EMQ X Team <contact@emqx.io>"]},
+  {maintainers, ["EMQX Team <contact@emqx.io>"]},
   {links, [{"Github","https://github.com/emqx/mria"}]}
  ]}.
