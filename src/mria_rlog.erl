@@ -42,6 +42,7 @@
              , tx/0
              , seqno/0
              , entry/0
+             , transport/0
              ]).
 
 -include("mria_rlog.hrl").
@@ -74,6 +75,12 @@
 %% Note: seqno is specific for the core node, not for the entire
 %% cluster!
 -type seqno() :: non_neg_integer().
+
+-type transport() :: gen_rpc | distr.
+
+%%================================================================================
+%% API
+%%================================================================================
 
 status() ->
     Backend = backend(),

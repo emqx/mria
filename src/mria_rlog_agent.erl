@@ -42,7 +42,7 @@
 -record(d,
         { shard                :: mria_rlog:shard()
         , subscriber           :: mria_lib:subscriber()
-        , push_mode            :: sync | async
+        , transport            :: mria_rlog:transport()
         }).
 
 -type data() :: #d{}.
@@ -88,7 +88,7 @@ init({Shard, Subscriber, _ReplaySince}) ->
                                     }),
     D = #d{ shard          = Shard
           , subscriber     = Subscriber
-          , push_mode      = mria_config:tlog_push_mode()
+          , transport      = mria_config:shard_transport(Shard)
           },
     ?tp(info, rlog_agent_started,
         #{ shard => Shard
@@ -155,7 +155,7 @@ handle_state_trans(_OldState, _State, _Data) ->
 -spec handle_mnesia_event(mria_rlog:seqno(), mria_rlog:tx(), data()) ->
           fsm_result().
 handle_mnesia_event(SeqNo, Tx = {_Tid, _Ops}, D = #d{shard = Shard}) ->
-    PushMode = D#d.push_mode,
+    Transport = D#d.transport,
     ?tp(rlog_realtime_op,
         #{ ops         => _Ops
          , activity_id => _Tid
@@ -166,5 +166,5 @@ handle_mnesia_event(SeqNo, Tx = {_Tid, _Ops}, D = #d{shard = Shard}) ->
                       , seqno  = SeqNo
                       , tx     = Tx
                       },
-    ok = mria_rlog_replica:push_tlog_entry(PushMode, Shard, D#d.subscriber, TLOGEntry),
+    ok = mria_rlog_replica:push_tlog_entry(Transport, Shard, D#d.subscriber, TLOGEntry),
     keep_state_and_data.

@@ -113,6 +113,26 @@ t_probe(_Config) ->
                ok
        end).
 
+t_probe_pure_mnesia(_Config) ->
+    Cluster = mria_ct:cluster( [ core
+                               , {core, [{mria, db_backend, mnesia}]}
+                               , replicant
+                               ]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           ?assert(erpc:call(N3, mria_lb, probe, [N1, test_shard])),
+           %% should return false, since it's a pure mnesia node
+           ?assertNot(erpc:call(N3, mria_lb, probe, [N2, test_shard])),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 t_core_node_discovery(_Config) ->
     Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
     ?check_trace(

@@ -34,7 +34,7 @@ smoke-test:
 
 .PHONY: ct-consistency
 ct-consistency:
-	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite mria_proper_suite
+	$(REBAR) ct -v --readable=false --name $(CT_NODE_NAME) --suite mria_proper_suite,mria_proper_mixed_cluster_suite
 
 .PHONY: ct-fault-tolerance
 ct-fault-tolerance:
