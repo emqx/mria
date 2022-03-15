@@ -49,9 +49,6 @@ t_autoheal(Config) when is_list(Config) ->
                       [N1,N2,N3] = rpc:call(N2, mria, info, [running_nodes]),
                       [N1,N2,N3] = rpc:call(N3, mria, info, [running_nodes])
                   end),
-           rpc:call(N1, mria, leave, []),
-           rpc:call(N2, mria, leave, []),
-           rpc:call(N3, mria, leave, []),
            [N1, N2, N3]
        after
            ok = mria_ct:teardown_cluster(Cluster)
@@ -104,9 +101,6 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
                       [N1,N2,N3,N4,N5] = rpc:call(N5, mria, info, [running_nodes]),
                       ok
                   end),
-           rpc:call(N1, mria, leave, []),
-           rpc:call(N2, mria, leave, []),
-           rpc:call(N3, mria, leave, []),
            [N1, N2, N3]
        after
            ok = mria_ct:teardown_cluster(Cluster)
