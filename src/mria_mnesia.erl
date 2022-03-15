@@ -194,13 +194,9 @@ cluster_status(Node) ->
 
 -spec(cluster_view() -> {[node()], [node()]}).
 cluster_view() ->
-    Cores = sets:from_list(cluster_nodes(cores)),
-    Running0 = sets:from_list(cluster_nodes(running)),
-    Stopped0 = sets:from_list(cluster_nodes(stopped)),
-    Running = sets:intersection(Cores, Running0),
-    Stopped = sets:intersection(Cores, Stopped0),
-    list_to_tuple([lists:sort(sets:to_list(Nodes))
-                   || Nodes <- [Running, Stopped]]).
+    list_to_tuple([lists:sort([N || N <- cluster_nodes(Status),
+                                    mria_rlog:role(N) =:= core])
+                   || Status <- [running, stopped]]).
 
 %% @doc Cluster nodes.
 -spec(cluster_nodes(all | running | stopped | cores) -> [node()]).
