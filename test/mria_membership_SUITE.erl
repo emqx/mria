@@ -164,7 +164,7 @@ t_replicant_init(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       [fun assert_no_replicants_inserted/1]).
+       [fun ?MODULE:assert_no_replicants_inserted/1]).
 
 %%--------------------------------------------------------------------
 %% Helper functions
@@ -216,11 +216,12 @@ test_core_ping_pong(PingOrPong) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       [ fun assert_no_replicants_inserted/1
-       , fun(Trace0) ->
-                 {_, Trace} = ?split_trace_at(#{?snk_kind := done_waiting_for_tables}, Trace0),
-                 assert_cores_always_get_inserted(Trace)
-         end
+       [ fun ?MODULE:assert_no_replicants_inserted/1
+       , {"cores always get inserted",
+          fun(Trace0) ->
+                  {_, Trace} = ?split_trace_at(#{?snk_kind := done_waiting_for_tables}, Trace0),
+                  assert_cores_always_get_inserted(Trace)
+          end}
        ]).
 
 test_replicant_ping_pong(PingOrPong) ->
@@ -253,18 +254,19 @@ test_replicant_ping_pong(PingOrPong) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       [ fun assert_no_replicants_inserted/1
-       , fun(Trace0) ->
-                 case PingOrPong of
-                     ping ->
-                         {_, Trace} = ?split_trace_at(#{?snk_kind := done_waiting_for_tables}, Trace0),
-                         assert_cores_always_get_inserted(Trace);
-                     pong ->
-                         %% pongs from replicants do not result in
-                         %% cores being inserted.
-                         ok
-                 end
-         end
+       [ fun ?MODULE:assert_no_replicants_inserted/1
+       , {"cores get inserted on ping",
+          fun(Trace0) ->
+                  case PingOrPong of
+                      ping ->
+                          {_, Trace} = ?split_trace_at(#{?snk_kind := done_waiting_for_tables}, Trace0),
+                          assert_cores_always_get_inserted(Trace);
+                      pong ->
+                          %% pongs from replicants do not result in
+                          %% cores being inserted.
+                          ok
+                  end
+          end}
        ]).
 
 assert_expected_memberships(Node, Cores) ->
