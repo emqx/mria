@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 -behaviour(gen_server).
 
 -include("mria.hrl").
+-include_lib("snabbkaffe/include/trace.hrl").
 
 -export([start_link/0, stop/0]).
 
@@ -73,6 +74,9 @@
         , code_change/3
         ]).
 
+%% internal exports
+-export([make_new_local_member/0]).
+
 -record(state, {monitors, events}).
 
 -type(event_type() :: partition | membership).
@@ -101,13 +105,16 @@ ring() ->
 ring(Status) ->
     lists:keysort(#member.hash, members(Status)).
 
--spec(local_member() -> member()).
+-spec(local_member() -> member() | false).
 local_member() ->
     lookup_member(node()).
 
 -spec(lookup_member(node()) -> member() | false).
 lookup_member(Node) ->
-    case ets:lookup(membership, Node) of [M] -> M; [] -> false end.
+    case ets:lookup(membership, Node) of
+        [M] -> M;
+        [] -> false
+    end.
 
 -spec(is_member(node()) -> boolean()).
 is_member(Node) ->
@@ -231,23 +238,13 @@ call(Req) ->
 
 init([]) ->
     process_flag(trap_exit, true),
+    logger:set_process_metadata(#{domain => [mria, membership]}),
     _ = ets:new(membership, [ordered_set, protected, named_table, {keypos, 2}]),
-    IsMnesiaRunning = case lists:member(node(), mria_mnesia:running_nodes()) of
-                          true  -> running;
-                          false -> stopped
-                      end,
-    LocalMember = with_hash(#member{node = node(), guid = mria_guid:gen(),
-                                    status = up, mnesia = IsMnesiaRunning,
-                                    ltime = erlang:timestamp()
-                                   }),
-    true = ets:insert(membership, LocalMember),
-    lists:foreach(fun(Node) ->
-                      spawn(?MODULE, ping, [Node, LocalMember])
-                  end, mria_mnesia:cluster_nodes(all) -- [node()]),
+    case mria_rlog:role() of
+        core -> initialize_members();
+        replicant -> ok
+    end,
     {ok, #state{monitors = [], events = []}}.
-
-with_hash(Member = #member{node = Node, guid = Guid}) ->
-    Member#member{hash = erlang:phash2({Node, Guid}, trunc(math:pow(2, 32) - 1))}.
 
 handle_call({monitor, {Type, PidOrFun, true}}, _From, State) ->
     reply(ok, add_monitor({Type, PidOrFun}, State));
@@ -275,11 +272,13 @@ handle_call(Req, _From, State) ->
 
 handle_cast({node_up, Node}, State) ->
     ?LOG(info, "Node ~s up", [Node]),
+    %% Replicants do not get added to the list in practice because
+    %% they don't start in the cluster.
     case mria_mnesia:is_node_in_cluster(Node) of
         true ->
             Member = case lookup(Node) of
                        [M] -> M#member{status = up};
-                       []  -> #member{node = Node, status = up}
+                       []  -> #member{node = Node, status = up, role = mria_rlog:role(Node)}
                      end,
             insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)});
         false -> ignore
@@ -303,7 +302,7 @@ handle_cast({joining, Node}, State) ->
     ?LOG(info, "Node ~s joining", [Node]),
     insert(case lookup(Node) of
                [Member] -> Member#member{status = joining};
-               []       -> #member{node = Node, status = joining}
+               []       -> #member{node = Node, status = joining, role = mria_rlog:role(Node)}
            end),
     notify({node, joining, Node}, State),
     {noreply, State};
@@ -318,11 +317,13 @@ handle_cast({healing, Node}, State) ->
     {noreply, State};
 
 handle_cast({ping, Member = #member{node = Node}}, State) ->
+    ?tp(mria_membership_ping, #{member => Member}),
     pong(Node, local_member()),
     insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)}),
     {noreply, State};
 
 handle_cast({pong, Member = #member{node = Node}}, State) ->
+    ?tp(mria_membership_pong, #{member => Member}),
     insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)}),
     {noreply, State};
 
@@ -344,7 +345,7 @@ handle_cast({mnesia_up, Node}, State) ->
                [Member] ->
                    Member#member{status = up, mnesia = running};
                [] ->
-                   #member{node = Node, status = up, mnesia = running}
+                   #member{node = Node, status = up, mnesia = running, role = mria_rlog:role(Node)}
            end),
     spawn(?MODULE, pong, [Node, local_member()]),
     notify({mnesia, up, Node}, State),
@@ -393,11 +394,38 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
+make_new_local_member() ->
+    IsMnesiaRunning = case lists:member(node(), mria_mnesia:running_nodes()) of
+                          true  -> running;
+                          false -> stopped
+                      end,
+    with_hash(#member{node = node(), guid = mria_guid:gen(),
+                      status = up, mnesia = IsMnesiaRunning,
+                      ltime = erlang:timestamp(),
+                      role = mria_rlog:role()
+                     }).
+
+initialize_members() ->
+    LocalMember = make_new_local_member(),
+    true = ets:insert(membership, LocalMember),
+    lists:foreach(fun(Node) ->
+                          spawn(?MODULE, ping, [Node, LocalMember])
+                  end, mria_mnesia:cluster_nodes(all) -- [node()]).
+
+with_hash(Member = #member{node = Node, guid = Guid}) ->
+    Member#member{hash = erlang:phash2({Node, Guid}, trunc(math:pow(2, 32) - 1))}.
+
 lookup(Node) ->
     ets:lookup(membership, Node).
 
-insert(Member) ->
-    ets:insert(membership, Member#member{ltime = erlang:timestamp()}).
+%% only insert core nodes into table; replicants do not take part
+%% in autoheal and leadership.
+insert(#member{role = replicant}) ->
+    true;
+insert(Member0) ->
+    Member = Member0#member{ltime = erlang:timestamp()},
+    ?tp(mria_membership_insert, #{member => Member}),
+    ets:insert(membership, Member).
 
 reply(Reply, State) ->
     {reply, Reply, State}.

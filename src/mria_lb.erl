@@ -130,7 +130,9 @@ terminate(_Reason, St) ->
 %%================================================================================
 
 do_update(State) ->
-    NewCoreNodes = list_core_nodes(State#s.core_nodes),
+    {CoresChanged, NewCoreNodes} = list_core_nodes(State#s.core_nodes),
+    %% update the local membership table when new cores appear
+    CoresChanged andalso ping_core_nodes(NewCoreNodes),
     [do_update_shard(Shard, NewCoreNodes) || Shard <- mria_schema:shards()],
     init_timer(),
     State#s{core_nodes = NewCoreNodes}.
@@ -150,12 +152,13 @@ init_timer() ->
     Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
+-spec list_core_nodes([node()]) -> {_CoresChanged :: boolean(), [node()]}.
 list_core_nodes(OldCoreNodes) ->
     DiscoveryFun = mria_config:core_node_discovery_callback(),
     NewCoreNodes0 = lists:usort(DiscoveryFun()),
     case NewCoreNodes0 =:= OldCoreNodes of
         true ->
-            OldCoreNodes;
+            {false, OldCoreNodes};
         false ->
             case check_same_cluster(NewCoreNodes0) of
                 {ok, NewCoreNodes1} ->
@@ -165,7 +168,9 @@ list_core_nodes(OldCoreNodes) ->
                           , node => node()
                           }
                        ),
-                    NewCoreNodes1;
+                    %% ping new cores so that they get inserted into
+                    %% local membership table.
+                    {true, NewCoreNodes1};
                 {error, {unknown_nodes, UnknownNodes}} ->
                     ?tp( error
                        ,  mria_lb_core_discovery_divergent_cluster
@@ -174,12 +179,13 @@ list_core_nodes(OldCoreNodes) ->
                           , unknown_nodes => UnknownNodes
                           , node => node()
                           }),
-                    OldCoreNodes
+                    {false, OldCoreNodes}
             end
     end.
 
 %% ensure that the nodes returned by the discovery callback are all
 %% from the same mnesia cluster.
+-spec check_same_cluster([node()]) -> {ok, [node()]} | {error, {unknown_nodes, [node()]}}.
 check_same_cluster(NewCoreNodes0) ->
     Roles = lists:map(
               fun(N) ->
@@ -203,6 +209,16 @@ check_same_cluster(NewCoreNodes0) ->
         true -> {ok, NewCoreNodes1};
         false -> {error, {unknown_nodes, UnknownNodes}}
     end.
+
+-spec ping_core_nodes([node()]) -> ok.
+ping_core_nodes(NewCoreNodes) ->
+    %% Replicants do not have themselves as local members.
+    %% We make an entry on the fly.
+    LocalMember = mria_membership:make_new_local_member(),
+    lists:foreach(
+      fun(Core) ->
+              mria_membership:ping(Core, LocalMember)
+      end, NewCoreNodes).
 
 %%================================================================================
 %% Internal exports

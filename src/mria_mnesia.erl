@@ -194,7 +194,8 @@ cluster_status(Node) ->
 
 -spec(cluster_view() -> {[node()], [node()]}).
 cluster_view() ->
-    list_to_tuple([lists:sort(cluster_nodes(Status))
+    list_to_tuple([lists:sort([N || N <- cluster_nodes(Status),
+                                    mria_rlog:role(N) =:= core])
                    || Status <- [running, stopped]]).
 
 %% @doc Cluster nodes.

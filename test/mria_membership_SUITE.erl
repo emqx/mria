@@ -21,6 +21,7 @@
 
 -include("mria.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 all() -> mria_ct:all(?MODULE).
 
@@ -124,6 +125,47 @@ t_force_leave(_) ->
         mria_ct:teardown_cluster(Cluster)
     end.
 
+t_ping_from_cores(_) ->
+    test_core_ping_pong(ping).
+
+t_ping_from_replicants(_) ->
+    test_replicant_ping_pong(ping).
+
+t_pong_from_cores(_) ->
+    test_core_ping_pong(pong).
+
+t_pong_from_replicants(_) ->
+    test_replicant_ping_pong(pong).
+
+%% replicants do not insert themselves into the membership table, and
+%% they insert cores during loadbalancer initialization.
+t_replicant_init(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant],
+                              mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       try
+           Nodes = [N0, N1, _N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           Cores = [N0, N1],
+           [begin
+                ?assertMatch([_, _], erpc:call(N, mria_membership, members, []),
+                             #{node => N}),
+                [?assert(erpc:call(N, mria_membership, is_member, [M]),
+                         #{node => N, other => M})
+                 || M <- Cores],
+                Leader = erpc:call(N, mria_membership, leader, []),
+                Coordinator = erpc:call(N, mria_membership, coordinator, []),
+                ?assert(lists:member(Leader, Cores), #{node => N}),
+                ?assert(lists:member(Coordinator, Cores), #{node => N}),
+                ok
+            end
+            || N <- Nodes],
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [fun ?MODULE:assert_no_replicants_inserted/1]).
+
 %%--------------------------------------------------------------------
 %% Helper functions
 %%--------------------------------------------------------------------
@@ -145,3 +187,122 @@ member(I) ->
             mnesia = running,
             ltime  = erlang:timestamp()
            }.
+
+test_core_ping_pong(PingOrPong) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant],
+                              mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       try
+           Nodes = [N0, N1, _N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           Cores = [N0, N1],
+           ?tp(done_waiting_for_tables, #{}),
+           [begin
+                %% Cores do have themselves as local members.
+                LocalMember = erpc:call(N, mria_membership, local_member, []),
+                lists:foreach(
+                  fun(M) ->
+                          ?wait_async_action(
+                             mria_membership:PingOrPong(M, LocalMember),
+                             #{ ?snk_kind := mria_membership_pong
+                              , member := #member{node = N}
+                              }, 1000)
+                  end, Nodes),
+                assert_expected_memberships(N, Cores),
+                ok
+            end
+            || N <- Cores],
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun ?MODULE:assert_no_replicants_inserted/1
+       , {"cores always get inserted",
+          fun(Trace0) ->
+                  {_, Trace} = ?split_trace_at(#{?snk_kind := done_waiting_for_tables}, Trace0),
+                  assert_cores_always_get_inserted(Trace)
+          end}
+       ]).
+
+test_replicant_ping_pong(PingOrPong) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant],
+                              mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       try
+           Nodes = [N0, N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           Cores = [N0, N1],
+           Replicants = [N2, N3],
+           ?tp(done_waiting_for_tables, #{}),
+           [begin
+                %% Replicants do not have themselves as local members.
+                %% We make an entry on the fly.
+                LocalMember = erpc:call(N, mria_membership, make_new_local_member, []),
+                lists:foreach(
+                  fun(M) ->
+                          ?wait_async_action(
+                             mria_membership:PingOrPong(M, LocalMember),
+                             #{ ?snk_kind := mria_membership_pong
+                              , member := #member{node = N}
+                              }, 1000)
+                  end, Nodes),
+                assert_expected_memberships(N, Cores),
+                ok
+            end
+            || N <- Replicants],
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun ?MODULE:assert_no_replicants_inserted/1
+       , {"cores get inserted on ping",
+          fun(Trace0) ->
+                  case PingOrPong of
+                      ping ->
+                          {_, Trace} = ?split_trace_at(#{?snk_kind := done_waiting_for_tables}, Trace0),
+                          assert_cores_always_get_inserted(Trace);
+                      pong ->
+                          %% pongs from replicants do not result in
+                          %% cores being inserted.
+                          ok
+                  end
+          end}
+       ]).
+
+assert_expected_memberships(Node, Cores) ->
+    Members = erpc:call(Node, mria_membership, members, []),
+    ReplicantMembers = [Member || Member = #member{role = replicant} <- Members],
+    {PresentCores, UnknownCores} =
+        lists:partition(
+          fun(N) ->
+                  lists:member(N, Cores)
+          end,
+          [N || #member{role = core, node = N} <- Members]),
+    ?assertEqual([], ReplicantMembers, #{node => Node}),
+    ?assertEqual([], UnknownCores, #{node => Node}),
+    %% cores get inserted into replicants' tables either by the pings
+    %% sent from cores, or by the core discovery procedure.
+    ?assertEqual(lists:usort(Cores), lists:usort(PresentCores), #{node => Node}),
+    ok.
+
+assert_no_replicants_inserted(Trace) ->
+    ?assertEqual([], [Event || Event = #{ ?snk_kind := mria_membership_insert
+                                        , member := #member{role = replicant}
+                                        } <- Trace]).
+
+assert_cores_always_get_inserted(Trace) ->
+    ?assert(
+      ?strict_causality(
+         #{ ?snk_kind := EventType
+          , ?snk_meta := #{node := _Node}
+          , member := #member{role = core, node = _MemberNode,
+                              status = up, mnesia = running}
+          } when EventType =:= mria_membership_ping;
+                 EventType =:= mria_membership_pong
+        , #{ ?snk_kind := mria_membership_insert
+           , ?snk_meta := #{node := _Node}
+           , member := #member{role = core, node = _MemberNode,
+                               status = up, mnesia = running}
+           }
+        , Trace
+        )).

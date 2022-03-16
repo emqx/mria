@@ -17,6 +17,7 @@
 -module(mria_autoheal_SUITE).
 
 -export([ t_autoheal/1
+        , t_autoheal_with_replicants/1
         , t_reboot_rejoin/1
         ]).
 
@@ -48,9 +49,6 @@ t_autoheal(Config) when is_list(Config) ->
                       [N1,N2,N3] = rpc:call(N2, mria, info, [running_nodes]),
                       [N1,N2,N3] = rpc:call(N3, mria, info, [running_nodes])
                   end),
-           rpc:call(N1, mria, leave, []),
-           rpc:call(N2, mria, leave, []),
-           rpc:call(N3, mria, leave, []),
            [N1, N2, N3]
        after
            ok = mria_ct:teardown_cluster(Cluster)
@@ -65,7 +63,60 @@ t_autoheal(Config) when is_list(Config) ->
                {_, Rest} = ?split_trace_at(#{?snk_kind := "Rebooting minority"}, Trace),
                ?assertMatch( [stop, start|_]
                            , ?projection(type, ?of_kind(mria_exec_callback, ?of_node(N3, Rest)))
-                           )
+                           ),
+               ok
+       end).
+
+t_autoheal_with_replicants(Config) when is_list(Config) ->
+    snabbkaffe:fix_ct_logging(),
+    Cluster = mria_ct:cluster([ core
+                              , core
+                              , core
+                              , replicant
+                              , replicant
+                              ],
+                              [ {mria, cluster_autoheal, 200}
+                              | mria_mnesia_test_util:common_env()
+                              ]),
+    ?check_trace(
+       #{timetrap => 45_000},
+       try
+           Nodes = [N1, N2, N3, N4, N5] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           %% Simulate netsplit
+           true = rpc:cast(N1, net_kernel, disconnect, [N2]),
+           true = rpc:cast(N1, net_kernel, disconnect, [N3]),
+           ok = timer:sleep(1000),
+           %% SplitView: {[N2,N3], [N1]}
+           assert_partition_contents(N1, #{running => [N1], stopped => [N2, N3]}),
+           assert_partition_contents(N2, #{running => [N2, N3], stopped => [N1]}),
+           assert_partition_contents(N3, #{running => [N2, N3], stopped => [N1]}),
+           %% Wait for autoheal, it should happen automatically:
+           ?retry(1000, 20,
+                  begin
+                      [N1,N2,N3,N4,N5] = rpc:call(N1, mria, info, [running_nodes]),
+                      [N1,N2,N3,N4,N5] = rpc:call(N2, mria, info, [running_nodes]),
+                      [N1,N2,N3,N4,N5] = rpc:call(N3, mria, info, [running_nodes]),
+                      [N1,N2,N3,N4,N5] = rpc:call(N4, mria, info, [running_nodes]),
+                      [N1,N2,N3,N4,N5] = rpc:call(N5, mria, info, [running_nodes]),
+                      ok
+                  end),
+           [N1, N2, N3]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       fun([N1, _N2, _N3], Trace) ->
+               ?assert(
+                  ?causality( #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := _N}}
+                            , #{?snk_kind := mria_exec_callback, type := stop,  ?snk_meta := #{node := _N}}
+                            , Trace
+                            )),
+               %% Check that restart callbacks were called after partition was healed:
+               {_, Rest} = ?split_trace_at(#{?snk_kind := "Rebooting minority"}, Trace),
+               ?assertMatch( [stop, start|_]
+                           , ?projection(type, ?of_kind(mria_exec_callback, ?of_node(N1, Rest)))
+                           ),
+               ok
        end).
 
 t_reboot_rejoin(Config) when is_list(Config) ->
@@ -146,4 +197,19 @@ assert_replicant_bootstrapped(R, C, Trace) ->
                         , Trace
                         )),
     mria_rlog_props:replicant_bootstrap_stages(R, Trace),
+    ok.
+
+assert_partition_contents(Node, #{ running := ExpectedRunning
+                                 , stopped := ExpectedStopped
+                                 }) ->
+    Running = rpc:call(Node, mria, info, [running_nodes]),
+    Stopped = rpc:call(Node, mria, info, [stopped_nodes]),
+    [?assert(lists:member(Expected, Running), #{ node => Node
+                                               , expected => Expected
+                                               })
+     || Expected <- ExpectedRunning],
+    [?assert(lists:member(Expected, Stopped), #{ node => Node
+                                               , expected => Expected
+                                               })
+     || Expected <- ExpectedStopped],
     ok.

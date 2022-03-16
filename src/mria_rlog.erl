@@ -113,6 +113,8 @@ role(Node) ->
 backend() ->
     mria_config:backend().
 
+%% @doc Should be only called in a replicant node.  Returns the list
+%% of core nodes cached in `mria_lb'.
 -spec core_nodes() -> [node()].
 core_nodes() ->
     mria_lb:core_nodes().

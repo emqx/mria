@@ -11,7 +11,8 @@
           hash   :: undefined | pos_integer(),
           status :: member_status(),
           mnesia :: undefined | running | stopped | false,
-          ltime  :: undefined | erlang:timestamp()
+          ltime  :: undefined | erlang:timestamp(),
+          role   :: mria_rlog:role()
          }).
 
 -type(member() :: #member{}).
