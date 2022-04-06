@@ -87,7 +87,7 @@ start(_Type, _Args) ->
                                  {storage, ram_copies},
                                  {rlog_shard, my_shard}
                                  ]),
-    mria:wait_for_tables([foo, bar], infinity).
+    mria:wait_for_tables([foo, bar]).
 ```
 
 The API for creating the table is similar to Mnesia, with three notable exceptions:

@@ -58,3 +58,56 @@ t_cluster_core_nodes_on_replicant(_) ->
            ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
+
+t_diagnosis_tab(_)->
+    TestTab = test_tab_1,
+    Cluster = mria_ct:cluster([core, core], []),
+    [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+    try
+        %% Create a test table
+        ok = rpc:call(N1, mria, create_table,
+                      [TestTab, [{rlog_shard, my_shard},
+                                 {storage, disc_copies}
+                                ]
+                      ]),
+        %% Ensure table is ready
+        ?assertEqual(ok, rpc:call(N1, mnesia, wait_for_tables, [[TestTab], 1000])),
+        ?assertEqual(ok, rpc:call(N2, mnesia, wait_for_tables, [[TestTab], 1000])),
+        %% Kill N1
+        ok = slave:stop(N1),
+        %% Kill N2, N2 knows N1 is down
+        ok = slave:stop(N2),
+        ?assertEqual({badrpc, nodedown}, rpc:call(N1, mnesia, wait_for_tables, [[TestTab], 1000])),
+        ?assertEqual({badrpc, nodedown}, rpc:call(N2, mnesia, wait_for_tables, [[TestTab], 1000])),
+
+        %% Start N1, N1 mnesia doesn't know N2 is down
+        N1 = mria_ct:start_slave(node, n1),
+        ok = rpc:call(N1, mria, start, []),
+
+        %% N1 is waiting for N2 since N1 knows N2 has the latest copy of data
+        ?assertEqual( {timeout,[test_tab_1]}
+                    , rpc:call(N1, mnesia, wait_for_tables, [[TestTab], 5000])),
+        ?assertEqual(ok, rpc:call(N1, mria_mnesia, diagnosis, [[TestTab]])),
+
+        %% Start N2 only, but not mnesia
+        N2 = mria_ct:start_slave(node, n2),
+        %% Check N1 still waits for the mnesia on N2
+        ?assertEqual( {timeout,[test_tab_1]}
+                    , rpc:call(N1, mnesia, wait_for_tables, [[TestTab], 5000])),
+        ?assertEqual(ok, rpc:call(N1, mria_mnesia, diagnosis, [[TestTab]])),
+
+        %% Start mria on N2.
+        ok = rpc:call(N2, mria, start, []),
+
+        %% Check tables are loaded on two
+        ?assertEqual(ok, rpc:call(N1, mnesia, wait_for_tables, [[TestTab], 1000])),
+        ?assertEqual(ok, rpc:call(N2, mnesia, wait_for_tables, [[TestTab], 1000])),
+        ?assertEqual(ok, rpc:call(N1, mria_mnesia, diagnosis, [[TestTab]])),
+        ?assertEqual(ok, rpc:call(N2, mria_mnesia, diagnosis, [[TestTab]]))
+
+    after
+        ?assertEqual({atomic, ok}, rpc:call(N2, mnesia, delete_table, [TestTab])),
+        ok = mria_ct:stop_slave(N1),
+        ok = mria_ct:stop_slave(N2)
+    end,
+    ok.

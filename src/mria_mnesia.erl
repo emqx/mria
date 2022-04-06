@@ -55,6 +55,10 @@
         , wait_for_tables/1
         ]).
 
+-export([ diagnosis/1
+        , diagnosis_tab/1
+        ]).
+
 %% Various internal types
 -export_type([ record/0
              , tid/0
@@ -306,11 +310,70 @@ wait_for_tables(Tables) ->
             {error, Reason};
         {timeout, BadTables} ->
             logger:warning("~p: still waiting for table(s): ~p", [?MODULE, BadTables]),
+            catch diagnosis(BadTables),
             %% lets try to force reconnect all the db_nodes to get schema merged,
             %% mnesia_controller is smart enough to not force reconnect the node that is already connected.
             mnesia_controller:connect_nodes(mnesia:system_info(db_nodes)),
             wait_for_tables(BadTables)
     end.
+
+-spec diagnosis([atom()]) -> ok.
+diagnosis(BadTables) ->
+    RunningNodes = mnesia:system_info(running_db_nodes),
+    DBNodes = mnesia:system_info(db_nodes),
+    Checks = [ %% Check Mnesia start stage
+               { is_running, yes, fun mnesia_lib:is_running/0 }
+               %% Check Mnesia schema merge with remote nodes
+             , { is_schema_merged, true, fun() ->
+                                                 case mnesia_controller:get_info(_Timeout = 5000) of
+                                                     {info, State} ->
+                                                         %% the state record is very stable since 2009
+                                                         element(3, State);
+                                                     {timeout, _} ->
+                                                         timeout
+                                                 end
+                                         end}
+               %% Check known down nodes. They where down already before this node get down(they are still down).
+             , { known_down_nodes, [], fun mnesia_recover:get_mnesia_downs/0 }
+               %% Nodes that suppose to be UP.
+             , { down_nodes, [], fun() -> DBNodes -- RunningNodes end }
+             ],
+
+    GeneralInfo = lists:filtermap(fun({Item, Expected, Fun}) ->
+                                        Res = Fun(),
+                                        case  Res =:= Expected of
+                                            true ->
+                                                false;
+                                            false ->
+                                                {true, io_lib:format("Check ~p should get ~p but got ~p~n ",
+                                                                     [Item, Expected, Res])}
+                                        end
+                                  end, Checks),
+    PerTabInfo = lists:map(fun diagnosis_tab/1, BadTables),
+    logger:warning(GeneralInfo ++ PerTabInfo),
+    ok.
+
+-spec diagnosis_tab(atom()) -> iolist().
+diagnosis_tab(Tab) ->
+    try
+        Props = mnesia:table_info(Tab, all),
+        TabNodes = proplists:get_value(all_nodes, Props),
+        KnownDown = mnesia_recover:get_mnesia_downs(),
+        LocalNode = node(),
+        case proplists:get_value(load_node, Props) of
+            unknown ->
+                io_lib:format("Table ~p is waiting for one of the nodes: ~p ~n",
+                              [Tab, (TabNodes--KnownDown)--[LocalNode]]);
+            LocalNode ->
+                io_lib:format("Table ~p is loading from local disc copy ~n", [Tab]);
+            Node ->
+                io_lib:format("Table ~p is loading from remote node ~p ~n", [Tab, Node])
+        end
+    catch _:_ ->
+            %% Most likely schema is not merged with remote.
+            io_lib:format("Not able to read table info for ~p ~n", [Tab])
+    end.
+
 
 %% @doc Force to delete schema.
 delete_schema() ->
