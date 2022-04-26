@@ -118,7 +118,8 @@ stop() ->
 
 -spec stop(stop_reason()) -> ok.
 stop(Reason) ->
-    Reason =:= heal andalso mria_membership:announce(Reason),
+    Reason =:= heal orelse Reason =:= leave andalso
+        mria_membership:announce(Reason),
     %% We cannot run stop callback in `mria_app', since we don't want
     %% to block application controller:
     mria_lib:exec_callback(stop),
@@ -176,9 +177,8 @@ join(Node, Reason) when is_atom(Node) ->
 leave() ->
     case mria_mnesia:running_nodes() -- [node()] of
         [_|_] ->
-            mria_membership:announce(leave),
+            stop(leave),
             ok = mria_mnesia:leave_cluster(),
-            stop(),
             start();
         [] ->
             {error, node_not_in_cluster}
