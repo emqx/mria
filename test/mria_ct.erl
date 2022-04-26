@@ -94,6 +94,7 @@ start_cluster(mria_async, Specs) ->
     Ret.
 
 teardown_cluster(Specs) ->
+    ?tp(teardown_cluster, #{}),
     Nodes = [I || #{node := I} <- Specs],
     [rpc:call(I, mria, stop, []) || I <- Nodes],
     [ok = stop_slave(I) || I <- Nodes],

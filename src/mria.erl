@@ -74,7 +74,7 @@
 
 -type join_reason() :: join | heal.
 
--type stop_reason() :: heal | stop.
+-type stop_reason() :: join_reason() | stop | leave.
 
 -export_type([info_key/0, infos/0]).
 
@@ -112,12 +112,13 @@ start() ->
     {ok, _Apps} = application:ensure_all_started(mria),
     ok.
 
--spec stop() -> ok.
+-spec stop() -> ok | {error, _}.
 stop() ->
     stop(stop).
 
 -spec stop(stop_reason()) -> ok.
 stop(Reason) ->
+    ?tp(warning, "Stopping mria", #{reason => Reason}),
     Reason =:= heal orelse Reason =:= leave andalso
         mria_membership:announce(Reason),
     %% We cannot run stop callback in `mria_app', since we don't want
@@ -189,10 +190,13 @@ leave() ->
 force_leave(Node) when Node =:= node() ->
     ignore;
 force_leave(Node) ->
-    case mria_mnesia:is_node_in_cluster(Node) of
-        true ->
-            mria_mnesia:remove_from_cluster(Node);
-        false ->
+    case {mria_mnesia:is_node_in_cluster(Node), mria_mnesia:is_running_db_node(Node)} of
+        {true, true} ->
+            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, leave, []));
+        {true, false} ->
+            mnesia_lib:del(extra_db_nodes, Node),
+            mria_lib:ensure_ok(mria_mnesia:del_schema_copy(Node));
+        {false, _} ->
             {error, node_not_in_cluster}
     end.
 
