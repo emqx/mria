@@ -14,7 +14,11 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
-%% @private Modules for manipulating Mnesia schema and cluster
+%% @private Internal functions for manipulating Mnesia schema.
+%%
+%% Functions in this module don't interact with Mria processes,
+%% application callbacks, etc. so DON'T USE them directly.
+%%
 -module(mria_mnesia).
 
 -include("mria.hrl").
@@ -446,7 +450,6 @@ leave_cluster(Node) when Node =/= node() ->
             mria_lib:ensure_ok(ensure_stopped()),
             mria_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
             mria_lib:ensure_ok(delete_schema());
-            %%mria_lib:ensure_ok(start()); %% restart?
         false ->
             {error, {node_not_running, Node}}
     end.

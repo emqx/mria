@@ -60,8 +60,7 @@ t_create_del_table(_) ->
         ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
         {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
     after
-        application:stop(mria),
-        mria_mnesia:ensure_stopped()
+        mria:stop()
     end.
 
 t_disc_table(_) ->
@@ -185,7 +184,7 @@ t_remove_from_cluster(_) ->
             All = mria_mnesia:cluster_nodes(all),
             ?assertMatch(false, lists:member(N1, Running)),
             ?assertMatch(false, lists:member(N1, All)),
-            ok = rpc:call(N1, mria_mnesia, ensure_stopped, [])
+            ok = rpc:call(N1, mria, stop, [])
           end)
     after
         ok = mria_ct:teardown_cluster(Cluster)

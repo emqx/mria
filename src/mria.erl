@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -123,7 +123,7 @@ stop(Reason) ->
     %% to block application controller:
     mria_lib:exec_callback(stop),
     application:stop(mria),
-    application:stop(mnesia).
+    mria_mnesia:ensure_stopped().
 
 %%--------------------------------------------------------------------
 %% Info
