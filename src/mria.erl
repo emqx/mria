@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -74,7 +74,7 @@
 
 -type join_reason() :: join | heal.
 
--type stop_reason() :: heal | stop.
+-type stop_reason() :: join_reason() | stop | leave.
 
 -export_type([info_key/0, infos/0]).
 
@@ -112,18 +112,20 @@ start() ->
     {ok, _Apps} = application:ensure_all_started(mria),
     ok.
 
--spec stop() -> ok.
+-spec stop() -> ok | {error, _}.
 stop() ->
     stop(stop).
 
 -spec stop(stop_reason()) -> ok.
 stop(Reason) ->
-    Reason =:= heal andalso mria_membership:announce(Reason),
+    ?tp(warning, "Stopping mria", #{reason => Reason}),
+    Reason =:= heal orelse Reason =:= leave andalso
+        mria_membership:announce(Reason),
     %% We cannot run stop callback in `mria_app', since we don't want
     %% to block application controller:
     mria_lib:exec_callback(stop),
     application:stop(mria),
-    application:stop(mnesia).
+    mria_mnesia:ensure_stopped().
 
 %%--------------------------------------------------------------------
 %% Info
@@ -176,9 +178,8 @@ join(Node, Reason) when is_atom(Node) ->
 leave() ->
     case mria_mnesia:running_nodes() -- [node()] of
         [_|_] ->
-            mria_membership:announce(leave),
+            stop(leave),
             ok = mria_mnesia:leave_cluster(),
-            stop(),
             start();
         [] ->
             {error, node_not_in_cluster}
@@ -189,10 +190,13 @@ leave() ->
 force_leave(Node) when Node =:= node() ->
     ignore;
 force_leave(Node) ->
-    case mria_mnesia:is_node_in_cluster(Node) of
-        true ->
-            mria_mnesia:remove_from_cluster(Node);
-        false ->
+    case {mria_mnesia:is_node_in_cluster(Node), mria_mnesia:is_running_db_node(Node)} of
+        {true, true} ->
+            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, leave, []));
+        {true, false} ->
+            mnesia_lib:del(extra_db_nodes, Node),
+            mria_lib:ensure_ok(mria_mnesia:del_schema_copy(Node));
+        {false, _} ->
             {error, node_not_in_cluster}
     end.
 

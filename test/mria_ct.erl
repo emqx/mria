@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,9 +29,7 @@ all(Suite) ->
 
 cleanup(Testcase) ->
     ct:pal("Cleaning up after ~p...", [Testcase]),
-    application:stop(mria),
-    mria_mnesia:ensure_stopped(),
-    mnesia:stop(),
+    mria:stop(),
     ok = mnesia:delete_schema([node()]).
 
 -type env() :: [{atom(), atom(), term()}].
@@ -96,6 +94,7 @@ start_cluster(mria_async, Specs) ->
     Ret.
 
 teardown_cluster(Specs) ->
+    ?tp(teardown_cluster, #{}),
     Nodes = [I || #{node := I} <- Specs],
     [rpc:call(I, mria, stop, []) || I <- Nodes],
     [ok = stop_slave(I) || I <- Nodes],

@@ -60,8 +60,7 @@ t_create_del_table(_) ->
         ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
         {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
     after
-        application:stop(mria),
-        mria_mnesia:ensure_stopped()
+        mria:stop()
     end.
 
 t_disc_table(_) ->
@@ -127,8 +126,6 @@ t_rocksdb_table(_) ->
         ok = mria_ct:teardown_cluster(Cluster)
     end.
 
-%% -spec(join_cluster(node()) -> ok).
-%% -spec(leave_cluster(node()) -> ok | {error, any()}).
 t_join_leave_cluster(_) ->
     Cluster = mria_ct:cluster([core, core], []),
     try
@@ -146,7 +143,6 @@ t_join_leave_cluster(_) ->
         ok = mria_ct:teardown_cluster(Cluster)
     end.
 
-%% -spec(cluster_status(node()) -> running | stopped | false).
 t_cluster_status(_) ->
     Cluster = mria_ct:cluster([core, core], []),
     try
@@ -157,39 +153,49 @@ t_cluster_status(_) ->
         ok = mria_ct:teardown_cluster(Cluster)
     end.
 
-%% -spec(remove_from_cluster(node()) -> ok | {error, any()}).
 t_remove_from_cluster(_) ->
     Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
-    try
-        [N0, N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-        timer:sleep(1000),
-        mria_ct:run_on(N0, fun() ->
-            #{running_nodes := [N0, N1, N2, N3]} = mria_mnesia:cluster_info(),
-            [N0, N1, N2, N3] = lists:sort(mria_mnesia:running_nodes()),
-            [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(all)),
-            [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(running)),
-            [] = mria_mnesia:cluster_nodes(stopped),
-            ok
-          end),
-        mria_ct:run_on(N2, fun() ->
-            #{running_nodes := [N0, N1, N2, N3]} = mria_mnesia:cluster_info(),
-            [N0, N1, N2, N3] = lists:sort(mria_mnesia:running_nodes()),
-            [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(all)),
-            [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(running)),
-            [] = mria_mnesia:cluster_nodes(stopped),
-            ok
-          end),
-        mria_ct:run_on(N0, fun() ->
-            ok = mria_mnesia:remove_from_cluster(N1),
-            Running = mria_mnesia:running_nodes(),
-            All = mria_mnesia:cluster_nodes(all),
-            ?assertMatch(false, lists:member(N1, Running)),
-            ?assertMatch(false, lists:member(N1, All)),
-            ok = rpc:call(N1, mria_mnesia, ensure_stopped, [])
-          end)
-    after
-        ok = mria_ct:teardown_cluster(Cluster)
-    end.
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           [N0, N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           timer:sleep(1000),
+           mria_ct:run_on(N0, fun() ->
+               #{running_nodes := [N0, N1, N2, N3]} = mria_mnesia:cluster_info(),
+               [N0, N1, N2, N3] = lists:sort(mria_mnesia:running_nodes()),
+               [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(all)),
+               [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(running)),
+               [] = mria_mnesia:cluster_nodes(stopped),
+               ok
+             end),
+           mria_ct:run_on(N2, fun() ->
+               #{running_nodes := [N0, N1, N2, N3]} = mria_mnesia:cluster_info(),
+               [N0, N1, N2, N3] = lists:sort(mria_mnesia:running_nodes()),
+               [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(all)),
+               [N0, N1, N2, N3] = lists:sort(mria_mnesia:cluster_nodes(running)),
+               [] = mria_mnesia:cluster_nodes(stopped),
+               ok
+             end),
+           {ok, SubRef} = snabbkaffe:subscribe(
+                            ?match_event(#{ ?snk_kind := mria_exec_callback
+                                          , type      := start
+                                          , ?snk_meta := #{node := N1}
+                                          })),
+           mria_ct:run_on(N0, fun() ->
+               ok = mria:force_leave(N1),
+               Running = mria_mnesia:running_nodes(),
+               All = mria_mnesia:cluster_nodes(all),
+               ?assertNot(lists:member(N1, Running)),
+               ?assertNot(lists:member(N1, All)),
+               ?assertNot(mria_membership:is_member(N1))
+             end),
+           %% Make sure that the kicked node restarts the business
+           %% applications:
+           ?assertMatch({ok, [_]}, snabbkaffe:receive_events(SubRef))
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
 
 %% This test runs should walk the replicant state machine through all
 %% the stages of startup and online transaction replication, so it can

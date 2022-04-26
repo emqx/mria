@@ -14,7 +14,11 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
-%% @private Modules for manipulating Mnesia schema and cluster
+%% @private Internal functions for manipulating Mnesia schema.
+%%
+%% Functions in this module don't interact with Mria processes,
+%% application callbacks, etc. so DON'T USE them directly.
+%%
 -module(mria_mnesia).
 
 -include("mria.hrl").
@@ -34,7 +38,6 @@
 %% Mnesia Cluster API
 -export([ join_cluster/1
         , leave_cluster/0
-        , remove_from_cluster/1
         , cluster_info/0
         , cluster_status/1
         , cluster_view/0
@@ -42,6 +45,7 @@
         , running_nodes/0
         , is_node_in_cluster/0
         , is_node_in_cluster/1
+        , is_running_db_node/1
         , db_nodes/0
         ]).
 
@@ -156,23 +160,6 @@ leave_cluster() ->
                 true  -> ok;
                 false -> {error, {failed_to_leave, Nodes}}
             end
-    end.
-
-%% @doc Remove node from mnesia cluster.
--spec remove_from_cluster(node()) -> ok | {error, any()}.
-remove_from_cluster(Node) when Node =/= node() ->
-    case {is_node_in_cluster(Node), is_running_db_node(Node)} of
-        {true, true} ->
-            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, ensure_stopped, [])),
-            mnesia_lib:del(extra_db_nodes, Node),
-            mria_lib:ensure_ok(del_schema_copy(Node)),
-            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
-        {true, false} ->
-            mnesia_lib:del(extra_db_nodes, Node),
-            mria_lib:ensure_ok(del_schema_copy(Node));
-            %mria_lib:ensure_ok(rpc:call(Node, ?MODULE, delete_schema, []));
-        {false, _} ->
-            {error, node_not_in_cluster}
     end.
 
 %% @doc Cluster Info
@@ -434,7 +421,6 @@ wait_for(stop) ->
         stopping -> timer:sleep(1000), wait_for(stop)
     end.
 
-%% @private
 %% @doc Is running db node.
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
@@ -446,7 +432,6 @@ leave_cluster(Node) when Node =/= node() ->
             mria_lib:ensure_ok(ensure_stopped()),
             mria_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
             mria_lib:ensure_ok(delete_schema());
-            %%mria_lib:ensure_ok(start()); %% restart?
         false ->
             {error, {node_not_running, Node}}
     end.
