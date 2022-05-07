@@ -1,6 +1,6 @@
 # Mria
 
-Mria is an extension to Mnesia database that adds eventual consistency to the cluster.
+Mria is an extension for Mnesia database that adds eventual consistency to the cluster.
 
 ## Motivation
 
@@ -132,3 +132,13 @@ mria:transaction(my_shard,
 Dirty read operations (such as `mnesia:dirty_read`, `ets:lookup` and `mnesia:dirty_select`) are allowed.
 However, it is recommended to wrap all reads in `mria:ro_transaction` function.
 Under normal conditions (when all shards are in sync) it should not introduce extra overhead.
+
+## Callbacks
+
+Mria can execute callbacks on some system events.
+They can be registered using `mria:register_callback/2` function.
+
+- `stop`: This callback is executed when the DB stops or restarts.
+- `start`: This callback is executed when the DB starts or restarts.
+
+Note that the DB restarts when the node joins the cluster.
