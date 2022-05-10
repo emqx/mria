@@ -103,6 +103,7 @@ t_rocksdb_table(_) ->
                                             {record_name, kv_tab},
                                             {attributes, record_info(fields, kv_tab)}
                                            ]),
+                    mria_rlog:wait_for_shards([test_shard], 5_000),
                     {atomic, Ret} =
                         mria:transaction(test_shard,
                                          fun() ->
