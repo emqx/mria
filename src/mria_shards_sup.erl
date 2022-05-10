@@ -42,9 +42,11 @@ find_shard(Shard) ->
 -spec start_shard(mria_rlog:shard()) -> {ok, pid()}
                                       | {error, _}.
 start_shard(Shard) ->
-    ?tp(info, "Starting RLOG shard",
-        #{ shard => Shard
-         }),
+    LogLevel = case mria_config:role() of
+                   core -> debug;
+                   replicant -> info
+               end,
+    ?tp(LogLevel, "Starting RLOG shard", #{shard => Shard}),
     Child = shard_sup(Shard),
     supervisor:start_child(?SUPERVISOR, Child).
 

@@ -179,7 +179,11 @@ get_core_node(Shard, Timeout) ->
 
 -spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]}.
 wait_for_shards(Shards, Timeout) ->
-    ?tp(info, "Waiting for shards",
+    LogLevel = case mria_config:role() of
+                   core -> debug;
+                   replicant -> info
+               end,
+    ?tp(LogLevel, "Waiting for shards",
         #{ shards => Shards
          , timeout => Timeout
          }),
@@ -191,7 +195,7 @@ wait_for_shards(Shards, Timeout) ->
                   %% Unzip to transform `[{upstream_shard, foo}, {upstream_shard, bar}]' to `[foo, bar]':
                   {timeout, element(2, lists:unzip(L))}
           end,
-    ?tp(info, "Done waiting for shards",
+    ?tp(LogLevel, "Done waiting for shards",
         #{ shards => Shards
          , result => Ret
          }),
