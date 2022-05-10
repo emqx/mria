@@ -46,7 +46,7 @@ start_shard(Shard) ->
                    core -> debug;
                    replicant -> info
                end,
-    ?tp(LogLevel, "Starting RLOG shard", #{shard => Shard}),
+    ?tp(LogLevel, "starting_rlog_shard", #{shard => Shard}),
     Child = shard_sup(Shard),
     supervisor:start_child(?SUPERVISOR, Child).
 

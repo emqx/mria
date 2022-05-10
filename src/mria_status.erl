@@ -183,7 +183,7 @@ wait_for_shards(Shards, Timeout) ->
                    core -> debug;
                    replicant -> info
                end,
-    ?tp(LogLevel, "Waiting for shards",
+    ?tp(LogLevel, "waiting_for_shards",
         #{ shards => Shards
          , timeout => Timeout
          }),
@@ -195,7 +195,7 @@ wait_for_shards(Shards, Timeout) ->
                   %% Unzip to transform `[{upstream_shard, foo}, {upstream_shard, bar}]' to `[foo, bar]':
                   {timeout, element(2, lists:unzip(L))}
           end,
-    ?tp(LogLevel, "Done waiting for shards",
+    ?tp(LogLevel, "done_waiting_for_shards",
         #{ shards => Shards
          , result => Ret
          }),

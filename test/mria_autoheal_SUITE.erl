@@ -174,7 +174,7 @@ t_reboot_rejoin(Config) when is_list(Config) ->
                                       , status := #{ running_nodes := [_, _]
                                                    }
                                       }
-                                   , #{ ?snk_kind := "Starting RLOG shard"
+                                   , #{ ?snk_kind := "starting_rlog_shard"
                                       , shard := test_shard
                                       }
                                    , TraceC2
