@@ -195,6 +195,7 @@ call_backend_rw_dirty(Function, Table, Args) ->
 -spec transactional_wrapper(mria_rlog:shard(), atom(), list()) -> mria:t_result(term()).
 transactional_wrapper(Shard, Fun, Args) ->
     ensure_no_transaction(),
+    mria_rlog:wait_for_shards([Shard], infinity),
     mnesia:transaction(fun() ->
                                Res = apply(mria_activity, Fun, Args),
                                {_TID, TxStore} = get_internals(),
