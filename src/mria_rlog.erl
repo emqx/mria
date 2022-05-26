@@ -120,23 +120,31 @@ core_nodes() ->
     mria_lb:core_nodes().
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
-wait_for_shards(Shards0, Timeout) ->
+wait_for_shards(Shards, Timeout) ->
     case mria_config:backend() of
         rlog ->
-            Shards = [I || I <- Shards0, I =/= ?LOCAL_CONTENT_SHARD],
             lists:foreach(fun ensure_shard/1, Shards),
+            %% Note: core node also must wait for shards, to make sure
+            %% the schema has converged, and the shard config is set:
             mria_status:wait_for_shards(Shards, Timeout);
         mnesia ->
             ok
     end.
 
 -spec ensure_shard(shard()) -> ok.
+ensure_shard(?LOCAL_CONTENT_SHARD) ->
+    ok;
 ensure_shard(Shard) ->
-    case mria_shards_sup:start_shard(Shard) of
-        {ok, _}                       -> ok;
-        {error, already_present}      -> ok;
-        {error, {already_started, _}} -> ok;
-        Err                           -> error({failed_to_create_shard, Shard, Err})
+    case whereis(Shard) of
+        undefined ->
+            case mria_shards_sup:start_shard(Shard) of
+                {ok, _}                       -> ok;
+                {error, already_present}      -> ok;
+                {error, {already_started, _}} -> ok;
+                Err                           -> error({failed_to_create_shard, Shard, Err})
+            end;
+        _ ->
+            ok
     end.
 
 -spec subscribe(mria_rlog:shard(), node(), pid(), mria_rlog_server:checkpoint()) ->
@@ -188,8 +196,8 @@ do_detect_shard({{Tab, _Key}, _Value, _Operation}) ->
 
 -spec init() -> ok.
 init() ->
-    case {backend(), role()} of
-        {rlog, core} ->
+    case mria_config:whoami() of
+        core ->
             mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2);
         _ ->
             ok

@@ -19,6 +19,7 @@
 
 -export([ role/0
         , backend/0
+        , whoami/0
         , rpc_module/0
         , strict_mode/0
         , replay_batch_size/0
@@ -47,6 +48,8 @@
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include_lib("kernel/include/logger.hrl").
+
+-compile({inline, [backend/0, role/0]}).
 
 %%================================================================================
 %% Type declarations
@@ -91,6 +94,16 @@ backend() ->
 -spec role() -> mria_rlog:role().
 role() ->
     persistent_term:get(?mria(node_role), core).
+
+%% Get backend and role:
+-spec whoami() -> core | replicant | mnesia.
+whoami() ->
+    case backend() of
+        mnesia ->
+            mnesia;
+        rlog ->
+            role()
+    end.
 
 -spec rpc_module() -> gen_rpc | rpc.
 rpc_module() ->

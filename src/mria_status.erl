@@ -49,6 +49,7 @@
 
 -define(SERVER, ?MODULE).
 
+-include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %% Tables and table keys:
@@ -179,15 +180,14 @@ get_core_node(Shard, Timeout) ->
 
 -spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]}.
 wait_for_shards(Shards, Timeout) ->
-    LogLevel = case mria_config:role() of
-                   core -> debug;
-                   replicant -> info
-               end,
-    ?tp(LogLevel, "waiting_for_shards",
+    ?tp(waiting_for_shards,
         #{ shards => Shards
          , timeout => Timeout
          }),
-    Result = mria_condition_var:wait_vars([{?upstream_pid, I} || I <- Shards], Timeout),
+    Result = mria_condition_var:wait_vars( [{?upstream_pid, I} || I <- Shards,
+                                                                  I =/= ?LOCAL_CONTENT_SHARD]
+                                         , Timeout
+                                         ),
     Ret = case Result of
               ok ->
                   ok;
@@ -195,7 +195,7 @@ wait_for_shards(Shards, Timeout) ->
                   %% Unzip to transform `[{upstream_shard, foo}, {upstream_shard, bar}]' to `[foo, bar]':
                   {timeout, element(2, lists:unzip(L))}
           end,
-    ?tp(LogLevel, "done_waiting_for_shards",
+    ?tp(done_waiting_for_shards,
         #{ shards => Shards
          , result => Ret
          }),
