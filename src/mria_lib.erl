@@ -155,16 +155,14 @@ subscriber_node({Node, _Pid}) ->
 
 -spec call_backend_rw_trans(mria_rlog:shard(), atom(), list()) -> term().
 call_backend_rw_trans(Shard, Function, Args) ->
-    case {mria_rlog:backend(), mria_rlog:role(), Shard} of
-        {mnesia, core, _} ->
+    case {mria_config:whoami(), Shard} of
+        {mnesia, _} ->
             apply(mnesia, Function, Args);
-        {mnesia, replicant, _} ->
-            error(plain_mnesia_transaction_on_replicant);
-        {rlog, _, ?LOCAL_CONTENT_SHARD} ->
+        {_, ?LOCAL_CONTENT_SHARD} ->
             local_transactional_wrapper(Function, Args);
-        {rlog, core, _} ->
+        {core, _} ->
             transactional_wrapper(Shard, Function, Args);
-        {rlog, replicant, _} ->
+        {replicant, _} ->
             Core = find_upstream_node(Shard),
             mria_lib:rpc_call({Core, Shard}, ?MODULE, transactional_wrapper, [Shard, Function, Args])
     end.

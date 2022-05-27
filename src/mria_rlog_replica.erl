@@ -91,7 +91,8 @@ init({ParentSup, Shard}) ->
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]
                                     , shard  => Shard
                                     }),
-    ?tp(info, rlog_replica_start,
+    ?tp(info, "starting_rlog_shard", #{shard => Shard}),
+    ?tp(rlog_replica_start,
         #{ node => node()
          , shard => Shard
          }),

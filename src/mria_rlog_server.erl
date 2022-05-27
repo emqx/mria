@@ -115,6 +115,7 @@ init({Parent, Shard}) ->
     logger:set_process_metadata(#{ domain => [mria, rlog, server]
                                  , shard => Shard
                                  }),
+    ?tp(info, "starting_rlog_shard", #{shard => Shard}),
     ?tp(rlog_server_start, #{node => node()}),
     {ok, {Parent, Shard}, {continue, post_init}}.
 
