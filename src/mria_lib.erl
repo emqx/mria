@@ -21,6 +21,7 @@
         , make_key/1
 
         , rpc_call/4
+        , rpc_to_core_node/4
         , rpc_cast/4
 
         , shuffle/1
@@ -106,6 +107,10 @@ rpc_call(Destination, Module, Function, Args) ->
             gen_rpc:call(Destination, Module, Function, Args)
     end.
 
+-spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list()) -> term().
+rpc_to_core_node(Shard, Module, Function, Args) ->
+    do_rpc_to_core_node(Shard, Module, Function, Args, mria_config:core_rpc_retries()).
+
 %% @doc Do an RPC cast
 -spec rpc_cast(rpc_destination(), module(), atom(), list()) -> term().
 rpc_cast(Destination, Module, Function, Args) ->
@@ -163,8 +168,7 @@ call_backend_rw_trans(Shard, Function, Args) ->
         {core, _} ->
             transactional_wrapper(Shard, Function, Args);
         {replicant, _} ->
-            Core = find_upstream_node(Shard),
-            mria_lib:rpc_call({Core, Shard}, ?MODULE, transactional_wrapper, [Shard, Function, Args])
+            rpc_to_core_node(Shard, ?MODULE, transactional_wrapper, [Shard, Function, Args])
     end.
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
@@ -172,19 +176,23 @@ call_backend_rw_dirty(Function, Table, Args) ->
     Role = mria_rlog:role(),
     case mria_rlog:backend() of
         mnesia ->
-            Role = core, %% Assert
             apply(mnesia, Function, [Table|Args]);
         rlog ->
             Shard = mria_config:shard_rlookup(Table),
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
-                    dirty_wrapper(Function, Table, Args);
+                    apply(mnesia, Function, [Table|Args]);
                 false ->
                     %% Run dirty operation via RPC:
-                    Core = find_upstream_node(Shard),
-                    mria_lib:rpc_call({Core, Shard}, ?MODULE, dirty_wrapper,
-                                      [Function, Table, Args])
+                    case rpc_to_core_node(Shard, ?MODULE, dirty_wrapper, [Function, Table, Args]) of
+                        {ok, Result} ->
+                            Result;
+                        {exit, Err} ->
+                            exit(Err);
+                        {error, Err} ->
+                            error(Err)
+                    end
             end
     end.
 
@@ -211,10 +219,14 @@ local_transactional_wrapper(Activity, Args) ->
                                Res
                        end).
 
-%% @doc Perform a dirty operation and log changes.
--spec dirty_wrapper(atom(), mria:table(), list()) -> ok.
-dirty_wrapper(Fun, Table, Args) ->
-    apply(mnesia, Fun, [Table|Args]).
+-spec dirty_wrapper(atom(), mria:table(), list()) -> {ok | error | exit, term()}.
+dirty_wrapper(Function, Table, Args) ->
+    try apply(mnesia, Function, [Table|Args]) of
+        Result -> {ok, Result}
+    catch
+        EC : Err ->
+            {EC, Err}
+    end.
 
 -spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
 get_internals() ->
@@ -274,6 +286,30 @@ exec_callback_async(Name) ->
 %%================================================================================
 %% Internal
 %%================================================================================
+
+-spec do_rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
+do_rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
+    Core = find_upstream_node(Shard),
+    case rpc_call({Core, Shard}, Module, Function, Args) of
+        {Err, Details} when
+              Retries > 0 andalso
+              (Err =:= badrpc orelse Err =:= badtcp) ->
+            ?tp(debug, rpc_to_core_failed,
+                #{ module   => Module
+                 , function => Function
+                 , args     => Args
+                 , err      => Err
+                 , details  => Details
+                 }),
+            %% RPC to core node failed. Retry the operation after
+            %% giving LB some time to discover the failure:
+            SleepTime = (mria_config:core_rpc_retries() - Retries + 1) *
+                mria_config:core_rpc_cooldown(),
+            timer:sleep(SleepTime),
+            do_rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
+        Ret ->
+            Ret
+    end.
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->

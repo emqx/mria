@@ -28,6 +28,8 @@
 
 -define(replica, ?snk_meta := #{domain := [mria, rlog, replica|_]}).
 
+-define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
+
 all() -> mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
@@ -93,38 +95,41 @@ t_rocksdb_table(_) ->
     Cluster = mria_ct:cluster( [core, {core, EnvOverride}]
                              , mria_mnesia_test_util:common_env()
                              ),
-    try
-        Nodes = mria_ct:start_cluster(mria, Cluster),
-        CreateTab =
-            fun() ->
-                    ok = mria:create_table(kv_tab,
-                                           [{storage, rocksdb_copies},
-                                            {rlog_shard, test_shard},
-                                            {record_name, kv_tab},
-                                            {attributes, record_info(fields, kv_tab)}
-                                           ]),
-                    {atomic, Ret} =
-                        mria:transaction(test_shard,
-                                         fun() ->
-                                                 mnesia:write(#kv_tab{key = node(), val = node()})
-                                         end),
-                    Ret
-            end,
-        ReadTab =
-            fun() ->
-                    {atomic, Val} =
-                        mria:ro_transaction(test_shard,
-                                            fun() ->
-                                                    [#kv_tab{val = Val}] = mnesia:read(kv_tab, node()),
-                                                    Val
-                                            end),
-                    Val
-            end,
-        [ok = mria_ct:run_on(N, CreateTab) || N <- Nodes],
-        [N = mria_ct:run_on(N, ReadTab)    || N <- Nodes]
-    after
-        ok = mria_ct:teardown_cluster(Cluster)
-    end.
+    ?check_trace(
+        try
+            Nodes = mria_ct:start_cluster(mria, Cluster),
+            mria_mnesia_test_util:stabilize(1000),
+            CreateTab =
+                fun() ->
+                        ok = mria:create_table(kv_tab,
+                                               [{storage, rocksdb_copies},
+                                                {rlog_shard, test_shard},
+                                                {record_name, kv_tab},
+                                                {attributes, record_info(fields, kv_tab)}
+                                               ]),
+                        {atomic, Ret} =
+                            mria:transaction(test_shard,
+                                             fun() ->
+                                                     mnesia:write(#kv_tab{key = node(), val = node()})
+                                             end),
+                        Ret
+                end,
+            ReadTab =
+                fun() ->
+                        {atomic, Val} =
+                            mria:ro_transaction(test_shard,
+                                                fun() ->
+                                                        [#kv_tab{val = Val}] = mnesia:read(kv_tab, node()),
+                                                        Val
+                                                end),
+                        Val
+                end,
+            [ok = mria_ct:run_on(N, CreateTab) || N <- Nodes],
+            [N = mria_ct:run_on(N, ReadTab)    || N <- Nodes]
+        after
+            ok = mria_ct:teardown_cluster(Cluster)
+        end,
+       []).
 
 t_join_leave_cluster(_) ->
     Cluster = mria_ct:cluster([core, core], []),
@@ -356,6 +361,32 @@ t_rlog_clear_table(_) ->
        end,
        []).
 
+%% Compare behaviour of failing dirty operations on core and replicant:
+t_rlog_dirty_ops_fail(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           [?ON(N,
+                begin
+                    ?assertExit( {aborted, {no_exists, _}}
+                               , mnesia:dirty_delete(missing_table, key)
+                               ),
+                    ?assertExit( {aborted, {no_exists, _}}
+                               , mnesia:dirty_write({missing_table, key, val})
+                               ),
+                    ?assertExit( {aborted, {no_exists, _}}
+                               , mnesia:dirty_delete_object({missing_table, key, val})
+                               )
+                end)
+            || N <- Nodes]
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
@@ -503,14 +534,18 @@ t_core_node_down(_) ->
     Cluster = mria_ct:cluster( [core, core, replicant]
                              , mria_mnesia_test_util:common_env()
                              ),
+    NIter = 100,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => 30_000},
        try
-           [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            {ok, _} = ?block_until(#{ ?snk_kind := mria_status_change
                                    , status := up
                                    , tag := core_node
                                    }),
+           %% Start transaction gen:
+           {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
+           mria_transaction_gen:start_async_counter(N3, key, NIter + 1),
            %% Stop mria on all the core nodes:
            {_, {ok, _}} =
                ?wait_async_action(
@@ -519,6 +554,7 @@ t_core_node_down(_) ->
                    , status    := down
                    , tag       := core_node
                    }),
+           timer:sleep(5_000),
            %% Restart mria:
            {_, {ok, _}} =
                ?wait_async_action(
@@ -527,6 +563,8 @@ t_core_node_down(_) ->
                    , status    := up
                    , tag       := core_node
                    }),
+           %% Wait for the counter update
+           ?block_until(#{?snk_kind := trans_gen_counter_update, value := NIter}),
            %% Now stop the core nodes:
            {_, {ok, _}} =
                ?wait_async_action(

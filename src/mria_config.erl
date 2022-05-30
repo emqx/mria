@@ -21,6 +21,8 @@
         , backend/0
         , whoami/0
         , rpc_module/0
+        , core_rpc_retries/0
+        , core_rpc_cooldown/0
         , strict_mode/0
         , replay_batch_size/0
         , set_replay_batch_size/1
@@ -109,6 +111,14 @@ whoami() ->
 rpc_module() ->
     persistent_term:get(?mria(rlog_rpc_module), gen_rpc).
 
+-spec core_rpc_retries() -> integer().
+core_rpc_retries() ->
+    persistent_term:get(?mria(core_rpc_retries), 10).
+
+-spec core_rpc_cooldown() -> integer(). %% milliseconds
+core_rpc_cooldown() ->
+    persistent_term:get(?mria(core_rpc_cooldown), 10).
+
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().
 strict_mode() ->
@@ -125,6 +135,8 @@ set_replay_batch_size(N) ->
 -spec load_config() -> ok.
 load_config() ->
     copy_from_env(rlog_rpc_module),
+    copy_from_env(core_rpc_retries),
+    copy_from_env(core_rpc_cooldown),
     copy_from_env(db_backend),
     copy_from_env(node_role),
     copy_from_env(strict_mode),
