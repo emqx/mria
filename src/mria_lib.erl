@@ -286,7 +286,9 @@ do_rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
                  }),
             %% RPC to core node failed. Retry the operation after
             %% giving LB some time to discover the failure:
-            timer:sleep(mria_config:core_rpc_cooldown()),
+            SleepTime = (mria_config:core_rpc_retries() - Retries + 1) *
+                mria_config:core_rpc_cooldown(),
+            timer:sleep(SleepTime),
             do_rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
         Ret ->
             Ret
