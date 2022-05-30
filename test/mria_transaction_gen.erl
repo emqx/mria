@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
         , delete/1
         , abort/2
         , benchmark/3
+        , start_async_counter/3
         , counter/2
         , counter/3
         , ro_read_all_keys/0
@@ -77,6 +78,9 @@ delete(K) ->
       fun() ->
               mnesia:delete({test_tab, K})
       end).
+
+start_async_counter(Node, Key, N) ->
+    rpc:cast(Node, ?MODULE, counter, [Key, N]).
 
 counter(Key, N) ->
     counter(Key, N, 0).
