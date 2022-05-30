@@ -78,16 +78,23 @@ core_nodes() ->
 init(_) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
-    init_timer(),
+    start_timer(),
     State = #s{ core_protocol_versions = #{}
               , core_nodes = []
               },
     {ok, State}.
 
-handle_info(?update, St0) ->
-    St = do_update(St0),
-    {noreply, St};
-handle_info(_Info, St) ->
+handle_info(?update, St) ->
+    start_timer(),
+    {noreply, do_update(St)};
+handle_info({membership, {node, NewStatus, Node}}, St) ->
+    ?tp(debug, core_node_monitor, #{node => Node, status => NewStatus}),
+    case NewStatus of
+        down -> {noreply, do_update(St)}; %% Trigger the update immediately
+        up   -> {noreply, St}             %% Node ups are handled via periodic probe
+    end;
+handle_info(Info, St) ->
+    ?tp(warning, "Received unknown info", #{info => Info, worker => ?MODULE}),
     {noreply, St}.
 
 handle_cast(_Cast, St) ->
@@ -134,7 +141,6 @@ do_update(State) ->
     %% update the local membership table when new cores appear
     CoresChanged andalso ping_core_nodes(NewCoreNodes),
     [do_update_shard(Shard, NewCoreNodes) || Shard <- mria_schema:shards()],
-    init_timer(),
     State#s{core_nodes = NewCoreNodes}.
 
 do_update_shard(Shard, CoreNodes) ->
@@ -148,7 +154,7 @@ do_update_shard(Shard, CoreNodes) ->
             mria_status:notify_core_node_up(Shard, Core)
     end.
 
-init_timer() ->
+start_timer() ->
     Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
@@ -217,7 +223,8 @@ ping_core_nodes(NewCoreNodes) ->
     LocalMember = mria_membership:make_new_local_member(),
     lists:foreach(
       fun(Core) ->
-              mria_membership:ping(Core, LocalMember)
+              mria_membership:ping(Core, LocalMember),
+              mria_membership:monitor(membership, self(), true)
       end, NewCoreNodes).
 
 %%================================================================================
