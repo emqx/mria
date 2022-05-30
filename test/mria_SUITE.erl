@@ -28,6 +28,8 @@
 
 -define(replica, ?snk_meta := #{domain := [mria, rlog, replica|_]}).
 
+-define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
+
 all() -> mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
@@ -354,6 +356,32 @@ t_rlog_clear_table(_) ->
            ?assertMatch({atomic, ok}, rpc:call(N1, mria, clear_table, [test_tab])),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% Compare behaviour of failing dirty operations on core and replicant:
+t_rlog_dirty_ops_fail(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           [?ON(N,
+                begin
+                    ?assertExit( {aborted, {no_exists, _}}
+                               , mnesia:dirty_delete(missing_table, key)
+                               ),
+                    ?assertExit( {aborted, {no_exists, _}}
+                               , mnesia:dirty_write({missing_table, key, val})
+                               ),
+                    ?assertExit( {aborted, {no_exists, _}}
+                               , mnesia:dirty_delete_object({missing_table, key, val})
+                               )
+                end)
+            || N <- Nodes]
        after
            mria_ct:teardown_cluster(Cluster)
        end,

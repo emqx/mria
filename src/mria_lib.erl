@@ -47,6 +47,7 @@
 %% Internal exports
 -export([ transactional_wrapper/3
         , local_transactional_wrapper/2
+        , dirty_wrapper/3
         ]).
 
 -export_type([ subscriber/0
@@ -184,7 +185,14 @@ call_backend_rw_dirty(Function, Table, Args) ->
                     apply(mnesia, Function, [Table|Args]);
                 false ->
                     %% Run dirty operation via RPC:
-                    rpc_to_core_node(Shard, mnesia, Function, [Table|Args])
+                    case rpc_to_core_node(Shard, ?MODULE, dirty_wrapper, [Function, Table, Args]) of
+                        {ok, Result} ->
+                            Result;
+                        {exit, Err} ->
+                            exit(Err);
+                        {error, Err} ->
+                            error(Err)
+                    end
             end
     end.
 
@@ -210,6 +218,15 @@ local_transactional_wrapper(Activity, Args) ->
                                ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
                                Res
                        end).
+
+-spec dirty_wrapper(atom(), mria:table(), list()) -> {ok | error | exit, term()}.
+dirty_wrapper(Function, Table, Args) ->
+    try apply(mnesia, Function, [Table|Args]) of
+        Result -> {ok, Result}
+    catch
+        EC : Err ->
+            {EC, Err}
+    end.
 
 -spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
 get_internals() ->
