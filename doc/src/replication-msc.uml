@@ -26,12 +26,6 @@ group Agent initialization
 
   activate agent
 
-    agent -> agent+: init
-      note over agent: It's important that the agent\nsubscribe to the realtime stream\nbefore bootstrapping starts
-
-      agent -> agent: mnesia:subscribe
-    return
-
   repl <- server : {need_bootstrap, AgentPID}
 end
 
@@ -63,7 +57,8 @@ group Bootstrap
   note over agent : At the same time...
 
   loop
-    agent -> repl : {batch, [MnesiaOps]}
+    server -> agent : {trans, SeqNo, TLOG}
+    agent -> repl : '#entry{}'
     repl -> repl : cache batch to the local rlog
   end
 
@@ -79,7 +74,8 @@ group local_replay
   note over repl : Iterate through the\ncached transactions
 
   loop
-    agent -> repl : {batch, [MnesiaOps]}
+    server -> agent : {trans, SeqNo, TLOG}
+    agent -> repl : '#entry{}'
     repl -> repl : cache batch in the local rlog
 
     repl -> repl : Import ops from the local rlog\nto the local replica
@@ -94,8 +90,13 @@ end
 hnote over repl : normal
 
 loop
-  agent -> repl : {batch, [Transactions]}
-  repl -> repl_imp : {import_batch, [Transactions]}
+  server -> agent : {trans, SeqNo, TLOG}
+  agent -> repl : '#entry{SeqNo}'
+  server -> agent : {trans, SeqNo + 1, TLOG}
+  agent -> repl : '#entry{SeqNo + 1}'
+  server -> agent : {trans, SeqNo + 2, TLOG}
+  agent -> repl : '#entry{SeqNo + 2}'
+  repl -> repl_imp : {import_batch, [Entries 1 2 3]}
   repl_imp -> repl_imp : Import batch to the\nlocal replica
   repl <- repl_imp : ok
 end
