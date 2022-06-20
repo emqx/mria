@@ -39,7 +39,7 @@ Full process of shard replication:
 `rlog_replica_importer_worker` is a helper process spawned by `rlog_replica` specifically to import batches of transactions into the local database.
 
 This importing is not done in the parent process because it can have a long message queue, which is really harmful for performance of mnesia transactions:
-During commit stage, the transaction does a receive without ref trick, so it has to scan the entire mailbox.
+During commit stage, the transaction does a receive without [ref trick](https://blog.stenmans.org/theBeamBook/#_the_synchronous_call_trick_aka_the_ref_trick), so it has to scan the entire mailbox.
 The protocol between `rlog_replica_importer_worker` and `rlog_replica` processes has been designed in such a way that the former process never has more than one message in the mailbox, hence mnesia transactions initiated from this process run much faster.
 
 Note that replica sends transactions to the importer worker in batches.
