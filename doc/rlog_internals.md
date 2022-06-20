@@ -2,15 +2,7 @@
 
 ## Transaction interception
 
-Due to limitations of mnesia event API, a rather convoluted scheme is used to gain access to the realtime transaction stream.
-
-Each RLOG shard is associated with a mnesia table named after the shard.
-These tables are called "rlog tables", and they are deeply magical.
-`mria:transaction` wrapper intercepts all update operations for the regular tables, and inserts them as a record to the rlog table just before the transaction commits.
-`mria_rlog_agent` processes subscribe to events for the rlog table, and therefore receive events containing the entire list of transaction ops.
-
-Currently the contents of the rlog tables are never read.
-To avoid a memory leak, rlog tables use "`null_copies`" mnesia storage backend (see `mria_mnesia_null_storage.erl`), that discards any data written there.
+We use a patched version of OTP that allows to hook into post-commit stage of the transaction, after the data has been dumped to the storage.
 
 ## Actors
 
@@ -20,6 +12,7 @@ RLOG server is a `gen_server` process that runs on the core node.
 There is an instance of this process for each shard.
 This process is registered with the shard's name.
 It is responsible for the initial communication with the RLOG replica processes, and spawning RLOG agent and RLOG bootstrapper processes.
+Also it receives the transaction messages intercepted by the hook and multicasts them to the agents.
 
 ### RLOG Agent
 
@@ -40,6 +33,18 @@ It also creates a bootstrap client process and manages it.
 Full process of shard replication:
 
 ![Replication MSC](replication-msc.png)
+
+#### RLOG replica importer worker
+
+`rlog_replica_importer_worker` is a helper process spawned by `rlog_replica` specifically to import batches of transactions into the local database.
+
+This importing is not done in the parent process because it can have a long message queue, which is really harmful for performance of mnesia transactions:
+During commit stage, the transaction does a receive without [ref trick](https://blog.stenmans.org/theBeamBook/#_the_synchronous_call_trick_aka_the_ref_trick), so it has to scan the entire mailbox.
+The protocol between `rlog_replica_importer_worker` and `rlog_replica` processes has been designed in such a way that the former process never has more than one message in the mailbox, hence mnesia transactions initiated from this process run much faster.
+
+Note that replica sends transactions to the importer worker in batches.
+Replica process maintains an internal queue of transactions from the upstream agent, where the messages are accumulated while the batch is being imported by the importer worker.
+Once the batch is fully imported, replica process immediately initiates importing of the next batch.
 
 ### RLOG bootstrapper (client/server)
 
