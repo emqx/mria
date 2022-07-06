@@ -407,6 +407,10 @@ t_middleman(_) ->
            mria_ct:teardown_cluster(Cluster)
        end,
        [ fun mria_rlog_props:replicant_no_restarts/1
+       , {"Check that middleman has been invoked",
+          fun(Trace) ->
+                  length(?of_kind(mria_lib_with_middleman, Trace)) > 0
+          end}
        ]).
 
 t_rlog_dirty_operations(_) ->

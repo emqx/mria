@@ -299,11 +299,15 @@ with_middleman(Mod, Fun, Args) ->
     Ref = make_ref(),
     Parent = self(),
     spawn_link(fun() ->
+                       ?tp(mria_lib_with_middleman, #{ module => Mod
+                                                     , function => Fun
+                                                     , args => Args
+                                                     }),
                        Result = try apply(Mod, Fun, Args) of
                                     R -> {ok, R}
                                 catch
-                                    EC:Err ->
-                                        {EC, Err}
+                                    EC:Err:Stack ->
+                                        {EC, Err, Stack}
                                 end,
                        Parent ! {Ref, Result}
                end),
@@ -311,8 +315,8 @@ with_middleman(Mod, Fun, Args) ->
         {Ref, Result} ->
             case Result of
                 {ok, R} -> R;
-                {EC, Err} ->
-                    erlang:EC(Err)
+                {EC, Err, Stack} ->
+                    erlang:raise(EC, Err, Stack)
             end
     end.
 
