@@ -142,6 +142,7 @@ load_config() ->
     copy_from_env(strict_mode),
     copy_from_env(replay_batch_size),
     copy_from_env(shard_transport),
+    copy_from_env(max_mql),
     consistency_check().
 
 -spec set_dirty_shard(mria_rlog:shard(), boolean()) -> ok.
