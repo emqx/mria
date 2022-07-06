@@ -387,6 +387,32 @@ t_rlog_dirty_ops_fail(_) ->
        end,
        []).
 
+t_middleman(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           ?ON(N1,
+               begin
+                   [self() ! message || _ <- lists:seq(1, 100)],
+                   ?assertMatch(ok, mria:dirty_write({test_tab, 1, 1})),
+                   ?assertMatch(ok, mria:dirty_delete(test_tab, 2)),
+                   ?assertExit(_, mria:dirty_write({nonexistent, 1, 1}))
+               end),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun mria_rlog_props:replicant_no_restarts/1
+       , {"Check that middleman has been invoked",
+          fun(Trace) ->
+                  length(?of_kind(mria_lib_with_middleman, Trace)) > 0
+          end}
+       ]).
+
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(

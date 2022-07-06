@@ -23,6 +23,7 @@
         , rpc_call/4
         , rpc_to_core_node/4
         , rpc_cast/4
+        , maybe_middleman/3
 
         , shuffle/1
         , send_after/3
@@ -162,11 +163,11 @@ subscriber_node({Node, _Pid}) ->
 call_backend_rw_trans(Shard, Function, Args) ->
     case {mria_config:whoami(), Shard} of
         {mnesia, _} ->
-            apply(mnesia, Function, Args);
+            maybe_middleman(mnesia, Function, Args);
         {_, ?LOCAL_CONTENT_SHARD} ->
-            local_transactional_wrapper(Function, Args);
+            maybe_middleman(?MODULE, local_transactional_wrapper, [Function, Args]);
         {core, _} ->
-            transactional_wrapper(Shard, Function, Args);
+            maybe_middleman(?MODULE, transactional_wrapper, [Shard, Function, Args]);
         {replicant, _} ->
             rpc_to_core_node(Shard, ?MODULE, transactional_wrapper, [Shard, Function, Args])
     end.
@@ -176,13 +177,13 @@ call_backend_rw_dirty(Function, Table, Args) ->
     Role = mria_rlog:role(),
     case mria_rlog:backend() of
         mnesia ->
-            apply(mnesia, Function, [Table|Args]);
+            maybe_middleman(mnesia, Function, [Table|Args]);
         rlog ->
             Shard = mria_config:shard_rlookup(Table),
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
-                    apply(mnesia, Function, [Table|Args]);
+                    maybe_middleman(mnesia, Function, [Table|Args]);
                 false ->
                     %% Run dirty operation via RPC:
                     case rpc_to_core_node(Shard, ?MODULE, dirty_wrapper, [Function, Table, Args]) of
@@ -282,6 +283,42 @@ exec_callback(Name) ->
 exec_callback_async(Name) ->
     proc_lib:spawn(?MODULE, exec_callback, [Name]),
     ok.
+
+-spec maybe_middleman(module(), atom(), list()) -> term().
+maybe_middleman(Mod, Fun, Args) ->
+    [{message_queue_len, MQL}] = process_info(self(), [message_queue_len]),
+    MaxMQL = persistent_term:get({mria, max_mql}, 10),
+    if MQL >= MaxMQL ->
+            with_middleman(Mod, Fun, Args);
+       true ->
+            apply(Mod, Fun, Args)
+    end.
+
+-spec with_middleman(module(), atom(), list()) -> term().
+with_middleman(Mod, Fun, Args) ->
+    Ref = make_ref(),
+    Parent = self(),
+    spawn_link(fun() ->
+                       ?tp(mria_lib_with_middleman, #{ module => Mod
+                                                     , function => Fun
+                                                     , args => Args
+                                                     }),
+                       Result = try apply(Mod, Fun, Args) of
+                                    R -> {ok, R}
+                                catch
+                                    EC:Err:Stack ->
+                                        {EC, Err, Stack}
+                                end,
+                       Parent ! {Ref, Result}
+               end),
+    receive
+        {Ref, Result} ->
+            case Result of
+                {ok, R} -> R;
+                {EC, Err, Stack} ->
+                    erlang:raise(EC, Err, Stack)
+            end
+    end.
 
 %%================================================================================
 %% Internal
