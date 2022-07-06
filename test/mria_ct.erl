@@ -95,7 +95,11 @@ start_cluster(mria_async, Specs) ->
 
 teardown_cluster(Specs) ->
     ?tp(teardown_cluster, #{}),
-    Nodes = [I || #{node := I} <- Specs],
+    %% Shut down replicants first, otherwise they will make noise about core nodes going down:
+    SortFun = fun(#{role := core}, #{role := replicant}) -> false;
+                 (_, _)                                  -> true
+              end,
+    Nodes = lists:sort(SortFun, [I || #{node := I} <- Specs]),
     [rpc:call(I, mria, stop, []) || I <- Nodes],
     [ok = stop_slave(I) || I <- Nodes],
     ok.
