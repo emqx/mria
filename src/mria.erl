@@ -23,7 +23,7 @@
         ]).
 
 %% Info
--export([info/0, info/1]).
+-export([info/0, info/1, rocksdb_backend_available/0]).
 
 %% Cluster API
 -export([ join/1
@@ -144,6 +144,9 @@ info() ->
                 , partitions => Partitions
                 , rlog       => mria_rlog:status()
                 }).
+
+-spec rocksdb_backend_available() -> boolean().
+rocksdb_backend_available() -> ?MRIA_HAS_ROCKSDB.
 
 %%--------------------------------------------------------------------
 %% Cluster API

@@ -103,10 +103,17 @@ ensure_schema() ->
     mria_lib:ensure_ok(init_schema()).
 
 %% @doc Ensure started
+-dialyzer({nowarn_function, [ensure_started/0]}).
 ensure_started() ->
     ok = mnesia:start(),
     {ok, _} = mria_mnesia_null_storage:register(),
-    {ok, _} = mnesia_rocksdb:register(),
+    case mria:rocksdb_backend_available() of
+        true ->
+            {ok, _} = application:ensure_all_started(mnesia_rocksdb),
+            {ok, _} = mnesia_rocksdb:register();
+        false ->
+            ok
+    end,
     wait_for(start).
 
 %% @doc Ensure mnesia stopped
