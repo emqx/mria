@@ -1,20 +1,50 @@
-%% -*-: erlang -*-
+%% -*- mode:erlang -*-
 
-case {os:getenv("GITHUB_ACTIONS"), os:getenv("GITHUB_TOKEN")} of
-  {"true", Token} when is_list(Token) ->
-    CONFIG1 = [{coveralls_repo_token, Token},
-               {coveralls_service_job_id, os:getenv("GITHUB_RUN_ID")},
-               {coveralls_commit_sha, os:getenv("GITHUB_SHA")},
-               {coveralls_service_number, os:getenv("GITHUB_RUN_NUMBER")},
-               {coveralls_coverdata, "_build/test/cover/*.coverdata"},
-               {coveralls_service_name, "github"} | CONFIG],
-    case os:getenv("GITHUB_EVENT_NAME") =:= "pull_request"
-        andalso string:tokens(os:getenv("GITHUB_REF"), "/") of
-        [_, "pull", PRNO, _] ->
-            [{coveralls_service_pull_request, PRNO} | CONFIG1];
-        _ ->
-            CONFIG1
-    end;
-  _ ->
-    CONFIG
-end.
+BuildWithoutRocks =
+fun(Config) ->
+    case os:getenv("BUILD_WITHOUT_ROCKSDB") of
+      false ->
+        Config;
+      _ ->
+        io:format(user, "Building without rocksDB", []),
+        Deps = lists:keydelete(mnesia_rocksdb, 1, proplists:get_value(deps, Config)),
+        ErlOpts = lists:keyreplace('MRIA_HAS_ROCKSDB', 2, proplists:get_value(erl_opts, Config),
+                                   {d, 'MRIA_HAS_ROCKSDB', false}),
+        Config1 = lists:keyreplace(deps, 1, Config, {deps, Deps}),
+        lists:keyreplace(erl_opts, 1, Config1, {erl_opts, ErlOpts})
+    end
+end,
+
+AddCoverallsToken =
+fun(Config) ->
+    case {os:getenv("GITHUB_ACTIONS"), os:getenv("GITHUB_TOKEN")} of
+      {"true", Token} when is_list(Token) ->
+        [{coveralls_repo_token, Token},
+         {coveralls_service_job_id, os:getenv("GITHUB_RUN_ID")},
+         {coveralls_commit_sha, os:getenv("GITHUB_SHA")},
+         {coveralls_service_number, os:getenv("GITHUB_RUN_NUMBER")},
+         {coveralls_coverdata, "_build/test/cover/*.coverdata"},
+         {coveralls_service_name, "github"} | Config];
+      _ ->
+        Config
+    end
+end,
+
+AddCoverallsPR =
+fun(Config) ->
+    case os:getenv("GITHUB_EVENT_NAME") =:= "pull_request" andalso
+      string:tokens(os:getenv("GITHUB_REF"), "/") of
+      [_, "pull", PRNO, _] ->
+        [{coveralls_service_pull_request, PRNO} | Config];
+      _ ->
+        Config
+    end
+end,
+
+%%%% Create final configuarion %%%%
+
+lists:foldl(fun(Fun, Conf) -> Fun(Conf) end, CONFIG,
+           [ BuildWithoutRocks
+           , AddCoverallsToken
+           , AddCoverallsPR
+           ]).
