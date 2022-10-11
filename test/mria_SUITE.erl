@@ -491,6 +491,25 @@ t_rlog_dirty_operations(_) ->
        [ fun mria_rlog_props:replicant_no_restarts/1
        ]).
 
+t_rlog_sync_dirty_operations(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           ok = rpc:call(N1, mria, dirty_write_sync, [{test_tab, 1, 1}]),
+           ?assertEqual(
+              [{test_tab, 1, 1}],
+              rpc:call(N2, mnesia, dirty_read, [test_tab, 1])),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun mria_rlog_props:replicant_no_restarts/1
+       ]).
+
 t_local_content(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(

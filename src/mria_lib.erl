@@ -34,6 +34,7 @@
 
         , call_backend_rw_trans/3
         , call_backend_rw_dirty/3
+        , call_backend_rw_dirty/4
 
         , ensure_ok/1
         , ensure_tab/1
@@ -48,7 +49,8 @@
 %% Internal exports
 -export([ transactional_wrapper/3
         , local_transactional_wrapper/2
-        , dirty_wrapper/3
+        , dirty_wrapper/4
+        , dirty_write_sync/2
         ]).
 
 -export_type([ subscriber/0
@@ -174,19 +176,23 @@ call_backend_rw_trans(Shard, Function, Args) ->
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
 call_backend_rw_dirty(Function, Table, Args) ->
+    call_backend_rw_dirty(mnesia, Function, Table, Args).
+
+-spec call_backend_rw_dirty(module(), atom(), mria:table(), list()) -> term().
+call_backend_rw_dirty(Module, Function, Table, Args) ->
     Role = mria_rlog:role(),
     case mria_rlog:backend() of
         mnesia ->
-            maybe_middleman(mnesia, Function, [Table|Args]);
+            maybe_middleman(Module, Function, [Table|Args]);
         rlog ->
             Shard = mria_config:shard_rlookup(Table),
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
-                    maybe_middleman(mnesia, Function, [Table|Args]);
+                    maybe_middleman(Module, Function, [Table|Args]);
                 false ->
                     %% Run dirty operation via RPC:
-                    case rpc_to_core_node(Shard, ?MODULE, dirty_wrapper, [Function, Table, Args]) of
+                    case rpc_to_core_node(Shard, ?MODULE, dirty_wrapper, [Module, Function, Table, Args]) of
                         {ok, Result} ->
                             Result;
                         {exit, Err} ->
@@ -220,9 +226,17 @@ local_transactional_wrapper(Activity, Args) ->
                                Res
                        end).
 
--spec dirty_wrapper(atom(), mria:table(), list()) -> {ok | error | exit, term()}.
-dirty_wrapper(Function, Table, Args) ->
-    try apply(mnesia, Function, [Table|Args]) of
+%% @doc Perform syncronous dirty operation
+-spec dirty_write_sync(mria:table(), tuple()) -> ok.
+dirty_write_sync(Table, Record) ->
+    mnesia:sync_dirty(
+      fun() ->
+              mnesia:write(Table, Record, write)
+      end).
+
+-spec dirty_wrapper(module(), atom(), mria:table(), list()) -> {ok | error | exit, term()}.
+dirty_wrapper(Module, Function, Table, Args) ->
+    try apply(Module, Function, [Table|Args]) of
         Result -> {ok, Result}
     catch
         EC : Err ->
