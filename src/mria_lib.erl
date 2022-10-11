@@ -47,6 +47,7 @@
 -export([ transactional_wrapper/3
         , local_transactional_wrapper/2
         , dirty_wrapper/3
+        , dirty_write_sync/2
         ]).
 
 -export_type([ subscriber/0
@@ -171,22 +172,26 @@ call_backend_rw_trans(Shard, Function, Args) ->
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
 call_backend_rw_dirty(Function, Table, Args) ->
+    call_backend_rw_dirty(mnesia, Function, Table, Args).
+
+-spec call_backend_rw_dirty(module(), atom(), mria:table(), list()) -> term().
+call_backend_rw_dirty(Module, Function, Table, Args) ->
     Role = mria_rlog:role(),
     case mria_rlog:backend() of
         mnesia ->
             Role = core, %% Assert
-            apply(mnesia, Function, [Table|Args]);
+            apply(Module, Function, [Table|Args]);
         rlog ->
             Shard = mria_config:shard_rlookup(Table),
             case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
                 true ->
                     %% Run dirty operation locally:
-                    dirty_wrapper(Function, Table, Args);
+                    dirty_wrapper(Module, Function, Table, Args);
                 false ->
                     %% Run dirty operation via RPC:
                     Core = find_upstream_node(Shard),
                     mria_lib:rpc_call({Core, Shard}, ?MODULE, dirty_wrapper,
-                                      [Function, Table, Args])
+                                      [Module, Function, Table, Args])
             end
     end.
 
@@ -213,10 +218,22 @@ local_transactional_wrapper(Activity, Args) ->
                                Res
                        end).
 
+%% @doc Perform syncronous dirty operation
+-spec dirty_write_sync(mria:table(), tuple()) -> ok.
+dirty_write_sync(Table, Record) ->
+    mnesia:sync_dirty(
+      fun() ->
+              mnesia:write(Table, Record, write)
+      end).
+
 %% @doc Perform a dirty operation and log changes.
 -spec dirty_wrapper(atom(), mria:table(), list()) -> ok.
 dirty_wrapper(Fun, Table, Args) ->
-    apply(mnesia, Fun, [Table|Args]).
+    dirty_wrapper(mnesia, Fun, Table, Args).
+
+-spec dirty_wrapper(module(), atom(), mria:table(), list()) -> ok.
+dirty_wrapper(Module, Fun, Table, Args) ->
+    apply(Module, Fun, [Table|Args]).
 
 -spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
 get_internals() ->

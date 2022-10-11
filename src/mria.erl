@@ -51,6 +51,9 @@
         , dirty_delete_object/1
         , dirty_delete_object/2
 
+        , dirty_write_sync/2
+        , dirty_write_sync/1
+
         , local_content_shard/0
 
         , create_table/2
@@ -317,6 +320,14 @@ dirty_write(Record) ->
 -spec dirty_write(mria:table(), tuple()) -> ok.
 dirty_write(Tab, Record) ->
     mria_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
+
+-spec dirty_write_sync(tuple()) -> ok.
+dirty_write_sync(Record) ->
+    dirty_write_sync(element(1, Record), Record).
+
+-spec dirty_write_sync(mria:table(), tuple()) -> ok.
+dirty_write_sync(Tab, Record) ->
+    mria_lib:call_backend_rw_dirty(mria_lib, dirty_write_sync, Tab, [Record]).
 
 -spec dirty_delete(mria:table(), term()) -> ok.
 dirty_delete(Tab, Key) ->
