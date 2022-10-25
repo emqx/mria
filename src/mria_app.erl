@@ -63,6 +63,6 @@ maybe_perform_disaster_recovery() ->
     end.
 
 perform_disaster_recovery(MasterNodes) ->
-    logger:critical("Disaster recovery procedures has been enacted. "
+    logger:critical("Disaster recovery procedures have been enacted. "
                     "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
     mnesia:set_master_nodes(MasterNodes).
