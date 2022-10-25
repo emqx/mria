@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ start(_Type, _Args) ->
     mria_config:load_config(),
     mria_rlog:init(),
     ?tp(notice, "Starting mnesia", #{}),
+    maybe_perform_disaster_recovery(),
     mria_mnesia:ensure_schema(),
     mria_mnesia:ensure_started(),
     ?tp(notice, "Initializing RLOG schema", #{}),
@@ -48,5 +49,20 @@ stop(_State) ->
     ?tp(notice, "Mria is stopped", #{}).
 
 %%================================================================================
-%% Internal funcions
+%% Internal functions
 %%================================================================================
+
+maybe_perform_disaster_recovery() ->
+    case os:getenv("MNESIA_MASTER_NODES") of
+        false ->
+            ok;
+        Str ->
+            {ok, Tokens, _} = erl_scan:string(Str),
+            MasterNodes = [A || {atom, _, A} <- Tokens],
+            perform_disaster_recovery(MasterNodes)
+    end.
+
+perform_disaster_recovery(MasterNodes) ->
+    logger:critical("Disaster recovery procedures have been enacted. "
+                    "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
+    mnesia:set_master_nodes(MasterNodes).
