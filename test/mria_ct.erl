@@ -186,9 +186,12 @@ node_id(Name) ->
     list_to_atom(lists:concat([Name, "@", host()])).
 
 run_on(Node, Fun) ->
+    run_on(Node, Fun, []).
+
+run_on(Node, Fun, Args) ->
     %% Sending closures over erlang distribution is wrong, but for
     %% test purposes it should be ok.
-    case rpc:call(Node, erlang, apply, [Fun, []]) of
+    case rpc:call(Node, erlang, apply, [Fun, Args]) of
         {badrpc, Err} ->
             error(Err);
         Result ->

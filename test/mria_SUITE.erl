@@ -90,6 +90,46 @@ t_disc_table(_) ->
         ok = mria_ct:teardown_cluster(Cluster)
     end.
 
+t_bootstrap(_) ->
+    Parameters = [{Storage, Type} || Storage <- [ram_copies, disc_copies, disc_only_copies, rocksdb_copies]
+                                   , Type    <- [set, ordered_set, bag]
+                                   , not (Storage =:= disc_only_copies andalso Type =:= ordered_set)],
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    NRecords = 4321,
+    ?check_trace(
+        try
+            Nodes = [Core, Replicant] = mria_ct:start_cluster(mria, Cluster),
+            mria_mnesia_test_util:stabilize(1000),
+            %% Init tables and data:
+            Init =
+                fun({Storage, Type}) ->
+                        Table = list_to_atom(lists:concat([Storage, Type])),
+                        ok = mria:create_table(Table,
+                                               [{storage, Storage},
+                                                {rlog_shard, test_shard},
+                                                {record_name, kv_tab},
+                                                {attributes, record_info(fields, kv_tab)},
+                                                {type, Type}
+                                               ]),
+                        [ok = mria:dirty_write(Table, #kv_tab{key = I, val = I})
+                         || I <- lists:seq(1, NRecords)],
+                        Table
+                end,
+            Tables = [mria_ct:run_on(Core, Init, [I]) || I <- Parameters],
+            ?tp(notice, "Waiting for full replication", #{}),
+            mria_mnesia_test_util:wait_full_replication(Cluster),
+            %% Restart the replicant so it bootstraps again:
+            ?tp(warning, "Restarting replicant!", #{}),
+            ok = rpc:call(Replicant, application, stop, [mria]),
+            ok = rpc:call(Replicant, application, start, [mria]),
+            {ok, _} = ?block_until(#{?snk_kind := "Shard fully up", node := Replicant, shard := test_shard}),
+            %% Compare contents of all tables
+            [mria_mnesia_test_util:compare_table_contents(Tab, Nodes) || Tab <- Tables]
+        after
+            ok = mria_ct:teardown_cluster(Cluster)
+        end,
+       []).
+
 t_rocksdb_table(_) ->
     EnvOverride = [{mnesia_rocksdb, semantics, fast}],
     Cluster = mria_ct:cluster( [core, {core, EnvOverride}]
