@@ -38,6 +38,8 @@
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
+-define(end_of_table, '$end_of_table').
+
 %%================================================================================
 %% Type declarations
 %%================================================================================
@@ -47,10 +49,16 @@
                  , _Records :: [tuple()]
                  }.
 
+-record(iter,
+        { table   :: mria:table()
+        , storage :: atom() | {ext, _, _}
+        , state   :: _
+        }).
+
 -record(server,
         { shard       :: mria_rlog:shard()
         , subscriber  :: mria_lib:subscriber()
-        , key_queue   :: replayq:q() | undefined
+        , iterator    :: #iter{} | undefined
         , tables      :: [mria:table()]
         }).
 
@@ -100,14 +108,10 @@ init({server, Shard, Subscriber}) ->
         #{ shard     => Shard
          , subscribe => Subscriber
          }),
-    Queue = replayq:open(#{ mem_only => true
-                          , sizer    => fun(_) -> 1 end
-                          }),
-    self() ! table_loop,
+    self() ! loop,
     {ok, #server{ shard      = Shard
                 , subscriber = Subscriber
                 , tables     = Tables
-                , key_queue  = Queue
                 }};
 init({client, Shard, RemoteNode, Parent}) ->
     process_flag(trap_exit, true),
@@ -121,10 +125,8 @@ init({client, Shard, RemoteNode, Parent}) ->
                 , server     = Pid
                 }}.
 
-handle_info(table_loop, St = #server{}) ->
-    start_table_traverse(St);
-handle_info(chunk_loop, St = #server{tables = [_|_]}) ->
-    traverse_queue(St);
+handle_info(loop, St = #server{}) ->
+    server_loop(St);
 handle_info(_Info, St) ->
     {noreply, St}.
 
@@ -147,8 +149,8 @@ handle_call(Call, _From, St) ->
 code_change(_OldVsn, St, _Extra) ->
     {ok, St}.
 
-terminate(_Reason, St = #server{key_queue = Q}) ->
-    replayq:close(Q),
+terminate(_Reason, St = #server{iterator = I}) ->
+    I =/= undefined andalso iter_end(I),
     {ok, St};
 terminate(_Reason, St = #client{}) ->
     {ok, St}.
@@ -156,6 +158,10 @@ terminate(_Reason, St = #client{}) ->
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+-spec push_records(mria_lib:subscriber(), mria:table(), [tuple()]) -> ok | {badrpc, _}.
+push_records(Subscriber, Table, Records) ->
+    push_batch(Subscriber, {self(), Table, Records}).
 
 -spec push_batch(mria_lib:subscriber(), batch()) -> ok | {badrpc, _}.
 push_batch({Node, Pid}, Batch = {_, _, _}) ->
@@ -168,50 +174,74 @@ complete({Node, Pid}, Server, Checkpoint) ->
 handle_batch(Table, Records) ->
     lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
 
-start_table_traverse(St = #server{tables = [], subscriber = Subscriber}) ->
+server_loop(St = #server{tables = [], subscriber = Subscriber, iterator = undefined}) ->
+    %% All tables and chunks have been sent:
     _ = complete(Subscriber, self(), mria_lib:approx_checkpoint()),
     {stop, normal, St};
-start_table_traverse(St0 = #server{ shard = Shard
-                                  , tables = [Table|_Rest]
-                                  , key_queue = Q0
-                                  }) ->
-    ?tp(info, start_shard_table_bootstrap,
-        #{ shard => Shard
-         , table => Table
-         }),
-    Q = replayq:append(Q0, mnesia:dirty_all_keys(Table)),
-    St = St0#server{ key_queue = Q },
-    self() ! chunk_loop,
-    {noreply, St}.
-
-traverse_queue(St0 = #server{key_queue = Q0, subscriber = Subscriber, tables = [Table|Rest]}) ->
-    ChunkConfig = application:get_env(mria, bootstrapper_chunk_config, #{}),
-    {Q, AckRef, Items} = replayq:pop(Q0, ChunkConfig),
-    Records = prepare_batch(Table, Items),
-    Batch = {self(), Table, Records},
-    case push_batch(Subscriber, Batch) of
-        ok ->
-            ok = replayq:ack(Q, AckRef),
-            case replayq:is_empty(Q) of
-                true ->
-                    self() ! table_loop,
-                    St = St0#server{tables = Rest},
-                    {noreply, St};
-                false ->
-                    self() ! chunk_loop,
-                    {noreply, St0#server{key_queue = Q}}
-            end;
-        {badrpc, Err} ->
-            ?tp(warning, "Failed to push batch",
-                #{ subscriber => Subscriber
-                 , reason     => Err
+server_loop(St0 = #server{tables = [Table|Rest], subscriber = Subscriber, iterator = It0, shard = Shard}) ->
+    {It, Records} = case It0 of
+                        undefined ->
+                            BatchSize = 500, % TODO: make it configurable per shard
+                            ?tp(info, start_shard_table_bootstrap,
+                                #{ shard => Shard
+                                 , table => Table
+                                 }),
+                            iter_start(Table, BatchSize);
+                        #iter{} ->
+                            iter_next(It0)
+                     end,
+    St = St0#server{iterator = It},
+    case Records of
+        ?end_of_table ->
+            iter_end(It),
+            ?tp(info, complete_shard_table_bootstrap,
+                #{ shard => Shard
+                 , table => Table
                  }),
-            {stop, normal, St0}
+            noreply(St#server{tables = Rest, iterator = undefined});
+         _ ->
+            case push_records(Subscriber, Table, Records) of
+                ok ->
+                    noreply(St);
+                {badrpc, Err} ->
+                    ?tp(warning, "Failed to push batch",
+                        #{ subscriber => Subscriber
+                         , reason     => Err
+                         }),
+                    {stop, normal, St}
+            end
     end.
 
--spec prepare_batch(mria:table(), list()) -> [tuple()].
-prepare_batch(Table, Keys) ->
-    lists:foldl( fun(Key, Acc) -> mnesia:dirty_read(Table, Key) ++ Acc end
-               , []
-               , Keys
-               ).
+noreply(State) ->
+    self() ! loop,
+    {noreply, State}.
+
+%% We could, naturally, use mnesia checkpoints here, but they do extra
+%% work accumulating all the ongoing transactions, so we avoid it.
+
+-spec iter_start(mria:table(), non_neg_integer()) -> {#iter{}, [tuple()] | ?end_of_table}.
+iter_start(Table, BatchSize) ->
+    Storage = mnesia:table_info(Table, storage_type),
+    mnesia_lib:db_fixtable(Storage, Table, true),
+    Iter0 = #iter{ table = Table
+                 , storage = Storage
+                 },
+    case mnesia_lib:db_init_chunk(Storage, Table, BatchSize) of
+        {Matches, Cont} ->
+            {Iter0#iter{state = Cont}, Matches};
+        ?end_of_table ->
+            {Iter0, ?end_of_table}
+    end.
+
+-spec iter_next(#iter{}) -> {#iter{}, [tuple()] | ?end_of_table}.
+iter_next(Iter0 = #iter{storage = Storage, state = State}) ->
+    case mnesia_lib:db_chunk(Storage, State) of
+        {Matches, Cont} ->
+            {Iter0#iter{state = Cont}, Matches};
+        ?end_of_table ->
+            {Iter0#iter{state = undefined}, ?end_of_table}
+    end.
+
+-spec iter_end(#iter{}) -> ok.
+iter_end(#iter{table = Table, storage = Storage}) ->
+    mnesia_lib:db_fixtable(Storage, Table, false).

@@ -105,7 +105,12 @@ handle_event({call, From}, stop, State, D) ->
 handle_event(enter, OldState, State, D) ->
     handle_state_trans(OldState, State, D);
 handle_event(info, {'EXIT', SubscriberPid, Reason}, _State,
-             #d{subscriber = {_Node, SubscriberPid}}) ->
+             #d{subscriber = {Node, SubscriberPid}, shard = Shard}) ->
+    ?tp(info, rlog_agent_subscriber_died,
+        #{ reason     => Reason
+         , shard      => Shard
+         , subscriber => {Node, SubscriberPid}
+         }),
     {stop, {shutdown, {subscriber_died, Reason}}};
 handle_event(EventType, Event, State, D) ->
     handle_unknown(EventType, Event, State, D).
@@ -113,11 +118,11 @@ handle_event(EventType, Event, State, D) ->
 code_change(_OldVsn, State, Data, _Extra) ->
     {ok, State, Data}.
 
-terminate(_Reason, _State, _Data) ->
-    ?tp(rlog_agent_terminating,
-        #{ subscriber => _Data#d.subscriber
-         , shard      => _Data#d.shard
-         , reason     => _Reason
+terminate(Reason, _State, Data) ->
+    ?tp(debug, rlog_agent_terminating,
+        #{ subscriber => Data#d.subscriber
+         , shard      => Data#d.shard
+         , reason     => Reason
          }),
     ok.
 

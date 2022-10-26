@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -57,7 +57,8 @@ wait_tables(Nodes) ->
 compare_table_contents(_, []) ->
     ok;
 compare_table_contents(Table, Nodes) ->
-    [{_, Reference}|Rest] = [{Node, lists:sort(rpc:call(Node, ets, tab2list, [Table]))}
+    MS = [{'_', [], ['$_']}],
+    [{_, Reference}|Rest] = [{Node, lists:sort(rpc:call(Node, mnesia, dirty_select, [Table, MS]))}
                              || Node <- Nodes],
     lists:foreach(
       fun({Node, Contents}) ->
