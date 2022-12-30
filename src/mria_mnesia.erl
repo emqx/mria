@@ -289,7 +289,7 @@ copy_table(Name, Storage) ->
         core ->
             mria_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
         replicant ->
-            ?LOG(warning, "Ignoring illegal attempt to create a table copy ~p on replicant node ~p", [Name, node()])
+            ok
     end.
 
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
