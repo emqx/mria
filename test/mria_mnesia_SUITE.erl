@@ -59,6 +59,31 @@ t_cluster_core_nodes_on_replicant(_) ->
        end,
        []).
 
+%% Start a cluster of two nodes, then stop one of them and join the third one.
+t_join_after_node_down(_) ->
+    Cluster = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 10000},
+       try
+           %% Prepare cluster with 2 nodes:
+           [N1, N2, N3] = mria_ct:start_cluster(node, Cluster),
+           ?assertMatch(ok, rpc:call(N1, mria, start, [])),
+           ?assertMatch(ok, rpc:call(N2, mria, start, [])),
+           ?assertMatch(ok, rpc:call(N1, mria, join, [N2])),
+           ?assertMatch([N1, N2], lists:sort(rpc:call(N1, mnesia, system_info, [running_db_nodes]))),
+           ?assertMatch(ok, rpc:call(N1, mria_transaction_gen, init, [])),
+           %% Shut down one of the nodes and start N3:
+           ?assertMatch(ok, slave:stop(N2)),
+           ?assertMatch(ok, rpc:call(N3, mria, start, [])),
+           %% Join N3 to N1:
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           ?assertMatch([N1, N3], lists:sort(rpc:call(N1, mnesia, system_info, [running_db_nodes]))),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 t_diagnosis_tab(_)->
     TestTab = test_tab_1,
     Cluster = mria_ct:cluster([core, core], []),
