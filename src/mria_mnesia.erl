@@ -201,7 +201,7 @@ cluster_view() ->
 cluster_nodes(all) ->
     Running = running_nodes(),
     %% Note: stopped replicant nodes won't appear in the list
-    lists:usort(Running ++ mnesia:system_info(db_nodes));
+    lists:usort(Running ++ db_nodes_maybe_rpc());
 cluster_nodes(running) ->
     running_nodes();
 cluster_nodes(stopped) ->
@@ -383,6 +383,25 @@ del_schema_copy(Node) ->
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
+
+db_nodes_maybe_rpc() ->
+    case mria_rlog:role() of
+        core ->
+            mnesia:system_info(db_nodes);
+        replicant ->
+            case mria_status:shards_up() of
+                [Shard|_] ->
+                    {ok, CoreNode} = mria_status:upstream_node(Shard),
+                    case mria_lib:rpc_call(CoreNode, mnesia, system_info, [db_nodes]) of
+                        {badrpc, _} -> [];
+                        {badtcp, _} -> [];
+                        Result      -> Result
+                    end;
+                [] ->
+                    []
+            end
+    end.
+
 
 %% @doc Data dir
 -spec(data_dir() -> string()).
