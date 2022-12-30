@@ -116,28 +116,12 @@ peek(Key) ->
 %% @doc Wait for the variable to be set and return the value
 -spec read(key()) -> value().
 read(Key) ->
-    case read_or_wait(Key) of
-        {set, Value} ->
-            Value;
-        {wait, MRef} ->
-            receive
-                %% Rather unconventionally, the actual information is
-                %% transmitted in a DOWN message from a temporary
-                %% "waker" process. See `waker_entrypoint':
-                {'DOWN', MRef, _, _, {cvar_set, Value}} ->
-                    Value;
-                {'DOWN', MRef, _, _, noproc} ->
-                    %% Race condition: the variable was set between
-                    %% `read_or_wait' and `monitor' calls.
-                    read(Key)
-            end
-    end.
+    {ok, Value} = read(Key, infinity),
+    Value.
 
 %% @doc Wait for the variable to be set and return the value if it was
 %% set within the timeout
 -spec read(key(), timeout()) -> {ok, value()} | timeout.
-read(Key, infinity) ->
-    {ok, read(Key)};
 read(Key, Timeout) ->
     case read_or_wait(Key) of
         {set, Value} ->
