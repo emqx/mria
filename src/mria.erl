@@ -48,6 +48,9 @@
         , dirty_write_sync/2
         , dirty_write_sync/1
 
+        , dirty_update_counter/2
+        , dirty_update_counter/3
+
         , dirty_delete/2
         , dirty_delete/1
 
@@ -335,6 +338,14 @@ dirty_write_sync(Record) ->
 -spec dirty_write_sync(mria:table(), tuple()) -> ok.
 dirty_write_sync(Tab, Record) ->
     mria_lib:call_backend_rw_dirty(mria_lib, dirty_write_sync, Tab, [Record]).
+
+-spec dirty_update_counter(mria:table(), term(), integer()) -> integer().
+dirty_update_counter(Tab, Key, Incr) ->
+    mria_lib:call_backend_rw_dirty(dirty_update_counter, Tab, [Key, Incr]).
+
+-spec dirty_update_counter({mria:table(), term()}, integer()) -> integer().
+dirty_update_counter({Tab, Key}, Incr) ->
+    dirty_update_counter(Tab, Key, Incr).
 
 -spec dirty_delete(mria:table(), term()) -> ok.
 dirty_delete(Tab, Key) ->

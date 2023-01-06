@@ -164,8 +164,8 @@ import_op_dirty(Op) ->
             mnesia:dirty_delete({Tab, Key});
         {delete_object, Tab, Rec} ->
             mnesia:dirty_delete_object(Tab, Rec);
-        {update_counter, Tab, Key, Inrc} ->
-            mnesia:dirty_update_counter(Tab, Key, Inrc);
+        {update_counter, Tab, Key, Incr} ->
+            mnesia:dirty_update_counter(Tab, Key, Incr);
         {clear_table, Tab} ->
             mnesia:clear_table(Tab)
     end.

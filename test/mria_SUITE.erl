@@ -896,6 +896,35 @@ t_promote_replicant_to_core(_) ->
        end,
        []).
 
+t_dirty_update_counter(_Config) ->
+    Cluster = mria_ct:cluster( [ core
+                               , replicant
+                               ]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    CounterKey = counter,
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           %% Check status:
+           [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           %% update counters
+           1 = rpc:call(N2, mria, dirty_update_counter, [test_tab, CounterKey, 1]),
+           3 = rpc:call(N2, mria, dirty_update_counter, [{test_tab, CounterKey}, 2]),
+           6 = rpc:call(N1, mria, dirty_update_counter, [test_tab, CounterKey, 3]),
+           ok = mria_mnesia_test_util:wait_tables([N2]),
+           %% generate more transactions
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10
