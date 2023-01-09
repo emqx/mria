@@ -277,6 +277,8 @@ transform_op({{Tab, Key}, _Rec, delete}) ->
     {delete, Tab, Key};
 transform_op({{Tab, _Key}, Rec, delete_object}) ->
     {delete_object, Tab, Rec};
+transform_op({{Tab, Key}, {_, Incr}, update_counter}) ->
+    {update_counter, Tab, Key, Incr};
 transform_op({{Tab, '_'}, '_', clear_table}) ->
     {clear_table, Tab}.
 
