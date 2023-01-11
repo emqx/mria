@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 -export([start_link/2]).
 
 %% gen_statem callbacks:
--export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4]).
+-export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4, format_status/1]).
 
 %% Internal exports:
 -export([do_push_tlog_entry/2, push_tlog_entry/4]).
@@ -138,8 +138,19 @@ handle_event(EventType, Event, State, Data) ->
 code_change(_OldVsn, State, Data, _Extra) ->
     {ok, State, Data}.
 
-terminate(_Reason, _State, #d{}) ->
+terminate(_Reason, _State, #d{replayq = RQ}) ->
+    RQ =:= undefined orelse replayq:close(RQ),
     ok.
+
+format_status(Status) ->
+    maps:map(fun(data, Data) ->
+                     format_data(Data);
+                (messages, Msgs) ->
+                     lists:sublist(Msgs, 10);
+                (_Key, Value) ->
+                     Value
+             end,
+             Status).
 
 %%================================================================================
 %% Internal exports
@@ -194,7 +205,7 @@ handle_tlog_entry(State, #entry{sender = Agent, seqno = SeqNo},
                   #d{ next_batch_seqno = ExpectedSeqno
                     , agent            = ExpectedAgent
                     }) ->
-    ?tp(warning, rlog_replica_unexpected_trans,
+    ?tp(debug, rlog_replica_unexpected_trans,
         #{ state          => State
          , from           => Agent
          , from_expected  => ExpectedAgent
@@ -258,7 +269,7 @@ handle_agent_down(State, Reason, D) ->
             {next_state, ?disconnected, D#d{agent = undefined}};
         _ ->
             %% TODO: Sometimes it should be possible to handle it more gracefully
-            exit(agent_died)
+            {stop, {shutdown, agent_died}}
     end.
 
 -spec async_replay(state(), data()) -> fsm_result().
@@ -300,8 +311,9 @@ initiate_reconnect(#d{shard = Shard}) ->
 %% @private Try connecting to a core node
 -spec handle_reconnect(data()) -> fsm_result().
 handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentSup}) ->
-    ?tp(warning, rlog_replica_reconnect,
+    ?tp(debug, rlog_replica_reconnect,
         #{ node => node()
+         , shard => Shard
          }),
     case try_connect(Shard, Checkpoint) of
         {ok, _BootstrapNeeded = true, Node, ConnPid, TableSpecs, SeqNo} ->
@@ -398,16 +410,17 @@ handle_unknown(EventType, Event, State, Data) ->
         #{ event_type => EventType
          , event => Event
          , state => State
-         , data => Data
+         , data => format_data(Data)
          }),
     keep_state_and_data.
 
-handle_state_trans(OldState, State, Data) ->
+handle_state_trans(OldState, State, #d{shard = Shard}) ->
     ?tp(info, state_change,
         #{ from => OldState
          , to => State
+         , shard => Shard
          }),
-    mria_status:notify_replicant_state(Data#d.shard, State),
+    mria_status:notify_replicant_state(Shard, State),
     keep_state_and_data.
 
 -spec do_push_tlog_entry(pid(), mria_rlog:entry()) -> ok.
@@ -451,3 +464,10 @@ post_connect(Shard, TableSpecs) ->
     Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
     mria_config:load_shard_config(Shard, Tables),
     ok = mria_schema:converge_replicant(Shard, TableSpecs).
+
+-spec format_data(#d{}) -> map().
+format_data(D) ->
+    FieldNames = record_info(fields, d),
+    [_|Fields] = tuple_to_list(D),
+    maps:from_list([{Field, Val} || {Field, Val} <- lists:zip(FieldNames, Fields),
+                                    Field =/= replayq]).

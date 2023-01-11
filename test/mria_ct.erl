@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@
 -compile(nowarn_export_all).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+
+-compile(nowarn_deprecated_function). %% Silence the warnings about slave module
 
 %% @doc Get all the test cases in a CT suite.
 all(Suite) ->

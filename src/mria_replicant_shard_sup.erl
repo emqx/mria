@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -58,21 +58,24 @@ start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
 %%================================================================================
 
 init(Shard) ->
-    SupFlags = #{ strategy  => one_for_all
-                , intensity => 0
-                , period    => 1
+    SupFlags = #{ strategy      => one_for_all
+                , intensity     => 0
+                , period        => 1
+                , auto_shutdown => any_significant
                 },
-    Children = [ #{ id       => importer_worker
-                  , start    => {mria_replica_importer_worker, start_link, [Shard]}
-                  , restart  => permanent
-                  , type     => worker
-                  , shutdown => 1000
+    Children = [ #{ id          => importer_worker
+                  , start       => {mria_replica_importer_worker, start_link, [Shard]}
+                  , restart     => transient
+                  , significant => true
+                  , type        => worker
+                  , shutdown    => 1000
                   }
-               , #{ id       => replica
-                  , start    => {mria_rlog_replica, start_link, [self(), Shard]}
-                  , restart  => permanent
-                  , shutdown => 1000
-                  , type     => worker
+               , #{ id          => replica
+                  , start       => {mria_rlog_replica, start_link, [self(), Shard]}
+                  , restart     => transient
+                  , significant => true
+                  , shutdown    => 1000
+                  , type        => worker
                   }
                ],
     {ok, {SupFlags, Children}}.
