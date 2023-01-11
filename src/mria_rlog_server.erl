@@ -277,8 +277,14 @@ transform_op({{Tab, Key}, _Rec, delete}) ->
     {delete, Tab, Key};
 transform_op({{Tab, _Key}, Rec, delete_object}) ->
     {delete_object, Tab, Rec};
-transform_op({{Tab, Key}, {_, Incr}, update_counter}) ->
-    {update_counter, Tab, Key, Incr};
+transform_op({{Tab, Key}, {_, _Incr}, update_counter}) ->
+    case mnesia:dirty_read({Tab, Key}) of
+        [Rec] ->
+            {write, Tab, Rec};
+        [] ->
+            %% key got concurrently deleted by other dirty op
+            {delete, Tab, Key}
+    end;
 transform_op({{Tab, '_'}, '_', clear_table}) ->
     {clear_table, Tab}.
 

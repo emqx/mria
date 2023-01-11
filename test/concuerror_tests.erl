@@ -286,18 +286,20 @@ dirty_bootstrap_test() ->
 importer() ->
     Ops = [ {write, 3, 3}
           , {write, 4, 4}
+          , {update_counter, 1, 1}
           , {write, 4, 5}
           , {delete, 2}
           , {write, 5, 5}
+          , {update_counter, 4, 1}
           , {write, 4, 3}
           , {delete, 5}
           ],
-    lists:map(fun(OP) ->
-                      import_op(source, OP),
+    lists:map(fun(Op) ->
+                      TransformedOp = import_op(source, Op),
                       %% Imitate mnesia event (note: here we send it
                       %% directly to the replica process bypassing
                       %% the agent):
-                      replica ! {tlog, OP}
+                      replica ! {tlog, TransformedOp}
               end,
               Ops),
     replica ! last_trans.
@@ -320,10 +322,20 @@ replay() ->
             testcase ! done
     end.
 
-import_op(Tab, {write, K, V}) ->
-    ets:insert(Tab, {K, V});
-import_op(Tab, {delete, K}) ->
-    ets:delete(Tab, K).
+import_op(Tab, {write, K, V} = Op) ->
+    ets:insert(Tab, {K, V}),
+    Op;
+import_op(Tab, {delete, K} = Op) ->
+    ets:delete(Tab, K),
+    Op;
+import_op(Tab, {update_counter, K, Incr}) ->
+    ets:update_counter(Tab, K, Incr),
+    case ets:lookup(Tab, K) of
+        [{_, NewVal}] ->
+            {write, K, NewVal};
+        [] ->
+            {delete, K}
+    end.
 
 bootstrapper() ->
     {Keys, _} = lists:unzip(ets:tab2list(source)),
