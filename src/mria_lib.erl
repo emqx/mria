@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -364,10 +364,11 @@ do_rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->
-    case mria_status:get_core_node(Shard, infinity) of
-        {ok, Node} -> Node;
-        timeout    -> error(transaction_timeout)
-    end.
+    ?tp_span(find_upstream_node, #{shard => Shard, tab => ets:tab2list(mria_rlog_status_tab)},
+             case mria_status:get_core_node(Shard, infinity) of
+                 {ok, Node} -> Node;
+                 timeout    -> error(transaction_timeout)
+             end).
 
 ensure_no_transaction() ->
     case mnesia:get_activity_id() of

@@ -736,7 +736,6 @@ t_rlog_schema(_) ->
                ?assert(
                   ?strict_causality( #{ ?snk_kind := "Adding table to a shard"
                                       , shard := _Shard
-                                      , live_change := true
                                       , table := _Table
                                       }
                                    , #{ ?snk_kind := "Shard schema change"

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -248,7 +248,31 @@ create_table(Name, TabDef) ->
                                     , storage      = Storage
                                     , config       = MnesiaTabDef
                                     },
-                    mria_schema:add_entry(Entry);
+                    case mria_config:whoami() of
+                        core ->
+                            %% `mria_rlog_server' reacts on the mnesia
+                            %% events for the `mria_schema' table, and
+                            %% triggers the necessary updates
+                            %% asynchronously.However, the process
+                            %% that calls `create_table' expects
+                            %% everything to be ready after the call,
+                            %% so we request the server to handle the
+                            %% schema update synchronoulsy.
+                            mria_rlog_server:schema_update(Entry);
+                        _ ->
+                            %% On the replicant we don't have the same
+                            %% problem, since any operation that may
+                            %% observe stale schema state is routed to
+                            %% the core node.
+                            %%
+                            %% So we just update the schema table
+                            %% directly to let the LB know that it has
+                            %% to take care of the new shard, should
+                            %% the call introduce it, but the rest is
+                            %% handled by the logic inside
+                            %% `mria_rlog:wait_for_shards'.
+                            mria_schema:add_entry(Entry)
+                    end;
                 Err ->
                     Err
             end
@@ -259,7 +283,7 @@ wait_for_tables(Tables) ->
     case mria_mnesia:wait_for_tables(Tables) of
         ok ->
             Shards = lists:usort(lists:map(fun mria_config:shard_rlookup/1, Tables))
-                        -- [undefined],
+                        -- [?LOCAL_CONTENT_SHARD],
             mria_rlog:wait_for_shards(Shards, infinity),
             ok;
         Err ->

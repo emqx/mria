@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -180,11 +180,9 @@ create_table_type() ->
 do_add_table(TabDef = #?schema{shard = Shard, mnesia_table = Table}) ->
     case mnesia:wread({?schema, Table}) of
         [] ->
-            IsLive = Shard =/= ?LOCAL_CONTENT_SHARD andalso is_pid(whereis(Shard)),
             ?tp(info, "Adding table to a shard",
                 #{ shard => Shard
                  , table => Table
-                 , live_change => IsLive
                  }),
             mnesia:write(TabDef),
             ok;
