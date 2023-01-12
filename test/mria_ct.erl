@@ -75,6 +75,7 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
             , node   => node_id(Name)
             , env    => [ {mria, core_nodes, CoreNodes}
                         , {mria, node_role, Role}
+                        , {mria, rlog_replica_reconnect_interval, 100} % For faster response times
                         , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
                         , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
                         | Env]
@@ -96,7 +97,7 @@ start_cluster(mria_async, Specs) ->
     Ret.
 
 teardown_cluster(Specs) ->
-    ?tp(teardown_cluster, #{}),
+    ?tp(notice, teardown_cluster, #{}),
     %% Shut down replicants first, otherwise they will make noise about core nodes going down:
     SortFun = fun(#{role := core}, #{role := replicant}) -> false;
                  (_, _)                                  -> true
@@ -139,7 +140,8 @@ read(Tab, Key) ->
 start_slave(node, Name, Env) ->
     CommonBeamOpts = "+S 1:1 " % We want VMs to only occupy a single core
         "-kernel inet_dist_listen_min 3000 " % Avoid collisions with gen_rpc ports
-        "-kernel inet_dist_listen_max 3050 ",
+        "-kernel inet_dist_listen_max 3050 "
+        "-kernel prevent_overlapping_partitions false ",
     {ok, Node} = slave:start_link(host(), Name, CommonBeamOpts ++ ebin_path()),
     %% Load apps before setting the enviroment variables to avoid
     %% overriding the environment during mria start:
@@ -250,3 +252,22 @@ merge_gen_rpc_env(Cluster) ->
                     end,
                     Envs)}
      || Node = #{env := Envs} <- Cluster].
+
+-if(?OTP_RELEASE >= 25).
+start_dist() ->
+    ensure_epmd(),
+    case net_kernel:start('ct@127.0.0.1', #{hidden => true}) of
+        {ok, _Pid} -> ok;
+        {error, {already_started, _}} -> ok
+    end.
+-else.
+start_dist() ->
+    ensure_epmd(),
+    case net_kernel:start(['ct@127.0.0.1']) of
+        {ok, _Pid} -> ok;
+        {error, {already_started, _}} -> ok
+    end.
+-endif.
+
+ensure_epmd() ->
+    open_port({spawn, "epmd"}, []).

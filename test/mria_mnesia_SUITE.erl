@@ -28,6 +28,7 @@ all() ->
     mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
+    mria_ct:start_dist(),
     snabbkaffe:fix_ct_logging(),
     Config.
 

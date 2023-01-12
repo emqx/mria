@@ -2,8 +2,6 @@ BUILD_DIR := $(CURDIR)/_build
 
 REBAR := rebar3
 
-CT_NODE_NAME = ct@127.0.0.1
-
 CT_READABLE ?= false
 
 compile:
@@ -32,22 +30,22 @@ test: smoke-test ct-consistency ct-fault-tolerance cover
 
 .PHONY: smoke-test
 smoke-test:
-	$(REBAR) do eunit, ct -v --readable=$(CT_READABLE) --name $(CT_NODE_NAME)
+	$(REBAR) do eunit, ct -v --readable=$(CT_READABLE)
 
 .PHONY: ct-consistency
 ct-consistency:
-	$(REBAR) ct -v --readable=$(CT_READABLE) --name $(CT_NODE_NAME) --suite mria_proper_suite,mria_proper_mixed_cluster_suite
+	$(REBAR) ct -v --readable=$(CT_READABLE) --suite mria_proper_suite,mria_proper_mixed_cluster_suite
 
 .PHONY: ct-fault-tolerance
 ct-fault-tolerance:
-	$(REBAR) ct -v --readable=$(CT_READABLE) --name $(CT_NODE_NAME) --suite mria_fault_tolerance_suite
+	$(REBAR) ct -v --readable=$(CT_READABLE) --suite mria_fault_tolerance_suite
 
 .PHONY: ct-suite
 ct-suite: compile
 ifneq ($(TESTCASE),)
-	$(REBAR) ct -v --readable=$(CT_READABLE) --name $(CT_NODE_NAME) --suite $(SUITE)  --case $(TESTCASE)
+	$(REBAR) ct -v --readable=$(CT_READABLE) --suite $(SUITE)  --case $(TESTCASE)
 else
-	$(REBAR) ct -v --readable=$(CT_READABLE) --name $(CT_NODE_NAME) --suite $(SUITE)
+	$(REBAR) ct -v --readable=$(CT_READABLE) --suite $(SUITE)
 endif
 
 cover: | smoke-test ct-consistency ct-fault-tolerance
