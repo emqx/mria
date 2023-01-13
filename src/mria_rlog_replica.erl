@@ -111,7 +111,7 @@ handle_event(info, #imported{ref = Ref}, State, D = #d{importer_ref = Ref}) ->
 handle_event(enter, OldState, ?disconnected, D) ->
     handle_state_trans(OldState, ?disconnected, D),
     initiate_reconnect(D);
-handle_event(timeout, ?reconnect, ?disconnected, D) ->
+handle_event(state_timeout, ?reconnect, ?disconnected, D) ->
     handle_reconnect(D);
 %% Events specific to `bootstrap' state:
 handle_event(enter, OldState, ?bootstrap, D) ->
@@ -306,7 +306,7 @@ handle_importer_ack(State, D0 = #d{replayq = Q, shard = Shard}) ->
 -spec initiate_reconnect(data()) -> fsm_result().
 initiate_reconnect(#d{shard = Shard}) ->
     mria_status:notify_shard_down(Shard),
-    {keep_state_and_data, [{timeout, 0, ?reconnect}]}.
+    {keep_state_and_data, [{state_timeout, 0, ?reconnect}]}.
 
 %% @private Try connecting to a core node
 -spec handle_reconnect(data()) -> fsm_result().
@@ -340,7 +340,7 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentS
                 #{ reason => Err
                  }),
             ReconnectTimeout = application:get_env(mria, rlog_replica_reconnect_interval, 5000),
-            {keep_state_and_data, [{timeout, ReconnectTimeout, ?reconnect}]}
+            {keep_state_and_data, [{state_timeout, ReconnectTimeout, ?reconnect}]}
     end.
 
 -spec try_connect(mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
