@@ -61,8 +61,6 @@
 
         , create_table/2
         , wait_for_tables/1
-
-        , create_table_internal/3
         ]).
 
 -define(IS_MON_TYPE(T), T == membership orelse T == partition).
@@ -231,51 +229,21 @@ create_table(Name, TabDef) ->
         #{ name    => Name
          , options => TabDef
          }),
-    Storage = proplists:get_value(storage, TabDef, ram_copies),
-    MnesiaTabDef = lists:keydelete(rlog_shard, 1, lists:keydelete(storage, 1, TabDef)),
-    case {proplists:get_value(rlog_shard, TabDef, ?LOCAL_CONTENT_SHARD),
-          proplists:get_value(local_content, TabDef, false)} of
-        {?LOCAL_CONTENT_SHARD, false} ->
-            ?LOG(critical, "Table ~p doesn't belong to any shard", [Name]),
-            error(badarg);
-        {Shard, _LocalContent} ->
-            case create_table_internal(Name, Storage, MnesiaTabDef) of
-                ok ->
-                    %% It's important to add the table to the shard
-                    %% _after_ we actually create it:
-                    Entry = #?schema{ mnesia_table = Name
-                                    , shard        = Shard
-                                    , storage      = Storage
-                                    , config       = MnesiaTabDef
-                                    },
-                    case mria_config:whoami() of
-                        core ->
-                            %% `mria_rlog_server' reacts on the mnesia
-                            %% events for the `mria_schema' table, and
-                            %% triggers the necessary updates
-                            %% asynchronously.However, the process
-                            %% that calls `create_table' expects
-                            %% everything to be ready after the call,
-                            %% so we request the server to handle the
-                            %% schema update synchronoulsy.
-                            mria_rlog_server:schema_update(Entry);
-                        _ ->
-                            %% On the replicant we don't have the same
-                            %% problem, since any operation that may
-                            %% observe stale schema state is routed to
-                            %% the core node.
-                            %%
-                            %% So we just update the schema table
-                            %% directly to let the LB know that it has
-                            %% to take care of the new shard, should
-                            %% the call introduce it, but the rest is
-                            %% handled by the logic inside
-                            %% `mria_rlog:wait_for_shards'.
-                            mria_schema:add_entry(Entry)
-                    end;
-                Err ->
-                    Err
-            end
+    Result = case mria_config:whoami() of
+                 replicant ->
+                     mria_lib:rpc_to_core_node( ?mria_meta_shard
+                                              , mria_schema, create_table
+                                              , [Name, TabDef]
+                                              );
+                 core ->
+                     mria_schema:create_table(Name, TabDef)
+             end,
+    case Result of
+        {atomic, ok} ->
+            mria_schema:ensure_local_table(Name),
+            ok;
+        Err ->
+            Err
     end.
 
 -spec wait_for_tables([table()]) -> ok | {error, _Reason}.
@@ -289,19 +257,6 @@ wait_for_tables(Tables) ->
         Err ->
             Err
     end.
-
-%% @doc Create mnesia table (skip RLOG stuff)
--spec(create_table_internal(table(), storage(), TabDef :: list()) ->
-             ok | {error, any()}).
-create_table_internal(Name, Storage, Params) ->
-    %% Note: it's impossible to check storage type due to possiblity
-    %% of registering custom backends
-    ClusterNodes = case mria_config:role() of
-                       core      -> mnesia:system_info(db_nodes);
-                       replicant -> [node()]
-                   end,
-    TabDef = [{Storage, ClusterNodes}|Params],
-    mria_lib:ensure_tab(mnesia:create_table(Name, TabDef)).
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->

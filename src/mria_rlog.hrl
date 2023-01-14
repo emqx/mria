@@ -1,6 +1,7 @@
 -ifndef(MRIA_RLOG_HRL).
 -define(MRIA_RLOG_HRL, true).
 
+-define(mria_meta_shard, '$mria_meta_shard').
 -define(schema, mria_schema).
 
 %% Note to self: don't forget to update all the match specs in

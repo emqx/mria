@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,27 +44,19 @@ init(core) ->
                 , intensity => 1
                 , period => 1
                 },
-    Children = [status_mgr(), child_sup()],
+    Children = [child_sup()],
     {ok, {SupFlags, Children}};
 init(replicant) ->
     SupFlags = #{ strategy => one_for_all
                 , intensity => 1
                 , period => 1
                 },
-    Children = [status_mgr(), core_node_lb(), child_sup()],
+    Children = [core_node_lb(), child_sup()],
     {ok, {SupFlags, Children}}.
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
-
-status_mgr() ->
-    #{ id => mria_status
-     , start => {mria_status, start_link, []}
-     , restart => permanent
-     , shutdown => 5000
-     , type => worker
-     }.
 
 core_node_lb() ->
     #{ id => mria_lb

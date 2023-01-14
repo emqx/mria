@@ -195,7 +195,7 @@ assert_replicant_bootstrapped(R, C, Trace) ->
                            , ?snk_meta := #{ node := C }
                            }
                         , #{ ?snk_kind := "Remote RLOG agent died"
-                           , ?snk_meta := #{ node := R }
+                           , ?snk_meta := #{ node := R, shard := test_shard }
                            }
                         , Trace
                         )),

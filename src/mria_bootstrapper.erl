@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,9 +44,11 @@
 %% Type declarations
 %%================================================================================
 
+-define(clear_table, clear_table).
+
 -type batch() :: { _From    :: pid()
                  , _Table   :: mria:table()
-                 , _Records :: [tuple()]
+                 , _Records :: [tuple()] | ?clear_table
                  }.
 
 -record(iter,
@@ -159,7 +161,7 @@ terminate(_Reason, St = #client{}) ->
 %% Internal functions
 %%================================================================================
 
--spec push_records(mria_lib:subscriber(), mria:table(), [tuple()]) -> ok | {badrpc, _}.
+-spec push_records(mria_lib:subscriber(), mria:table(), [tuple()] | ?clear_table) -> ok | {badrpc, _}.
 push_records(Subscriber, Table, Records) ->
     push_batch(Subscriber, {self(), Table, Records}).
 
@@ -171,6 +173,10 @@ push_batch({Node, Pid}, Batch = {_, _, _}) ->
 complete({Node, Pid}, Server, Checkpoint) ->
     mria_lib:rpc_call(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
+handle_batch(Table, ?clear_table) ->
+    mria_schema:ensure_local_table(Table),
+    {atomic, ok} = mnesia:clear_table(Table),
+    ok;
 handle_batch(Table, Records) ->
     lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
 
@@ -186,7 +192,7 @@ server_loop(St0 = #server{tables = [Table|Rest], subscriber = Subscriber, iterat
                                 #{ shard => Shard
                                  , table => Table
                                  }),
-                            iter_start(Table, BatchSize);
+                            iter_start(Subscriber, Table, BatchSize);
                         #iter{} ->
                             iter_next(It0)
                      end,
@@ -207,6 +213,7 @@ server_loop(St0 = #server{tables = [Table|Rest], subscriber = Subscriber, iterat
                     ?tp(warning, "Failed to push batch",
                         #{ subscriber => Subscriber
                          , reason     => Err
+                         , shard      => Shard
                          }),
                     {stop, normal, St}
             end
@@ -219,9 +226,14 @@ noreply(State) ->
 %% We could, naturally, use mnesia checkpoints here, but they do extra
 %% work accumulating all the ongoing transactions, so we avoid it.
 
--spec iter_start(mria:table(), non_neg_integer()) -> {#iter{}, [tuple()] | ?end_of_table}.
-iter_start(Table, BatchSize) ->
+-spec iter_start(mria_lib:subscriber(), mria:table(), non_neg_integer()) -> {#iter{}, [tuple()] | ?end_of_table}.
+iter_start(Subscriber, Table, BatchSize) ->
     Storage = mnesia:table_info(Table, storage_type),
+    %% Push an empty batch to the replica to make sure it created the
+    %% local table before we start actual iteration and the receiving
+    %% table is empty:
+    push_records(Subscriber, Table, ?clear_table),
+    %% Start iteration over records:
     mnesia_lib:db_fixtable(Storage, Table, true),
     Iter0 = #iter{ table = Table
                  , storage = Storage

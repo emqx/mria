@@ -48,7 +48,6 @@
                | ?normal.
 
 %% Timeouts:
--define(local_replay_loop, local_replay_loop).
 -define(reconnect, reconnect).
 
 -record(d,
@@ -61,6 +60,7 @@
         , replayq                      :: replayq:q() | undefined
         , importer_worker              :: pid() | undefined
         , importer_ref = false         :: false | reference()
+        , table_specs = []             :: [mria_schema:entry()]
         }).
 
 -type data() :: #d{}.
@@ -221,16 +221,11 @@ initiate_bootstrap(D) ->
       , parent_sup       = ParentSup
       , next_batch_seqno = InitSeqNo
       } = D,
-    %% Disable local reads before starting bootstrap:
-    set_where_to_read(Remote, Shard),
     %% Notify importer worker of the initial seqno. This is a
     %% synchronous call that also makes sure that the importer
     %% finished any async operation it was doing:
     Importer = mria_replicant_shard_sup:get_importer_worker(ParentSup),
     mria_replica_importer_worker:set_initial_seqno(Importer, InitSeqNo),
-    %% Discard all data of the shard:
-    #{tables := Tables} = mria_config:shard_config(Shard),
-    [ok = clear_table(Tab) || Tab <- Tables],
     %% Do bootstrap:
     _Pid = mria_replicant_shard_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
@@ -322,10 +317,11 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentS
                   , agent            = ConnPid
                   , remote_core_node = Node
                   , next_batch_seqno = SeqNo
+                  , table_specs      = TableSpecs
                   },
-            post_connect(Shard, TableSpecs),
+            %% Disable local reads before starting bootstrap:
             {next_state, ?bootstrap, D};
-        {ok, _BootstrapNeeded = false, Node, ConnPid, TableSpecs, SeqNo} ->
+        {ok, _BootstrapNeeded = false, Node, ConnPid, _TableSpecs, SeqNo} ->
             D = #d{ shard            = Shard
                   , parent_sup       = ParentSup
                   , agent            = ConnPid
@@ -333,7 +329,6 @@ handle_reconnect(#d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentS
                   , checkpoint       = Checkpoint
                   , next_batch_seqno = SeqNo
                   },
-            post_connect(Shard, TableSpecs),
             {next_state, ?normal, D};
         {error, Err} ->
             ?tp(debug, "Replicant couldn't connect to the upstream node",
@@ -431,18 +426,10 @@ do_push_tlog_entry(Pid, TLOGEntry) ->
     Pid ! TLOGEntry,
     ok.
 
--spec clear_table(atom()) -> ok.
-clear_table(Table) ->
-    case mnesia:clear_table(Table) of
-        {atomic, ok}              -> ok;
-        {aborted, {no_exists, _}} -> ok
-    end.
-
 %% @private Dirty hack: patch mnesia internal table (see
 %% implementation of `mnesia:dirty_rpc')
--spec set_where_to_read(node(), mria_rlog:shard()) -> ok.
-set_where_to_read(Node, Shard) ->
-    #{tables := Tables} = mria_config:shard_config(Shard),
+-spec set_where_to_read(node(), [mria:table()]) -> ok.
+set_where_to_read(Node, Tables) ->
     lists:foreach(
       fun(Tab) ->
               Key = {Tab, where_to_read},
@@ -458,12 +445,6 @@ set_where_to_read(Node, Shard) ->
         #{ source => Node
          , shard  => Shard
          }).
-
--spec post_connect(mria_rlog:shard(), [mria_schema:entry()]) -> ok.
-post_connect(Shard, TableSpecs) ->
-    Tables = [T || #?schema{mnesia_table = T} <- TableSpecs],
-    mria_config:load_shard_config(Shard, Tables),
-    ok = mria_schema:converge_replicant(Shard, TableSpecs).
 
 -spec format_data(#d{}) -> map().
 format_data(D) ->

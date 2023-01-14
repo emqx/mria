@@ -66,7 +66,7 @@ init([Shards]) ->
                 , intensity => 100
                 , period    => 1
                 },
-    Children = lists:map(fun shard_sup/1, Shards),
+    Children = lists:map(fun shard_sup/1, [?mria_meta_shard|Shards]),
     {ok, {SupFlags, Children}}.
 
 %%================================================================================

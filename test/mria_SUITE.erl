@@ -98,6 +98,7 @@ t_bootstrap(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NRecords = 4321,
     ?check_trace(
+                                                %#{timetrap => 30_000},
         try
             Nodes = [Core, Replicant] = mria_ct:start_cluster(mria, Cluster),
             mria_mnesia_test_util:stabilize(1000),
@@ -716,7 +717,7 @@ t_rlog_schema(_) ->
                                        [tab1, [{rlog_shard, test_shard}]])
                        ),
            %% Try to change the shard of an existing table (this should crash):
-           ?assertMatch( {[{badrpc, {'EXIT', _}}, {badrpc, {'EXIT', _}}], []}
+           ?assertMatch( {[{aborted, _}, {aborted, _}], []}
                        , rpc:multicall([N1, N2], mria, create_table,
                                        [tab1, [{rlog_shard, another_shard}]])
                        ),

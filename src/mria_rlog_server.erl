@@ -63,7 +63,6 @@
         , bootstrap_threshold :: integer()
         , agents = []         :: [pid()]
         , seqno  = 0          :: integer()
-        , schema              :: [mria_schema:entry()]
         }).
 
 %%================================================================================
@@ -110,8 +109,10 @@ dispatch(Shard, Tid, Commit) ->
 
 -spec schema_update(mria_schema:entry()) -> ok.
 schema_update(Entry = #?schema{shard = Shard}) ->
-    case mria_config:whoami() of
-        core ->
+    case {mria_config:whoami(), Shard} of
+        {_, ?LOCAL_CONTENT_SHARD} ->
+            ok;
+        {core, _} ->
             ok = mria_rlog:ensure_shard(Shard),
             gen_server:call(Shard, {schema_update, Entry});
         _ ->
@@ -132,8 +133,28 @@ init({Parent, Shard}) ->
     ?tp(rlog_server_start, #{node => node()}),
     {ok, {Parent, Shard}, {continue, post_init}}.
 
-handle_info({mnesia_table_event, {write, Record, ActivityId}}, St) ->
-    handle_mnesia_event(Record, ActivityId, St);
+handle_continue(post_init, {Parent, Shard}) ->
+    Tables = process_schema(Shard),
+    AgentSup = mria_core_shard_sup:start_agent_sup(Parent, Shard),
+    BootstrapperSup = mria_core_shard_sup:start_bootstrapper_sup(Parent, Shard),
+    mria_mnesia:wait_for_tables(Tables),
+    mria_schema:subscribe_to_shard_schema_updates(Shard),
+    mria_status:notify_shard_up(Shard, self()),
+    ?tp(notice, "Shard fully up",
+        #{ node  => node()
+         , shard => Shard
+         }),
+    State = #s{ shard               = Shard
+              , parent_sup          = Parent
+              , agent_sup           = AgentSup
+              , bootstrapper_sup    = BootstrapperSup
+              , tlog_replay         = 30 %% TODO: unused. Remove?
+              , bootstrap_threshold = 3000 %% TODO: unused. Remove?
+              },
+    {noreply, State}.
+
+handle_info({schema_event, _, {new_table, _Shard, Entry}}, St) ->
+    handle_schema_update(Entry, St);
 handle_info({'DOWN', _MRef, process, Pid, _Info}, St0 = #s{agents = Agents}) ->
     mria_status:notify_agent_disconnect(Pid),
     St = St0#s{agents = lists:delete(Pid, Agents)},
@@ -154,27 +175,6 @@ handle_info(Info, St) ->
         #{ info => Info
          }),
     {noreply, St}.
-
-handle_continue(post_init, {Parent, Shard}) ->
-    Tables = process_schema(Shard),
-    mria_config:load_shard_config(Shard, Tables),
-    AgentSup = mria_core_shard_sup:start_agent_sup(Parent, Shard),
-    BootstrapperSup = mria_core_shard_sup:start_bootstrapper_sup(Parent, Shard),
-    mria_mnesia:wait_for_tables(Tables),
-    mria_status:notify_shard_up(Shard, self()),
-    ?tp(notice, "Shard fully up",
-        #{ node  => node()
-         , shard => Shard
-         }),
-    State = #s{ shard               = Shard
-              , parent_sup          = Parent
-              , agent_sup           = AgentSup
-              , bootstrapper_sup    = BootstrapperSup
-              , tlog_replay         = 30 %% TODO: unused. Remove?
-              , bootstrap_threshold = 3000 %% TODO: unused. Remove?
-              , schema              = mria_schema:table_specs_of_shard(Shard)
-              },
-    {noreply, State}.
 
 handle_cast(_Cast, St) ->
     {noreply, St}.
@@ -242,51 +242,25 @@ maybe_start_child(Supervisor, Args) ->
 -spec process_schema(mria_rlog:shard()) -> [mria:table()].
 process_schema(Shard) ->
     ok = mria_mnesia:wait_for_tables([?schema]),
-    {ok, _} = mnesia:subscribe({table, ?schema, simple}),
-    Tables = mria_schema:tables_of_shard(Shard),
-    Tables.
+    mria_schema:tables_of_shard(Shard).
 
--spec handle_schema_update(mria_schema:entry(), #s{}) -> #s{}.
-handle_schema_update( Entry = #?schema{shard = Shard, mnesia_table = Tab}
-                    , #s{shard = Shard, parent_sup = Parent, schema = OldSchema} = St0
+-spec handle_schema_update(mria_schema:entry(), #s{}) -> {noreply, #s{}}.
+handle_schema_update( #?schema{shard = Shard, mnesia_table = Tab}
+                    , #s{shard = Shard, parent_sup = Parent} = St0
                     ) ->
-    ok = mria_schema:add_entry(Entry),
-    case lists:keyfind(Tab, #?schema.mnesia_table, OldSchema) of
-        Entry -> % unchanged
-            St0;
-        _ ->
-            ?tp(notice, "Shard schema change",
-                #{ shard => Shard
-                 , table => Tab
-                 }),
-            Tables = mria_schema:tables_of_shard(Shard),
-            mria_config:load_shard_config(Shard, Tables),
-            %% Shut down all the downstream connections by restarting the supervisors:
-            AgentSup = mria_core_shard_sup:restart_agent_sup(Parent),
-            BootstrapperSup = mria_core_shard_sup:restart_bootstrapper_sup(Parent),
-            Schema = lists:keystore(Tab, #?schema.mnesia_table, OldSchema, Entry),
-            St0#s{ agent_sup        = AgentSup
-                 , bootstrapper_sup = BootstrapperSup
-                 , schema           = Schema
-                 }
-    end;
-handle_schema_update(_, St) ->
-    %% Table belongs to some other shard, nothing to see here.
-    St.
-
-handle_mnesia_event(Entry = #?schema{mnesia_table = NewTab, shard = ChangedShard}, ActivityId, St) ->
-    #s{shard = Shard} = St,
-    case ChangedShard of
-        Shard ->
-            ?tp(debug, rlog_server_table_event,
-                #{ shard       => Shard
-                 , new_table   => NewTab
-                 , activity_id => ActivityId
-                 }),
-            {noreply, handle_schema_update(Entry, St)};
-        _ ->
-            {noreply, St}
-    end.
+    ?tp(notice, "Shard schema change",
+        #{ shard => Shard
+         , new_table => Tab
+         }),
+    %% Shut down all the downstream connections by restarting the supervisors:
+    AgentSup = mria_core_shard_sup:restart_agent_sup(Parent),
+    BootstrapperSup = mria_core_shard_sup:restart_bootstrapper_sup(Parent),
+    {noreply, St0#s{ agent_sup        = AgentSup
+                   , bootstrapper_sup = BootstrapperSup
+                   }};
+handle_schema_update(_, S) ->
+    %% Should not happen
+    {noreply, S}.
 
 -spec transform_commit(mria_mnesia:tid(), mria_mnesia:commit_records()) ->
           mria_rlog:tx().

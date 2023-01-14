@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,7 +38,9 @@ init(mnesia) ->
            , intensity => 0
            , period => 3600
            },
-          [child(mria_membership, worker),
+          [child(mria_status, worker),
+           child(mria_schema, worker),
+           child(mria_membership, worker),
            child(mria_node_monitor, worker)
           ]}};
 init(rlog) ->
@@ -46,7 +48,9 @@ init(rlog) ->
            , intensity => 0
            , period => 3600
            },
-          [child(mria_membership, worker),
+          [child(mria_status, worker),
+           child(mria_schema, worker),
+           child(mria_membership, worker),
            child(mria_node_monitor, worker),
            child(mria_rlog_sup, supervisor)
           ]}}.

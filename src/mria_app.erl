@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -34,10 +34,6 @@ start(_Type, _Args) ->
     maybe_perform_disaster_recovery(),
     mria_mnesia:ensure_schema(),
     mria_mnesia:ensure_started(),
-    ?tp(notice, "Initializing RLOG schema", #{}),
-    mria_schema:init(),
-    ?tp(notice, "Converging schema", #{}),
-    mria_mnesia:converge_schema(),
     ?tp(notice, "Starting shards", #{}),
     Sup = mria_sup:start_link(),
     ?tp(notice, "Mria is running", #{}),
