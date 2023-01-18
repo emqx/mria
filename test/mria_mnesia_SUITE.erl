@@ -44,15 +44,32 @@ end_per_testcase(TestCase, Config) ->
     Config.
 
 t_cluster_core_nodes_on_replicant(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 10000},
        try
-           [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
            ?assertEqual(
-              [N1],
-              erpc:call(N2, mria_mnesia, cluster_nodes, [cores])),
+              [N1, N2],
+              erpc:call(N3, mria_mnesia, cluster_nodes, [cores])),
+           ?assertEqual(
+              [N1, N2, N3],
+              erpc:call(N3, mria_mnesia, cluster_nodes, [all])),
+           ?assertEqual(
+              [N1, N2, N3],
+              erpc:call(N3, mria_mnesia, cluster_nodes, [running])),
+           slave:stop(N2),
+           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+           ?assertEqual(
+              [N1, N2, N3],
+              erpc:call(N3, mria_mnesia, cluster_nodes, [all])),
+           ?assertEqual(
+              [N2],
+              erpc:call(N3, mria_mnesia, cluster_nodes, [stopped])),
+           ?assertEqual(
+              [N1, N3],
+              erpc:call(N3, mria_mnesia, cluster_nodes, [running])),
            ok
        after
            ok = mria_ct:teardown_cluster(Cluster)
