@@ -198,16 +198,24 @@ handle_call({subscribe_to_shard_schema_updates, Shard, Pid}, _From, State0 = #s{
     {reply, {ok, self()}, State};
 handle_call({create_table, Table, TabDef}, _From, State) ->
     {reply, do_create_table(Table, TabDef), State};
-handle_call(_Call, _From, State) ->
+handle_call(Call, From, State) ->
+    ?unexpected_event_tp(#{call => Call, from => From, state => State}),
     {reply, {error, unknown_call}, State}.
 
-handle_cast(_Cast, State) ->
+handle_cast(Cast, State) ->
+    ?unexpected_event_tp(#{cast => Cast, state => State}),
     {noreply, State}.
 
-handle_info({mnesia_table_event, {write, Entry = #?schema{}, ActivityId}}, State0) ->
-    ?tp(mria_schema_apply_schema_op, #{entry => Entry, activity_id => ActivityId}),
-    {noreply, apply_schema_op(Entry, State0)};
-handle_info(_Info, State) ->
+handle_info({mnesia_table_event, Event}, State0) ->
+    case Event of
+        {write, Entry = #?schema{}, ActivityId} ->
+            ?tp(mria_schema_apply_schema_op, #{entry => Entry, activity_id => ActivityId}),
+            {noreply, apply_schema_op(Entry, State0)};
+        _SchemaEvent ->
+            {noreply, State0}
+    end;
+handle_info(Info, State) ->
+    ?unexpected_event_tp(#{info => Info, state => State}),
     {noreply, State}.
 
 %%================================================================================

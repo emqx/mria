@@ -98,7 +98,7 @@ t_bootstrap(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NRecords = 4321,
     ?check_trace(
-                                                %#{timetrap => 30_000},
+       #{timetrap => 30_000},
         try
             Nodes = [Core, Replicant] = mria_ct:start_cluster(mria, Cluster),
             mria_mnesia_test_util:stabilize(1000),
@@ -130,7 +130,8 @@ t_bootstrap(_) ->
         after
             ok = mria_ct:teardown_cluster(Cluster)
         end,
-       []).
+       [ fun mria_rlog_props:no_unexpected_events/1
+       ]).
 
 t_rocksdb_table(_) ->
     EnvOverride = [{mnesia_rocksdb, semantics, fast}],
@@ -171,7 +172,7 @@ t_rocksdb_table(_) ->
         after
             ok = mria_ct:teardown_cluster(Cluster)
         end,
-       []).
+        common_checks()).
 
 t_join_leave_cluster(_) ->
     Cluster = mria_ct:cluster([core, core], []),
@@ -242,7 +243,7 @@ t_remove_from_cluster(_) ->
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
-       []).
+       [fun mria_rlog_props:no_unexpected_events/1]).
 
 %% This test runs should walk the replicant state machine through all
 %% the stages of startup and online transaction replication, so it can
@@ -296,18 +297,23 @@ t_rlog_smoke_test(_) ->
            mria_ct:teardown_cluster(Cluster),
            ok
        end,
-       fun([N1, N2, N3], Trace) ->
-               ?assert(mria_rlog_props:no_tlog_gaps(Trace)),
-               %% Ensure that the nodes assumed designated roles:
-               ?projection_complete(node, ?of_kind(rlog_server_start, Trace), [N1, N2]),
-               ?projection_complete(node, ?of_kind(rlog_replica_start, Trace), [N3]),
-               %% TODO: Check that some transactions have been buffered during catchup (to increase coverage):
-               %?assertMatch([_|_], ?of_kind(rlog_replica_store_trans, Trace)),
-               %% Other tests
-               ?assert(mria_rlog_props:replicant_bootstrap_stages(N3, Trace)),
-               ?assert(mria_rlog_props:all_batches_received(Trace)),
-               ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0)
-       end).
+       [ fun mria_rlog_props:no_tlog_gaps/1
+       , fun mria_rlog_props:no_unexpected_events/1
+       , {"Nodes assume dedicated roles",
+          fun([N1, N2, N3], Trace) ->
+                  ?projection_complete(node, ?of_kind(rlog_server_start, Trace), [N1, N2]),
+                  ?projection_complete(node, ?of_kind(rlog_replica_start, Trace), [N3])
+          end}
+       , {"Bootstrap stages are executed in order",
+          fun([_N1, _N2, N3], Trace) ->
+                  ?assert(mria_rlog_props:replicant_bootstrap_stages(N3, Trace))
+          end}
+       , {"Counter import check",
+          fun([_N1, _N2, N3], Trace) ->
+                  ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0),
+                  ?assert(mria_rlog_props:all_batches_received(Trace))
+          end}
+       ]).
 
 t_transaction_on_replicant(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
@@ -326,7 +332,8 @@ t_transaction_on_replicant(_) ->
        end,
        fun([_N1, N2], Trace) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N2, Trace)),
-               ?assert(mria_rlog_props:all_batches_received(Trace))
+               ?assert(mria_rlog_props:all_batches_received(Trace)),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% Check that behavior on error and exception is the same for both backends
@@ -352,7 +359,8 @@ t_abort(_) ->
            mria_ct:teardown_cluster(Cluster)
        end,
        fun(Trace) ->
-               ?assertMatch([], ?of_kind(rlog_import_trans, Trace))
+               ?assertMatch([], ?of_kind(rlog_import_trans, Trace)),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% Start processes competing for the key on two core nodes and test
@@ -382,7 +390,8 @@ t_core_node_competing_writes(_) ->
                %% Check that the number of imported transaction equals to the expected number:
                ?assertEqual(NOper * 2, length(Events)),
                %% Check that the ops have been imported in order:
-               snabbkaffe:strictly_increasing(Events)
+               snabbkaffe:strictly_increasing(Events),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 t_rlog_clear_table(_) ->
@@ -401,7 +410,7 @@ t_rlog_clear_table(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       []).
+       common_checks()).
 
 %% Compare behaviour of failing dirty operations on core and replicant:
 t_rlog_dirty_ops_fail(_) ->
@@ -427,7 +436,7 @@ t_rlog_dirty_ops_fail(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       []).
+       common_checks()).
 
 t_middleman(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
@@ -449,6 +458,7 @@ t_middleman(_) ->
            mria_ct:teardown_cluster(Cluster)
        end,
        [ fun mria_rlog_props:replicant_no_restarts/1
+       , fun mria_rlog_props:no_unexpected_events/1
        , {"Check that middleman has been invoked",
           fun(Trace) ->
                   length(?of_kind(mria_lib_with_middleman, Trace)) > 0
@@ -474,7 +484,6 @@ t_rlog_dirty_operations(_) ->
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ?assertMatch(#{ backend        := rlog
                          , role           := replicant
-                         , shards_in_sync := [test_shard]
                          , shards_down    := []
                          , shard_stats    := #{test_shard :=
                                                    #{ state               := normal
@@ -485,13 +494,13 @@ t_rlog_dirty_operations(_) ->
                                                     , bootstrap_num_keys  := _
                                                     , lag                 := _
                                                     , message_queue_len   := _
-                                                    }}
+                                                    }
+                                              }
                          }, rpc:call(N3, mria_rlog, status, []))
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       [ fun mria_rlog_props:replicant_no_restarts/1
-       ]).
+       common_checks()).
 
 t_rlog_sync_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
@@ -509,8 +518,7 @@ t_rlog_sync_dirty_operations(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       [ fun mria_rlog_props:replicant_no_restarts/1
-       ]).
+       common_checks()).
 
 t_local_content(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
@@ -582,7 +590,7 @@ t_local_content(_) ->
       after
           mria_ct:teardown_cluster(Cluster)
       end,
-      []).
+      common_checks()).
 
 %% This testcase verifies verifies various modes of mria:ro_transaction
 t_sum_verify(_) ->
@@ -609,12 +617,13 @@ t_sum_verify(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(Trace) ->
-               ?assert(mria_rlog_props:replicant_no_restarts(Trace)),
-               ?assertMatch( [#{result := ok}, #{result := ok}]
-                           , ?of_kind(verify_trans_sum, Trace)
-                           )
-       end).
+       [{"Verify sum property",
+         fun(Trace) ->
+                 ?assertMatch( [#{result := ok}, #{result := ok}]
+                             , ?of_kind(verify_trans_sum, Trace)
+                             )
+         end}
+       |common_checks()]).
 
 %% Test behavior of the replicant waiting for the core node
 t_core_node_down(_) ->
@@ -679,7 +688,6 @@ t_dirty_reads(_) ->
            %% Insert data:
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
            %% Ensure that the replicant still reads the correct value by doing an RPC to the core node:
-           ?block_until(#{?snk_kind := rlog_read_from, source := N1}),
            ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key])),
            %% Now allow the shard to start:
            ?tp(read1, #{}),
@@ -689,7 +697,7 @@ t_dirty_reads(_) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(_, Trace) ->
+       fun(Trace) ->
                ?assert(
                   ?strict_causality( #{?snk_kind := read1}
                                    , #{?snk_kind := state_change, to := normal}
@@ -1018,7 +1026,7 @@ compare_persistence_type_shard_contents(ReplicantNodes) ->
       end,
       ReplicantNodes).
 
-assert_create_table_commit_record(Trace, Node, Cores, Name, PersistenceType) ->
+assert_create_table_commit_record(Trace, Node, _Cores, Name, PersistenceType) ->
     ct:pal("checking create table commit record for node ~p, table ~p~n",
            [Node, Name]),
     [ #{ schema_ops := [{op, create_table, Props}]
@@ -1031,7 +1039,7 @@ assert_create_table_commit_record(Trace, Node, Cores, Name, PersistenceType) ->
              lists:keyfind(name, 1, Props) =:= {name, Name}
         ],
     NodeCopies = lists:sort([N || {PT, Ns} <- Props, PT =:= PersistenceType, N <- Ns]),
-    ?assertEqual(Cores, NodeCopies).
+    ?assertEqual(NodeCopies, [Node]).
 
 assert_transaction_commit_record(Trace, Node, Name, rocksdb_copies, Value) ->
     ct:pal("checking transaction commit record for node ~p, table ~p~n",
@@ -1106,3 +1114,8 @@ assert_dirty_commit_record(Trace, Node, Name, PersistenceType, Value) ->
        , tid := {dirty, _}
        },
        Event).
+
+common_checks() ->
+    [ fun mria_rlog_props:replicant_no_restarts/1
+    , fun mria_rlog_props:no_unexpected_events/1
+    ].

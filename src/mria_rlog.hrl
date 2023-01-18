@@ -19,6 +19,13 @@
 
 -define(IS_TRANS(TID), (element(1, (TID)) =:= tid)).
 
+-define(unexpected_event_kind, "Mria worker received unexpected event").
+-define(unexpected_event_tp(Params),
+        ?tp(warning, ?unexpected_event_kind,
+            Params#{ process => ?MODULE
+                   , callback => ?FUNCTION_NAME
+                   })).
+
 %% Messages
 
 -record(entry,

@@ -67,7 +67,8 @@ t_agent_restart(_) ->
        fun(N3, Trace) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N3, Trace)),
                mria_rlog_props:counter_import_check(CounterKey, N3, Trace),
-               ?assert(length(?of_kind(snabbkaffe_crash, Trace)) > 1)
+               ?assert(length(?of_kind(snabbkaffe_crash, Trace)) > 1),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% Check that an agent dies if its subscriber dies.
@@ -101,6 +102,7 @@ t_rlog_agent_linked_to_subscriber(_) ->
                     , reason     := {shutdown, {subscriber_died, killed}}
                     }],
                   ?of_kind(rlog_agent_terminating, Trace)),
+               mria_rlog_props:no_unexpected_events(Trace),
                ok
        end).
 
@@ -125,7 +127,8 @@ t_rand_error_injection(_) ->
        end,
        fun(N3, Trace) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N3, Trace)),
-               ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0)
+               ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% This testcase verifies verifies various modes of mria:ro_transaction
@@ -183,7 +186,8 @@ t_rlog_replica_reconnect(_) ->
        end,
        fun(Trace) ->
                Seqnos = ?projection(seqno, ?of_kind("Connected to the core node", Trace)),
-               snabbkaffe:increasing(Seqnos)
+               snabbkaffe:increasing(Seqnos),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% Remove the injected errors and check table consistency

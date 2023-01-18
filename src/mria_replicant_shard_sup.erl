@@ -22,7 +22,8 @@
 
 %% API:
 -export([ start_link/1
-        , get_importer_worker/1
+        , start_importer_worker/3
+        , stop_importer_worker/1
         , start_bootstrap_client/4
         ]).
 
@@ -37,10 +38,21 @@
 start_link(Shard) ->
     supervisor:start_link(?MODULE, Shard).
 
--spec get_importer_worker(pid()) -> pid().
-get_importer_worker(SupPid) ->
-    {ok, Pid} = mria_lib:sup_child_pid(SupPid, importer_worker),
-    Pid.
+-spec start_importer_worker(pid(), mria_rlog:shard(), integer()) -> pid().
+start_importer_worker(SupPid, Shard, SeqNo) ->
+    Id = importer_worker,
+    Spec = #{ id          => Id
+            , start       => {mria_replica_importer_worker, start_link, [Shard, SeqNo]}
+            , restart     => permanent
+            , significant => false
+            , type        => worker
+            , shutdown    => 1000
+            },
+    start_worker(SupPid, Id, Spec).
+
+-spec stop_importer_worker(pid()) -> ok.
+stop_importer_worker(SupPid) ->
+    stop_worker(SupPid, importer_worker).
 
 -spec start_bootstrap_client(pid(), mria_rlog:shard(), node(), pid()) -> pid().
 start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
@@ -63,14 +75,7 @@ init(Shard) ->
                 , period        => 1
                 , auto_shutdown => any_significant
                 },
-    Children = [ #{ id          => importer_worker
-                  , start       => {mria_replica_importer_worker, start_link, [Shard]}
-                  , restart     => transient
-                  , significant => true
-                  , type        => worker
-                  , shutdown    => 1000
-                  }
-               , #{ id          => replica
+    Children = [ #{ id          => replica
                   , start       => {mria_rlog_replica, start_link, [self(), Shard]}
                   , restart     => transient
                   , significant => true
@@ -85,7 +90,11 @@ init(Shard) ->
 %%================================================================================
 
 start_worker(SupPid, Id, Spec) ->
-    _ = supervisor:terminate_child(SupPid, Id),
-    _ = supervisor:delete_child(SupPid, Id),
+    stop_worker(SupPid, Id),
     {ok, Pid} = supervisor:start_child(SupPid, Spec),
     Pid.
+
+stop_worker(SupPid, Id) ->
+    _ = supervisor:terminate_child(SupPid, Id),
+    _ = supervisor:delete_child(SupPid, Id),
+    ok.

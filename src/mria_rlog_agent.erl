@@ -138,12 +138,11 @@ handle_stop(_State, From, _Data) ->
     {stop_and_reply, normal, {reply, From, ok}}.
 
 handle_unknown(EventType, Event, State, Data) ->
-    ?tp(warning, "rlog agent received unknown event",
-        #{ event_type => EventType
-         , event => Event
-         , state => State
-         , data => Data
-         }),
+    ?unexpected_event_tp(#{ event_type => EventType
+                          , event => Event
+                          , state => State
+                          , data => Data
+                          }),
     keep_state_and_data.
 
 handle_state_trans(_OldState, _State, _Data) ->

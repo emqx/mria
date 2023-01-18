@@ -235,7 +235,7 @@ create_table(Name, TabDef) ->
                                               , mria_schema, create_table
                                               , [Name, TabDef]
                                               );
-                 core ->
+                 _ ->
                      mria_schema:create_table(Name, TabDef)
              end,
     case Result of

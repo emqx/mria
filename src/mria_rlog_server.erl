@@ -171,12 +171,11 @@ handle_info({trans, Tid, CommitRecord}, St0) ->
     St = St0#s{seqno = SeqNo + 1},
     {noreply, St};
 handle_info(Info, St) ->
-    ?tp(warning, "Received unknown event",
-        #{ info => Info
-         }),
+    ?unexpected_event_tp(#{info => Info, state => St}),
     {noreply, St}.
 
-handle_cast(_Cast, St) ->
+handle_cast(Cast, St) ->
+    ?unexpected_event_tp(#{cast => Cast, state => St}),
     {noreply, St}.
 
 handle_call({subscribe, Subscriber, Checkpoint}, _From, State0) ->
@@ -205,8 +204,9 @@ handle_call(probe, _From, State) ->
     {reply, true, State};
 handle_call({schema_update, Entry}, _From, State) ->
     {reply, ok, handle_schema_update(Entry, State)};
-handle_call(Call, _From, St) ->
-    {reply, {error, {unknown_call, Call}}, St}.
+handle_call(Call, From, St) ->
+    ?unexpected_event_tp(#{call => Call, from => From, state => St}),
+    {reply, {error, unknown_call}, St}.
 
 terminate(_Reason, St) ->
     {ok, St}.

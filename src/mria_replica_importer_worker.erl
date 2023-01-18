@@ -27,8 +27,8 @@
 
 %% API:
 -export([ set_initial_seqno/2
-        , import_batch/4
-        , start_link/1
+        , import_batch/3
+        , start_link/2
         ]).
 
 %% gen_server callbacks
@@ -36,6 +36,7 @@
         , handle_call/3
         , handle_cast/2
         , handle_info/2
+        , terminate/2
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -50,13 +51,15 @@
 %% API funcions
 %%================================================================================
 
--spec start_link(mria_rlog:shard()) -> {ok, pid()}.
-start_link(Shard) ->
-    gen_server:start_link(?MODULE, Shard, []).
+-spec start_link(mria_rlog:shard(), integer()) -> {ok, pid()}.
+start_link(Shard, SeqNo) ->
+    gen_server:start_link(?MODULE, [Shard, SeqNo], []).
 
--spec import_batch(transaction | dirty, pid(), reference(), [mria_rlog:tx()]) -> ok.
-import_batch(ImportType, Server, Ref, Tx) ->
-    gen_server:cast(Server, {import_batch, ImportType, self(), Ref, Tx}).
+-spec import_batch(transaction | dirty, pid(), [mria_rlog:tx()]) -> reference().
+import_batch(ImportType, Server, Tx) ->
+    Alias = alias([reply]),
+    gen_server:cast(Server, {import_batch, ImportType, Alias, Tx}),
+    Alias.
 
 -spec set_initial_seqno(pid(), non_neg_integer()) -> ok.
 set_initial_seqno(Server, SeqNo) ->
@@ -66,34 +69,43 @@ set_initial_seqno(Server, SeqNo) ->
 %% gen_server callbacks
 %%================================================================================
 
-init(Shard) ->
+init([Shard, SeqNo]) ->
+    process_flag(trap_exit, true),
     logger:set_process_metadata(#{ domain => [mria, rlog, replica, importer]
                                  , shard  => Shard
                                  }),
-    ?tp(mria_replica_importer_worker_start, #{shard => Shard}),
-    State = #s{shard = Shard},
+    ?tp(mria_replica_importer_worker_start, #{shard => Shard, seqno => SeqNo}),
+    State = #s{shard = Shard, seqno = SeqNo},
     register(list_to_atom(atom_to_list(Shard) ++ "_importer_worker"), self()),
     {ok, State}.
 
-handle_call({set_initial_seqno, SeqNo}, _From, St) ->
-    {reply, ok, St#s{seqno = SeqNo}};
-handle_call(Call, _From, St) ->
-    {reply, {error, {unknown_call, Call}}, St}.
+handle_call(Call, From, St) ->
+    ?unexpected_event_tp(#{call => Call, from => From, state => St}),
+    {reply, {error, unknown_call}, St}.
 
-handle_info(_Info, St) ->
+handle_info(Info, St) ->
+    ?unexpected_event_tp(#{info => Info, state => St}),
     {noreply, St}.
 
-handle_cast({import_batch, ImportType, ReplyTo, Ref, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
+handle_cast({import_batch, ImportType, Alias, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
+    ?tp(importer_worker_import_batch, #{shard => Shard, reply_to => Alias}),
     ok = case ImportType of
              dirty       -> import_batch_dirty(Batch);
              transaction -> import_batch(Batch)
          end,
     SeqNo = SeqNo0 + length(Batch),
     mria_status:notify_replicant_import_trans(Shard, SeqNo),
-    ReplyTo ! #imported{ref = Ref},
+    Alias ! #imported{ref = Alias},
     {noreply, St#s{seqno = SeqNo}};
-handle_cast(_Cast, St) ->
+handle_cast(Cast, St) ->
+    ?unexpected_event_tp(#{cast => Cast, state => St}),
     {noreply, St}.
+
+terminate(Reason, #s{shard = Shard, seqno = SeqNo}) ->
+    ?tp(mria_replica_importer_worker_stop, #{ shard => Shard
+                                            , seqno => SeqNo
+                                            , reason => Reason
+                                            }).
 
 %%================================================================================
 %% Transaction import

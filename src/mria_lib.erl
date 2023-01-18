@@ -44,6 +44,8 @@
         , exec_callback_async/1
 
         , sup_child_pid/2
+
+        , set_where_to_read/2
         ]).
 
 %% Internal exports
@@ -334,6 +336,23 @@ with_middleman(Mod, Fun, Args) ->
             end
     end.
 
+%% @private Dirty hack: patch mnesia internal table (see
+%% implementation of `mnesia:dirty_rpc')
+-spec set_where_to_read(node(), mria:table()) -> boolean().
+set_where_to_read(Node, Table) ->
+    Key = {Table, where_to_read},
+    case ets:lookup(mnesia_gvar, Key) of
+        [{Key, OldNode}] ->
+            %% Sanity check (Hopefully it breaks if something inside
+            %% mnesia changes):
+            true = is_atom(OldNode),
+            %% Now change it:
+            ets:insert(mnesia_gvar, {Key, Node}),
+            true;
+        [] ->
+            false
+    end.
+
 %%================================================================================
 %% Internal
 %%================================================================================
@@ -364,7 +383,7 @@ do_rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->
-    ?tp_span(find_upstream_node, #{shard => Shard, tab => ets:tab2list(mria_rlog_status_tab)},
+    ?tp_span(find_upstream_node, #{shard => Shard},
              case mria_status:get_core_node(Shard, infinity) of
                  {ok, Node} -> Node;
                  timeout    -> error(transaction_timeout)
