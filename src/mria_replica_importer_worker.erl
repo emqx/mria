@@ -101,10 +101,10 @@ handle_cast(Cast, St) ->
     ?unexpected_event_tp(#{cast => Cast, state => St}),
     {noreply, St}.
 
-terminate(Reason, #s{shard = Shard, seqno = SeqNo}) ->
-    ?tp(mria_replica_importer_worker_stop, #{ shard => Shard
-                                            , seqno => SeqNo
-                                            , reason => Reason
+terminate(_Reason, #s{shard = _Shard, seqno = _SeqNo}) ->
+    ?tp(mria_replica_importer_worker_stop, #{ shard => _Shard
+                                            , seqno => _SeqNo
+                                            , reason => _Reason
                                             }).
 
 %%================================================================================

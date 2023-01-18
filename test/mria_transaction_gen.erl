@@ -15,6 +15,7 @@
 %%--------------------------------------------------------------------
 -module(mria_transaction_gen).
 
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -export([ init/0
@@ -213,7 +214,8 @@ do_trans_verify(Delay) ->
                       Sum = sum_keys(),
                       timer:sleep(Delay),
                       [#test_tab{val = Expected}] = mnesia:read(test_tab, sum),
-                      Sum == Expected
+                      ?assertEqual(Sum, Expected),
+                      true
               end
       end).
 

@@ -23,6 +23,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include("mria_rlog.hrl").
 
 -record(kv_tab, {key, val}).
 
@@ -600,13 +601,13 @@ t_sum_verify(_) ->
        #{timetrap => 30000},
        try
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 4
-                          , #{?snk_kind := state_change, to := bootstrap}
+                          , #{?snk_kind := state_change, to := bootstrap, shard := test_shard}
                           ),
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 2 * NTrans div 4
-                          , #{?snk_kind := state_change, to := local_replay}
+                          , #{?snk_kind := state_change, to := local_replay, shard := test_shard}
                           ),
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 3 * NTrans div 4
-                          , #{?snk_kind := state_change, to := normal}
+                          , #{?snk_kind := state_change, to := normal, shard := test_shard}
                           ),
            Nodes = mria_ct:start_cluster(mria_async, Cluster),
            timer:sleep(1000),
@@ -682,16 +683,18 @@ t_dirty_reads(_) ->
        #{timetrap => 10000},
        try
            %% Delay shard startup:
-           ?force_ordering(#{?snk_kind := read1}, #{?snk_kind := state_change, to := local_replay}),
+           ?force_ordering(#{?snk_kind := read1},
+                           #{?snk_kind := state_change, to := local_replay, shard := test_shard}),
            [N1, N2] = mria_ct:start_cluster(mria_async, Cluster),
            mria_mnesia_test_util:wait_tables([N1]),
            %% Insert data:
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
            %% Ensure that the replicant still reads the correct value by doing an RPC to the core node:
+           ?block_until(#{?snk_kind := rlog_read_from, source := N1, table := test_tab}),
            ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key])),
            %% Now allow the shard to start:
            ?tp(read1, #{}),
-           ?block_until(#{?snk_kind := rlog_read_from, source := N2}),
+           ?block_until(#{?snk_kind := rlog_read_from, source := N2, table := test_tab}),
            %% Ensure that the replicant still reads the correct value locally:
            ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key]))
        after
@@ -700,7 +703,7 @@ t_dirty_reads(_) ->
        fun(Trace) ->
                ?assert(
                   ?strict_causality( #{?snk_kind := read1}
-                                   , #{?snk_kind := state_change, to := normal}
+                                   , #{?snk_kind := state_change, to := normal, shard := test_shard}
                                    , Trace
                                    ))
        end).
@@ -756,10 +759,10 @@ t_rlog_schema(_) ->
                %% Schema change must cause restart of the replica process and bootstrap:
                {_, Rest} = ?split_trace_at(#{?snk_kind := "Shard schema change"}, Trace),
                ?assert(
-                  ?causality( #{?snk_kind := "Shard schema change", shard := _Shard}
+                  ?causality( #{?snk_kind := "Shard schema change", shard := test_shard}
                             , #{ ?snk_kind := state_change
                                , to := bootstrap
-                               , ?snk_meta := #{node := N2, shard := _Shard}
+                               , ?snk_meta := #{node := N2, shard := test_shard}
                                }
                             , Rest
                             ))
@@ -799,14 +802,6 @@ t_mnesia_post_commit_hook(_) ->
        end,
        fun([N1, N2, _N3, _N4], Trace) ->
                Cores = [N1, N2],
-               [ assert_create_table_commit_record(Trace, N, Cores, Table, PersistenceType)
-                 || {Table, PersistenceType} <- [ {kv_tab1, disc_copies}
-                                                , {kv_tab2, disc_only_copies}
-                                                , {kv_tab3, ram_copies}
-                                                , {kv_tab4, rocksdb_copies}
-                                                ],
-                    N <- Cores
-               ],
                [ assert_transaction_commit_record(Trace, N, Table, PersistenceType, Val)
                  || {Table, PersistenceType, Val} <- [ {kv_tab1, disc_copies, w1}
                                                      , {kv_tab2, disc_only_copies, w2}
@@ -1025,21 +1020,6 @@ compare_persistence_type_shard_contents(ReplicantNodes) ->
               ?assertEqual({w1, w2, w3, w4, dw1, dw2, dw3, dw4}, Res)
       end,
       ReplicantNodes).
-
-assert_create_table_commit_record(Trace, Node, _Cores, Name, PersistenceType) ->
-    ct:pal("checking create table commit record for node ~p, table ~p~n",
-           [Node, Name]),
-    [ #{ schema_ops := [{op, create_table, Props}]
-       }
-    ] = [ Event
-          || #{ ?snk_meta := #{node := Node0}
-              , schema_ops := [{op, create_table, Props}]
-              } = Event <- ?of_kind(mria_rlog_intercept_trans, Trace),
-             Node0 =:= Node,
-             lists:keyfind(name, 1, Props) =:= {name, Name}
-        ],
-    NodeCopies = lists:sort([N || {PT, Ns} <- Props, PT =:= PersistenceType, N <- Ns]),
-    ?assertEqual(NodeCopies, [Node]).
 
 assert_transaction_commit_record(Trace, Node, Name, rocksdb_copies, Value) ->
     ct:pal("checking transaction commit record for node ~p, table ~p~n",

@@ -348,6 +348,10 @@ set_where_to_read(Node, Table) ->
             true = is_atom(OldNode),
             %% Now change it:
             ets:insert(mnesia_gvar, {Key, Node}),
+            ?tp(rlog_read_from,
+                #{ source => Node
+                 , table  => Table
+                 }),
             true;
         [] ->
             false

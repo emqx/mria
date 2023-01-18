@@ -185,7 +185,7 @@ t_rlog_replica_reconnect(_) ->
            mria_ct:teardown_cluster(Cluster)
        end,
        fun(Trace) ->
-               Seqnos = ?projection(seqno, ?of_kind("Connected to the core node", Trace)),
+               Seqnos = [SN || #{?snk_kind := "Connected to the core node", shard := test_shard, seqno := SN} <- Trace],
                snabbkaffe:increasing(Seqnos),
                mria_rlog_props:no_unexpected_events(Trace)
        end).

@@ -91,6 +91,7 @@ all_intercepted_commit_logs_received(Trace0) ->
                                     ]),
                  case Event of
                      #{schema_ops := [_ | _]} -> false;
+                     #{?snk_meta := #{shard := ?mria_meta_shard}} -> false;
                      #{ram_copies := [{{mria_schema, _}, _, _} | _]} -> false;
                      _ -> true
                  end],

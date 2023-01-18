@@ -137,9 +137,9 @@ handle_event(EventType, Event, State, Data) ->
 code_change(_OldVsn, State, Data, _Extra) ->
     {ok, State, Data}.
 
-terminate(Reason, _State, Data) ->
+terminate(_Reason, _State, Data) ->
     close_replayq(Data),
-    ?tp(stopping_rlog_shard, #{shard => Data#d.shard, reason => Reason}),
+    ?tp(stopping_rlog_shard, #{shard => Data#d.shard, reason => _Reason}),
     ok.
 
 format_status(Status) ->
@@ -457,10 +457,7 @@ format_data(D) ->
 -spec set_where_to_read(mria_rlog:shard(), node()) -> ok.
 set_where_to_read(Shard, Node) ->
     [mria_lib:set_where_to_read(Node, Tab) || Tab <- mria_schema:tables_of_shard(Shard)],
-    ?tp(rlog_read_from,
-        #{ source => Node
-         , shard  => Shard
-         }).
+    ok.
 
 close_replayq(D = #d{replayq = RQ}) ->
     case RQ of

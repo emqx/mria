@@ -208,8 +208,8 @@ handle_cast(Cast, State) ->
 
 handle_info({mnesia_table_event, Event}, State0) ->
     case Event of
-        {write, Entry = #?schema{}, ActivityId} ->
-            ?tp(mria_schema_apply_schema_op, #{entry => Entry, activity_id => ActivityId}),
+        {write, Entry = #?schema{}, _ActivityId} ->
+            ?tp(mria_schema_apply_schema_op, #{entry => Entry, activity_id => _ActivityId}),
             {noreply, apply_schema_op(Entry, State0)};
         _SchemaEvent ->
             {noreply, State0}
