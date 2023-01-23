@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,6 +19,9 @@
 -export([ t_autoheal/1
         , t_autoheal_with_replicants/1
         , t_reboot_rejoin/1
+
+        , init_per_suite/1
+        , end_per_suite/1
         ]).
 
 -compile(nowarn_underscore_match).
@@ -192,7 +195,7 @@ assert_replicant_bootstrapped(R, C, Trace) ->
                            , ?snk_meta := #{ node := C }
                            }
                         , #{ ?snk_kind := "Remote RLOG agent died"
-                           , ?snk_meta := #{ node := R }
+                           , ?snk_meta := #{ node := R, shard := test_shard }
                            }
                         , Trace
                         )),
@@ -204,12 +207,21 @@ assert_partition_contents(Node, #{ running := ExpectedRunning
                                  }) ->
     Running = rpc:call(Node, mria, info, [running_nodes]),
     Stopped = rpc:call(Node, mria, info, [stopped_nodes]),
-    [?assert(lists:member(Expected, Running), #{ node => Node
-                                               , expected => Expected
+    [?assert(lists:member(Expected, Running), #{ from_pov => Node
+                                               , expected_running => Expected
+                                               , running => Running
                                                })
      || Expected <- ExpectedRunning],
-    [?assert(lists:member(Expected, Stopped), #{ node => Node
-                                               , expected => Expected
+    [?assert(lists:member(Expected, Stopped), #{ from_pov => Node
+                                               , expected_stopped => Expected
+                                               , stopped => Stopped
                                                })
      || Expected <- ExpectedStopped],
+    ok.
+
+init_per_suite(Config) ->
+    mria_ct:start_dist(),
+    Config.
+
+end_per_suite(_Config) ->
     ok.

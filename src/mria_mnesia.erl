@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,14 +23,11 @@
 
 -include("mria.hrl").
 -include("mria_rlog.hrl").
--include_lib("kernel/include/logger.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %% Start and stop mnesia
 -export([ %% TODO: remove it
-          converge_schema/0
-
-        , ensure_started/0
+          ensure_started/0
         , ensure_stopped/0
         , connect/1
         ]).
@@ -266,16 +263,6 @@ copy_schema(Node) ->
             ok;
         {aborted, Error} ->
             {error, Error}
-    end.
-
-%% @private
-%% @doc Init mnesia tables.
-converge_schema() ->
-    case mria_schema:create_table_type() of
-        create ->
-            ok;
-        copy ->
-            mria_schema:converge_core()
     end.
 
 %% @doc Copy mnesia table.

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@
 all() -> mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
+    mria_ct:start_dist(),
     Config.
 
 end_per_suite(_Config) ->
@@ -66,7 +67,8 @@ t_agent_restart(_) ->
        fun(N3, Trace) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N3, Trace)),
                mria_rlog_props:counter_import_check(CounterKey, N3, Trace),
-               ?assert(length(?of_kind(snabbkaffe_crash, Trace)) > 1)
+               ?assert(length(?of_kind(snabbkaffe_crash, Trace)) > 1),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% Check that an agent dies if its subscriber dies.
@@ -100,6 +102,7 @@ t_rlog_agent_linked_to_subscriber(_) ->
                     , reason     := {shutdown, {subscriber_died, killed}}
                     }],
                   ?of_kind(rlog_agent_terminating, Trace)),
+               mria_rlog_props:no_unexpected_events(Trace),
                ok
        end).
 
@@ -124,7 +127,8 @@ t_rand_error_injection(_) ->
        end,
        fun(N3, Trace) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N3, Trace)),
-               ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0)
+               ?assert(mria_rlog_props:counter_import_check(CounterKey, N3, Trace) > 0),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% This testcase verifies verifies various modes of mria:ro_transaction
@@ -181,8 +185,9 @@ t_rlog_replica_reconnect(_) ->
            mria_ct:teardown_cluster(Cluster)
        end,
        fun(Trace) ->
-               Seqnos = ?projection(seqno, ?of_kind("Connected to the core node", Trace)),
-               snabbkaffe:increasing(Seqnos)
+               Seqnos = [SN || #{?snk_kind := "Connected to the core node", shard := test_shard, seqno := SN} <- Trace],
+               snabbkaffe:increasing(Seqnos),
+               mria_rlog_props:no_unexpected_events(Trace)
        end).
 
 %% Remove the injected errors and check table consistency

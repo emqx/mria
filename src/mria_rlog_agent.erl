@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -138,12 +138,11 @@ handle_stop(_State, From, _Data) ->
     {stop_and_reply, normal, {reply, From, ok}}.
 
 handle_unknown(EventType, Event, State, Data) ->
-    ?tp(warning, "rlog agent received unknown event",
-        #{ event_type => EventType
-         , event => Event
-         , state => State
-         , data => Data
-         }),
+    ?unexpected_event_tp(#{ event_type => EventType
+                          , event => Event
+                          , state => State
+                          , data => Data
+                          }),
     keep_state_and_data.
 
 handle_state_trans(_OldState, _State, _Data) ->

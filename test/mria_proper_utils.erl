@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ prop(ClusterConfig, PropModule) ->
            [check_state(Cmds, State, Node) || Node <- Nodes],
            {History, State, Result}
        after
-           mria_ct:teardown_cluster(Cluster)
+           catch mria_ct:teardown_cluster(Cluster)
        end,
        fun({_History, _State, Result}, _Trace) ->
                ?assertMatch(ok, Result),

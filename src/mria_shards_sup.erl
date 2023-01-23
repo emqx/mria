@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -66,7 +66,7 @@ init([Shards]) ->
                 , intensity => 100
                 , period    => 1
                 },
-    Children = lists:map(fun shard_sup/1, Shards),
+    Children = lists:map(fun shard_sup/1, [?mria_meta_shard|Shards]),
     {ok, {SupFlags, Children}}.
 
 %%================================================================================

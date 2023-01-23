@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -47,3 +47,11 @@ command(State) -> mria_proper_utils:command(State).
 precondition(State, Op) -> mria_proper_utils:precondition(State, Op).
 postcondition(State, Op, Res) -> mria_proper_utils:postcondition(State, Op, Res).
 next_state(State, Res, Op) -> mria_proper_utils:next_state(State, Res, Op).
+
+init_per_suite(Config) ->
+    mria_ct:start_dist(),
+    snabbkaffe:fix_ct_logging(),
+    Config.
+
+end_per_suite(_Config) ->
+    ok.

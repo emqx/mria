@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,6 +38,9 @@
          notify_replicant_bootstrap_start/1, notify_replicant_bootstrap_complete/1,
          notify_replicant_bootstrap_import/1,
 
+         local_table_present/1,
+         notify_local_table/1,
+
          notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1
         ]).
 
@@ -65,6 +68,7 @@
 -define(replicant_bootstrap_complete, replicant_bootstrap_complete).
 -define(replicant_bootstrap_import, replicant_bootstrap_import).
 -define(agent_pid, agent_pid).
+-define(local_table, local_table).
 
 %%================================================================================
 %% API funcions
@@ -286,6 +290,14 @@ notify_replicant_bootstrap_import(Shard) ->
     Op = {2, 1},
     ets:update_counter(?stats_tab, Key, Op, {Key, 0}),
     ok.
+
+-spec notify_local_table(mria:table()) -> ok.
+notify_local_table(Table) ->
+    do_notify_up(?local_table, Table, true).
+
+-spec local_table_present(mria:table()) -> true.
+local_table_present(Table) ->
+    mria_condition_var:read({?local_table, Table}).
 
 %%================================================================================
 %% gen_server callbacks:

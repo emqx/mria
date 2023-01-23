@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,7 +18,8 @@
 
 -compile(nowarn_underscore_match).
 
--export([ replicant_no_restarts/1
+-export([ no_unexpected_events/1
+        , replicant_no_restarts/1
         , replicant_bootstrap_stages/2
         , all_intercepted_commit_logs_received/1
         , all_batches_received/1
@@ -30,13 +31,23 @@
 -include_lib("stdlib/include/assert.hrl").
 -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include("mria_rlog.hrl").
 
 %%================================================================================
 %% Checks
 %%================================================================================
 
+%% Check that there were no unexpected events
+no_unexpected_events(Trace0) ->
+    %% Ignore everything that happens after cluster teardown:
+    {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
+    ?assertMatch([], ?of_kind(?unexpected_event_kind, Trace)),
+    true.
+
 %% Check that each replicant didn't restart
-replicant_no_restarts(Trace) ->
+replicant_no_restarts(Trace0) ->
+    %% Ignore everything that happens after cluster teardown:
+    {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
     StartEvents = ?projection([node, shard], ?of_kind(rlog_replica_start, Trace)),
     ?assertEqual(length(StartEvents), length(lists:usort(StartEvents))),
     true.
@@ -80,6 +91,7 @@ all_intercepted_commit_logs_received(Trace0) ->
                                     ]),
                  case Event of
                      #{schema_ops := [_ | _]} -> false;
+                     #{?snk_meta := #{shard := ?mria_meta_shard}} -> false;
                      #{ram_copies := [{{mria_schema, _}, _, _} | _]} -> false;
                      _ -> true
                  end],
@@ -170,6 +182,14 @@ check_transaction_replay_sequence(Max, Prev, [Next|_]) ->
 %%================================================================================
 %% Unit tests
 %%================================================================================
+
+%% Find all node/shard pairs for the replicants:
+%% -spec find_replicant_shards(snabbkaffe:trace()) -> {node(), mria_rlog:shard()}.
+%% find_replicant_shards(Trace) ->
+%%     lists:usort([{Node, Shard} || #{ ?snk_kind := "starting_rlog_shard"
+%%                                    , shard := Shard
+%%                                    , ?snk_meta := #{node := Node, domain := [mria, rlog, replica]}
+%%                                    } <- Trace]).
 
 check_transaction_replay_sequence_test() ->
     ?assert(check_transaction_replay_sequence([])),

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 %%--------------------------------------------------------------------
 -module(mria_transaction_gen).
 
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -export([ init/0
@@ -213,7 +214,8 @@ do_trans_verify(Delay) ->
                       Sum = sum_keys(),
                       timer:sleep(Delay),
                       [#test_tab{val = Expected}] = mnesia:read(test_tab, sum),
-                      Sum == Expected
+                      ?assertEqual(Sum, Expected),
+                      true
               end
       end).
 

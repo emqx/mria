@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@
         , init/0
 
         , intercept_trans/2
+        , ensure_shard/1
         ]).
 
 -export_type([ shard/0
@@ -169,7 +170,12 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
 -spec get_protocol_version() -> integer().
 get_protocol_version() ->
     %% Should be increased on incompatible changes:
-    0.
+    %%
+    %% Changelog:
+    %%
+    %% 0 -> 1: Add clear_table message to the batch message of the
+    %% boostrapper.
+    1.
 
 intercept_trans(Tid, Commit) ->
     ?tp(mria_rlog_intercept_trans, Commit#{tid => Tid}),
