@@ -388,9 +388,9 @@ do_rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->
     ?tp_span(find_upstream_node, #{shard => Shard},
-             case mria_status:get_core_node(Shard, infinity) of
-                 {ok, Node} -> Node;
-                 timeout    -> error(transaction_timeout)
+             begin
+                 {ok, Node} = mria_status:get_core_node(Shard, infinity),
+                 Node
              end).
 
 ensure_no_transaction() ->

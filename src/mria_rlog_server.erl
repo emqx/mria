@@ -27,8 +27,6 @@
         , bootstrap_me/2
         , probe/2
         , dispatch/3
-
-        , schema_update/1
         ]).
 
 %% gen_server callbacks
@@ -106,18 +104,6 @@ bootstrap_me(RemoteNode, Shard) ->
 dispatch(Shard, Tid, Commit) ->
     Shard ! {trans, Tid, Commit},
     ok.
-
--spec schema_update(mria_schema:entry()) -> ok.
-schema_update(Entry = #?schema{shard = Shard}) ->
-    case {mria_config:whoami(), Shard} of
-        {_, ?LOCAL_CONTENT_SHARD} ->
-            ok;
-        {core, _} ->
-            ok = mria_rlog:ensure_shard(Shard),
-            gen_server:call(Shard, {schema_update, Entry});
-        _ ->
-            ok
-    end.
 
 %%================================================================================
 %% gen_server callbacks
@@ -202,8 +188,6 @@ handle_call({bootstrap, Subscriber}, _From, State) ->
     {reply, {ok, Pid}, State};
 handle_call(probe, _From, State) ->
     {reply, true, State};
-handle_call({schema_update, Entry}, _From, State) ->
-    {reply, ok, handle_schema_update(Entry, State)};
 handle_call(Call, From, St) ->
     ?unexpected_event_tp(#{call => Call, from => From, state => St}),
     {reply, {error, unknown_call}, St}.
@@ -259,7 +243,6 @@ handle_schema_update( #?schema{shard = Shard, mnesia_table = Tab}
                    , bootstrapper_sup = BootstrapperSup
                    }};
 handle_schema_update(_, S) ->
-    %% Should not happen
     {noreply, S}.
 
 -spec transform_commit(mria_mnesia:tid(), mria_mnesia:commit_records()) ->

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -193,7 +193,14 @@ init([]) ->
     {ok, State}.
 
 handle_call({subscribe_to_shard_schema_updates, Shard, Pid}, _From, State0 = #s{subscribers = Subs0}) ->
-    Pids = [Pid | maps:get(Shard, Subs0, [])],
+    Pids0 = maps:get(Shard, Subs0, []),
+	Pids = case lists:member(Pid, Pids0) of
+               true ->
+                   Pids0;
+               false ->
+                   _MRef = monitor(process, Pid),
+                   [Pid|Pids0]
+           end,
     State = State0#s{subscribers = Subs0#{Shard => Pids}},
     {reply, {ok, self()}, State};
 handle_call({create_table, Table, TabDef}, _From, State) ->
@@ -214,6 +221,12 @@ handle_info({mnesia_table_event, Event}, State0) ->
         _SchemaEvent ->
             {noreply, State0}
     end;
+handle_info({'DOWN', _MRef, process, Pid, _Info}, State = #s{subscribers = Subs0}) ->
+    Subs = maps:map(fun(_Shard, Pids) ->
+                            lists:delete(Pid, Pids)
+                    end,
+                    Subs0),
+    {noreply, State#s{subscribers = Subs}};
 handle_info(Info, State) ->
     ?unexpected_event_tp(#{info => Info, state => State}),
     {noreply, State}.
