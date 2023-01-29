@@ -30,9 +30,7 @@
         , cancel_timer/1
         , subscriber_node/1
 
-        , get_internals/0
-
-        , call_backend_rw_trans/3
+        , call_backend_rw_trans/4
         , call_backend_rw_dirty/3
         , call_backend_rw_dirty/4
 
@@ -44,13 +42,11 @@
         , exec_callback_async/1
 
         , sup_child_pid/2
-
-        , set_where_to_read/2
         ]).
 
 %% Internal exports
--export([ transactional_wrapper/3
-        , local_transactional_wrapper/2
+-export([ transactional_wrapper/4
+        , local_transactional_wrapper/3
         , dirty_wrapper/4
         , dirty_write_sync/2
         ]).
@@ -163,17 +159,17 @@ cancel_timer(TRef) ->
 subscriber_node({Node, _Pid}) ->
     Node.
 
--spec call_backend_rw_trans(mria_rlog:shard(), atom(), list()) -> term().
-call_backend_rw_trans(Shard, Function, Args) ->
+-spec call_backend_rw_trans(mria_rlog:shard(), module(), atom(), list()) -> term().
+call_backend_rw_trans(Shard, Module, Function, Args) ->
     case {mria_config:whoami(), Shard} of
         {mnesia, _} ->
-            maybe_middleman(mnesia, Function, Args);
+            maybe_middleman(Module, Function, Args);
         {_, ?LOCAL_CONTENT_SHARD} ->
-            maybe_middleman(?MODULE, local_transactional_wrapper, [Function, Args]);
+            maybe_middleman(?MODULE, local_transactional_wrapper, [Module, Function, Args]);
         {core, _} ->
-            maybe_middleman(?MODULE, transactional_wrapper, [Shard, Function, Args]);
+            maybe_middleman(?MODULE, transactional_wrapper, [Shard, Module, Function, Args]);
         {replicant, _} ->
-            rpc_to_core_node(Shard, ?MODULE, transactional_wrapper, [Shard, Function, Args])
+            rpc_to_core_node(Shard, ?MODULE, transactional_wrapper, [Shard, Module, Function, Args])
     end.
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
@@ -207,22 +203,22 @@ call_backend_rw_dirty(Module, Function, Table, Args) ->
 
 %% @doc Perform a transaction and log changes.
 %% the logged changes are to be replicated to other nodes.
--spec transactional_wrapper(mria_rlog:shard(), atom(), list()) -> mria:t_result(term()).
-transactional_wrapper(Shard, Fun, Args) ->
+-spec transactional_wrapper(mria_rlog:shard(), module(), atom(), list()) -> mria:t_result(term()).
+transactional_wrapper(Shard, Module, Fun, Args) ->
     ensure_no_transaction(),
     mria_rlog:wait_for_shards([Shard], infinity),
     mnesia:transaction(fun() ->
-                               Res = apply(mria_activity, Fun, Args),
+                               Res = apply(Module, Fun, Args),
                                {_TID, TxStore} = get_internals(),
                                ensure_no_ops_outside_shard(TxStore, Shard),
                                Res
                        end).
 
--spec local_transactional_wrapper(atom(), list()) -> mria:t_result(term()).
-local_transactional_wrapper(Activity, Args) ->
+-spec local_transactional_wrapper(module(), atom(), list()) -> mria:t_result(term()).
+local_transactional_wrapper(Module, Fun, Args) ->
     ensure_no_transaction(),
     mnesia:transaction(fun() ->
-                               Res = apply(mria_activity, Activity, Args),
+                               Res = apply(Module, Fun, Args),
                                {_TID, TxStore} = get_internals(),
                                ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
                                Res
@@ -243,13 +239,6 @@ dirty_wrapper(Module, Function, Table, Args) ->
     catch
         EC : Err ->
             {EC, Err}
-    end.
-
--spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
-get_internals() ->
-    case mnesia:get_activity_id() of
-        {_, TID, #tidstore{store = TxStore}} ->
-            {TID, TxStore}
     end.
 
 ensure_ok(ok) -> ok;
@@ -334,27 +323,6 @@ with_middleman(Mod, Fun, Args) ->
                 {EC, Err, Stack} ->
                     erlang:raise(EC, Err, Stack)
             end
-    end.
-
-%% @private Dirty hack: patch mnesia internal table (see
-%% implementation of `mnesia:dirty_rpc')
--spec set_where_to_read(node(), mria:table()) -> boolean().
-set_where_to_read(Node, Table) ->
-    Key = {Table, where_to_read},
-    case ets:lookup(mnesia_gvar, Key) of
-        [{Key, OldNode}] ->
-            %% Sanity check (Hopefully it breaks if something inside
-            %% mnesia changes):
-            true = is_atom(OldNode),
-            %% Now change it:
-            ets:insert(mnesia_gvar, {Key, Node}),
-            ?tp(rlog_read_from,
-                #{ source => Node
-                 , table  => Table
-                 }),
-            true;
-        [] ->
-            false
     end.
 
 %%================================================================================

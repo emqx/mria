@@ -24,6 +24,7 @@
 -include("mria.hrl").
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
+-include_lib("mnesia/src/mnesia.hrl").
 
 %% Start and stop mnesia
 -export([ %% TODO: remove it
@@ -58,6 +59,12 @@
 
 -export([ diagnosis/1
         , diagnosis_tab/1
+        ]).
+
+%% Hacks for manipulating Mnesia internal structures
+-export([ set_where_to_read/2
+        , clear_table_int/1
+        , get_internals/0
         ]).
 
 %% Various internal types
@@ -368,6 +375,52 @@ del_schema_copy(Node) ->
     end.
 
 %%--------------------------------------------------------------------
+%% Hacks
+%%--------------------------------------------------------------------
+
+%% @private Patch mnesia gvar table to set `where_to_read' (see
+%% implementation of `mnesia:dirty_rpc')
+-spec set_where_to_read(node(), mria:table()) -> boolean().
+set_where_to_read(Node, Table) ->
+    Key = {Table, where_to_read},
+    case ets:lookup(mnesia_gvar, Key) of
+        [{Key, OldNode}] ->
+            %% Sanity check (Hopefully it breaks if something inside
+            %% mnesia changes):
+            true = is_atom(OldNode),
+            %% Now change it:
+            ets:insert(mnesia_gvar, {Key, Node}),
+            ?tp(rlog_read_from,
+                #{ source => Node
+                 , table  => Table
+                 }),
+            true;
+        [] ->
+            false
+    end.
+
+%% @doc Clear table without creating a new transaction.
+-spec clear_table_int(mria:table()) -> ok.
+clear_table_int(Tab) ->
+    case get(mnesia_activity_state) of
+        {mnesia, Tid, Ts}  ->
+            mnesia:clear_table(Tid, Ts, Tab, '_');
+        {Mod, Tid, Ts} ->
+            Mod:clear_table(Tid, Ts, Tab, '_');
+        _ ->
+            error(no_transaction)
+    end.
+
+%% @doc Get TID and a reference to the temporary store for the current
+%% transaction
+-spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
+get_internals() ->
+    case mnesia:get_activity_id() of
+        {_, TID, #tidstore{store = TxStore}} ->
+            {TID, TxStore}
+    end.
+
+%%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
 
@@ -438,7 +491,7 @@ wait_for(stop) ->
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
 
--spec(leave_cluster(node()) -> ok | {error, any()}).
+-spec leave_cluster(node()) -> ok | {error, any()}.
 leave_cluster(Node) when Node =/= node() ->
     case is_running_db_node(Node) of
         true ->

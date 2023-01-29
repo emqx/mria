@@ -164,7 +164,7 @@ import_op(Op) ->
         {delete_object, Tab, Rec} ->
             mnesia:delete_object(Tab, Rec, write);
         {clear_table, Tab} ->
-            mria_activity:clear_table(Tab)
+            mria_mnesia:clear_table_int(Tab)
     end.
 
 -spec import_op_dirty(mria_rlog:op()) -> ok.

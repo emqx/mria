@@ -260,16 +260,16 @@ wait_for_tables(Tables) ->
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->
-    mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
+    mnesia:transaction(fun ro_transaction/1, [Fun]);
 ro_transaction(Shard, Fun) ->
     case mria_rlog:role() of
         core ->
-            mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]);
+            mnesia:transaction(fun ro_transaction/1, [Fun]);
         replicant ->
             ?tp(mria_ro_transaction, #{role => replicant}),
             case mria_status:upstream(Shard) of
                 {ok, AgentPid} ->
-                    Ret = mnesia:transaction(fun mria_activity:ro_transaction/1, [Fun]),
+                    Ret = mnesia:transaction(fun ro_transaction/1, [Fun]),
                     %% Now we check that the agent pid is still the
                     %% same, meaning the replicant node haven't gone
                     %% through bootstrapping process while running the
@@ -291,7 +291,7 @@ ro_transaction(Shard, Fun) ->
 
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
 transaction(Shard, Fun, Args) ->
-    mria_lib:call_backend_rw_trans(Shard, transaction, [Fun, Args]).
+    mria_lib:call_backend_rw_trans(Shard, erlang, apply, [Fun, Args]).
 
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
@@ -300,7 +300,7 @@ transaction(Shard, Fun) ->
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
     Shard = mria_config:shard_rlookup(Table),
-    mria_lib:call_backend_rw_trans(Shard, clear_table, [Table]).
+    mria_lib:call_backend_rw_trans(Shard, mria_mnesia, clear_table_int, [Table]).
 
 -spec dirty_write(tuple()) -> ok.
 dirty_write(Record) ->
@@ -366,3 +366,23 @@ do_join(Node, Reason) ->
       replicant ->
           ignore
   end.
+
+-spec ro_transaction(fun(() -> A)) -> A.
+ro_transaction(Fun) ->
+    Ret = Fun(),
+    assert_ro_trans(),
+    Ret.
+
+-spec assert_ro_trans() -> ok.
+assert_ro_trans() ->
+    case mria_config:strict_mode() of
+        true  -> do_assert_ro_trans();
+        false -> ok
+    end.
+
+do_assert_ro_trans() ->
+    {_, Ets} = mria_mnesia:get_internals(),
+    case ets:match(Ets, {'_', '_', '_'}) of
+        []  -> ok;
+        Ops -> error({transaction_is_not_readonly, Ops})
+    end.

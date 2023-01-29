@@ -178,7 +178,7 @@ complete({Node, Pid}, Server, Checkpoint) ->
 
 handle_batch(Server, Table, ?clear_table) ->
     mria_schema:ensure_local_table(Table),
-    mria_lib:set_where_to_read(node(Server), Table),
+    mria_mnesia:set_where_to_read(node(Server), Table),
     {atomic, ok} = mnesia:clear_table(Table),
     ok;
 handle_batch(_Server, Table, Records) ->
