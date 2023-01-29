@@ -231,7 +231,7 @@ running_nodes() ->
             case mria_status:shards_up() of
                 [Shard|_] ->
                     {ok, CoreNode} = mria_status:upstream_node(Shard),
-                    case mria_lib:rpc_call(CoreNode, ?MODULE, running_nodes, []) of
+                    case mria_lib:rpc_call_nothrow(CoreNode, ?MODULE, running_nodes, []) of
                         {badrpc, _} -> [];
                         {badtcp, _} -> [];
                         Result      -> Result
@@ -432,7 +432,7 @@ db_nodes_maybe_rpc() ->
             case mria_status:shards_up() of
                 [Shard|_] ->
                     {ok, CoreNode} = mria_status:upstream_node(Shard),
-                    case mria_lib:rpc_call(CoreNode, mnesia, system_info, [db_nodes]) of
+                    case mria_lib:rpc_call_nothrow(CoreNode, mnesia, system_info, [db_nodes]) of
                         {badrpc, _} -> [];
                         {badtcp, _} -> [];
                         Result      -> Result

@@ -231,10 +231,10 @@ create_table(Name, TabDef) ->
          }),
     Result = case mria_config:whoami() of
                  replicant ->
-                     mria_lib:rpc_to_core_node( ?mria_meta_shard
-                                              , mria_schema, create_table
-                                              , [Name, TabDef]
-                                              );
+                     rpc_to_core_node( ?mria_meta_shard
+                                     , mria_schema, create_table
+                                     , [Name, TabDef]
+                                     );
                  _ ->
                      mria_schema:create_table(Name, TabDef)
              end,
@@ -290,8 +290,17 @@ ro_transaction(Shard, Fun) ->
     end.
 
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
-transaction(Shard, Fun, Args) ->
-    mria_lib:call_backend_rw_trans(Shard, erlang, apply, [Fun, Args]).
+transaction(Shard, Function, Args) ->
+    case {mria_config:whoami(), Shard} of
+        {mnesia, _} ->
+            maybe_middleman(mnesia, transaction, [Function, Args]);
+        {_, ?LOCAL_CONTENT_SHARD} ->
+            maybe_middleman(mria_upstream, transactional_wrapper, [?LOCAL_CONTENT_SHARD, Function, Args]);
+        {core, _} ->
+            maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
+        {replicant, _} ->
+            rpc_to_core_node(Shard, mria_upstream, transactional_wrapper, [Shard, Function, Args])
+    end.
 
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
@@ -300,7 +309,12 @@ transaction(Shard, Fun) ->
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
     Shard = mria_config:shard_rlookup(Table),
-    mria_lib:call_backend_rw_trans(Shard, mria_mnesia, clear_table_int, [Table]).
+    case is_upstream(Shard) of
+        true ->
+            maybe_middleman(mnesia, clear_table, [Table]);
+        false ->
+            rpc_to_core_node(Shard, mnesia, clear_table, [Table])
+    end.
 
 -spec dirty_write(tuple()) -> ok.
 dirty_write(Record) ->
@@ -308,7 +322,7 @@ dirty_write(Record) ->
 
 -spec dirty_write(mria:table(), tuple()) -> ok.
 dirty_write(Tab, Record) ->
-    mria_lib:call_backend_rw_dirty(dirty_write, Tab, [Record]).
+    call_backend_rw_dirty(dirty_write, Tab, [Record]).
 
 -spec dirty_write_sync(tuple()) -> ok.
 dirty_write_sync(Record) ->
@@ -316,11 +330,12 @@ dirty_write_sync(Record) ->
 
 -spec dirty_write_sync(mria:table(), tuple()) -> ok.
 dirty_write_sync(Tab, Record) ->
-    mria_lib:call_backend_rw_dirty(mria_lib, dirty_write_sync, Tab, [Record]).
+    Shard = mria_config:shard_rlookup(Tab),
+    call_backend_rw(Shard, mria_upstream, dirty_write_sync, [Tab, Record]).
 
 -spec dirty_update_counter(mria:table(), term(), integer()) -> integer().
 dirty_update_counter(Tab, Key, Incr) ->
-    mria_lib:call_backend_rw_dirty(dirty_update_counter, Tab, [Key, Incr]).
+    call_backend_rw_dirty(dirty_update_counter, Tab, [Key, Incr]).
 
 -spec dirty_update_counter({mria:table(), term()}, integer()) -> integer().
 dirty_update_counter({Tab, Key}, Incr) ->
@@ -328,7 +343,7 @@ dirty_update_counter({Tab, Key}, Incr) ->
 
 -spec dirty_delete(mria:table(), term()) -> ok.
 dirty_delete(Tab, Key) ->
-    mria_lib:call_backend_rw_dirty(dirty_delete, Tab, [Key]).
+    call_backend_rw_dirty(dirty_delete, Tab, [Key]).
 
 -spec dirty_delete({mria:table(), term()}) -> ok.
 dirty_delete({Tab, Key}) ->
@@ -336,7 +351,7 @@ dirty_delete({Tab, Key}) ->
 
 -spec dirty_delete_object(mria:table(), tuple()) -> ok.
 dirty_delete_object(Tab, Record) ->
-    mria_lib:call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
+    call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
 
 -spec dirty_delete_object(tuple()) -> ok.
 dirty_delete_object(Record) ->
@@ -346,9 +361,86 @@ dirty_delete_object(Record) ->
 %% Internal functions
 %%================================================================================
 
+-spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
+call_backend_rw_dirty(Function, Table, Args) ->
+    Shard = mria_config:shard_rlookup(Table),
+    call_backend_rw(Shard, mnesia, Function, [Table|Args]).
+
+-spec call_backend_rw(mria_rlog:shard(), module(), atom(), list()) -> term().
+call_backend_rw(Shard, Module, Function, Args) ->
+    case is_upstream(Shard) of
+        true ->
+            maybe_middleman(Module, Function, Args);
+        false ->
+            rpc_to_core_node(Shard, Module, Function, Args)
+    end.
+
+-spec maybe_middleman(module(), atom(), list()) -> term().
+maybe_middleman(Mod, Fun, Args) ->
+    [{message_queue_len, MQL}] = process_info(self(), [message_queue_len]),
+    MaxMQL = persistent_term:get({mria, max_mql}, 10),
+    if MQL >= MaxMQL ->
+            with_middleman(Mod, Fun, Args);
+       true ->
+            apply(Mod, Fun, Args)
+    end.
+
+-spec with_middleman(module(), atom(), list()) -> term().
+with_middleman(Mod, Fun, Args) ->
+    Ref = make_ref(),
+    Parent = self(),
+    spawn_link(fun() ->
+                       ?tp(mria_lib_with_middleman, #{ module => Mod
+                                                     , function => Fun
+                                                     , args => Args
+                                                     }),
+                       Result = mria_lib:wrap_exception(Mod, Fun, Args),
+                       Parent ! {Ref, Result}
+               end),
+    receive
+        {Ref, Result} ->
+            mria_lib:unwrap_exception(Result)
+    end.
+
 -spec ro_trans_rpc(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 ro_trans_rpc(Shard, Fun) ->
-    mria_lib:rpc_to_core_node(Shard, ?MODULE, ro_transaction, [Shard, Fun]).
+    rpc_to_core_node(Shard, ?MODULE, ro_transaction, [Shard, Fun]).
+
+-spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list()) -> term().
+rpc_to_core_node(Shard, Module, Function, Args) ->
+    rpc_to_core_node(Shard, Module, Function, Args, mria_config:core_rpc_retries()).
+
+-spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
+rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
+    Core = find_upstream_node(Shard),
+    case mria_lib:rpc_call({Core, Shard}, Module, Function, Args) of
+        {Err, Details} when
+              Retries > 0 andalso
+              (Err =:= badrpc orelse Err =:= badtcp) ->
+            ?tp(debug, rpc_to_core_failed,
+                #{ module   => Module
+                 , function => Function
+                 , args     => Args
+                 , err      => Err
+                 , details  => Details
+                 }),
+            %% RPC to core node failed. Retry the operation after
+            %% giving LB some time to discover the failure:
+            SleepTime = (mria_config:core_rpc_retries() - Retries + 1) *
+                mria_config:core_rpc_cooldown(),
+            timer:sleep(SleepTime),
+            rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
+        Ret ->
+            Ret
+    end.
+
+-spec find_upstream_node(mria_rlog:shard()) -> node().
+find_upstream_node(Shard) ->
+    ?tp_span(find_upstream_node, #{shard => Shard},
+             begin
+                 {ok, Node} = mria_status:get_core_node(Shard, infinity),
+                 Node
+             end).
 
 -spec do_join(node(), join_reason()) -> ok | ignore.
 do_join(Node, Reason) ->
@@ -385,4 +477,17 @@ do_assert_ro_trans() ->
     case ets:match(Ets, {'_', '_', '_'}) of
         []  -> ok;
         Ops -> error({transaction_is_not_readonly, Ops})
+    end.
+
+%% @doc Return `true' if the local node is the upstream for the shard.
+-spec is_upstream(mria_rlog:shard()) -> boolean().
+is_upstream(Shard) ->
+    case mria_config:whoami() of
+        replicant ->
+            case Shard of
+                ?LOCAL_CONTENT_SHARD -> true;
+                _                    -> false
+            end;
+        _ -> % core or mnesia
+            true
     end.

@@ -94,7 +94,7 @@ subscribe(Shard, Subscriber, Checkpoint) ->
                                                | {error, term()}.
 bootstrap_me(RemoteNode, Shard) ->
     Me = {node(), self()},
-    case mria_lib:rpc_call(RemoteNode, ?MODULE, do_bootstrap, [Shard, Me]) of
+    case mria_lib:rpc_call_nothrow(RemoteNode, ?MODULE, do_bootstrap, [Shard, Me]) of
         {ok, Pid} -> {ok, Pid};
         Err       -> {error, Err}
     end.

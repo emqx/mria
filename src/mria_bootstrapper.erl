@@ -170,11 +170,11 @@ push_records(Subscriber, Table, Records) ->
 
 -spec push_batch(mria_lib:subscriber(), batch()) -> ok | {badrpc, _}.
 push_batch({Node, Pid}, Batch = {_, _, _}) ->
-    mria_lib:rpc_call(Node, ?MODULE, do_push_batch, [Pid, Batch]).
+    mria_lib:rpc_call_nothrow(Node, ?MODULE, do_push_batch, [Pid, Batch]).
 
 -spec complete(mria_lib:subscriber(), pid(), mria_rlog_server:checkpoint()) -> ok.
 complete({Node, Pid}, Server, Checkpoint) ->
-    mria_lib:rpc_call(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
+    mria_lib:rpc_call_nothrow(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
 handle_batch(Server, Table, ?clear_table) ->
     mria_schema:ensure_local_table(Table),
