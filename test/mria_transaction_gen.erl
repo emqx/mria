@@ -81,7 +81,7 @@ delete(K) ->
       end).
 
 start_async_counter(Node, Key, N) ->
-    rpc:cast(Node, ?MODULE, counter, [Key, N]).
+    rpc:cast(Node, proc_lib, spawn, [?MODULE, counter, [Key, N]]).
 
 counter(Key, N) ->
     counter(Key, N, 0).
@@ -89,6 +89,9 @@ counter(Key, N) ->
 counter(_Key, 0, _) ->
     ok;
 counter(Key, NIter, Delay) ->
+    ?tp(info, trans_gen_counter_update_start,
+        #{ key => Key
+         }),
     {atomic, Val} =
         mria:transaction(
           test_shard,

@@ -456,7 +456,7 @@ format_data(D) ->
 
 -spec set_where_to_read(mria_rlog:shard(), node()) -> ok.
 set_where_to_read(Shard, Node) ->
-    [mria_lib:set_where_to_read(Node, Tab) || Tab <- mria_schema:tables_of_shard(Shard)],
+    [mria_mnesia:set_where_to_read(Node, Tab) || Tab <- mria_schema:tables_of_shard(Shard)],
     ok.
 
 close_replayq(D = #d{replayq = RQ}) ->

@@ -103,7 +103,7 @@ handle_cast(_Cast, St) ->
 handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = ProtoVSNs}) ->
     LastVSNChecked = maps:get(Node, ProtoVSNs, undefined),
     MyVersion = mria_rlog:get_protocol_version(),
-    ProbeResult = mria_lib:rpc_call({Node, Shard}, mria_rlog_server, do_probe, [Shard]),
+    ProbeResult = mria_lib:rpc_call_nothrow({Node, Shard}, mria_rlog_server, do_probe, [Shard]),
     {Reply, ServerVersion} =
         case ProbeResult of
             {true, MyVersion} ->
@@ -195,12 +195,12 @@ list_core_nodes(OldCoreNodes) ->
 check_same_cluster(NewCoreNodes0) ->
     Roles = lists:map(
               fun(N) ->
-                      mria_lib:rpc_call(N, mria_rlog, role, [])
+                      mria_lib:rpc_call_nothrow(N, mria_rlog, role, [])
               end,
               NewCoreNodes0),
     NewCoreNodes1 = [N || {N, core} <- lists:zip(NewCoreNodes0, Roles)],
     DbNodes = lists:usort([N || N0 <- NewCoreNodes1,
-                                DbNodes <- [mria_lib:rpc_call(N0, mria_mnesia, db_nodes, [])],
+                                DbNodes <- [mria_lib:rpc_call_nothrow(N0, mria_mnesia, db_nodes, [])],
                                 is_list(DbNodes),
                                 N <- DbNodes]),
     UnknownNodes = DbNodes -- NewCoreNodes0,

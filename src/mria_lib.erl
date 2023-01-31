@@ -21,20 +21,13 @@
         , make_key/1
 
         , rpc_call/4
-        , rpc_to_core_node/4
         , rpc_cast/4
-        , maybe_middleman/3
+        , rpc_call_nothrow/4
 
         , shuffle/1
         , send_after/3
         , cancel_timer/1
         , subscriber_node/1
-
-        , get_internals/0
-
-        , call_backend_rw_trans/3
-        , call_backend_rw_dirty/3
-        , call_backend_rw_dirty/4
 
         , ensure_ok/1
         , ensure_tab/1
@@ -45,14 +38,8 @@
 
         , sup_child_pid/2
 
-        , set_where_to_read/2
-        ]).
-
-%% Internal exports
--export([ transactional_wrapper/3
-        , local_transactional_wrapper/2
-        , dirty_wrapper/4
-        , dirty_write_sync/2
+        , wrap_exception/3
+        , unwrap_exception/1
         ]).
 
 -export_type([ subscriber/0
@@ -105,16 +92,45 @@ make_key(undefined) ->
 %% @doc Do an RPC call
 -spec rpc_call(rpc_destination(), module(), atom(), list()) -> term().
 rpc_call(Destination, Module, Function, Args) ->
+    Result = case mria_config:rpc_module() of
+                 rpc ->
+                     rpc:call(node_from_destination(Destination),
+                              ?MODULE, wrap_exception, [Module, Function, Args]);
+                 gen_rpc ->
+                     gen_rpc:call(Destination,
+                                  ?MODULE, wrap_exception, [Module, Function, Args])
+             end,
+    unwrap_exception(Result).
+
+-spec rpc_call_nothrow(rpc_destination(), module(), atom(), list()) -> term().
+rpc_call_nothrow(Destination, Module, Function, Args) ->
     case mria_config:rpc_module() of
         rpc ->
-            rpc:call(node_from_destination(Destination), Module, Function, Args);
+            rpc:call(node_from_destination(Destination),
+                     Module, Function, Args);
         gen_rpc ->
-            gen_rpc:call(Destination, Module, Function, Args)
+            gen_rpc:call(Destination,
+                         Module, Function, Args)
     end.
 
--spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list()) -> term().
-rpc_to_core_node(Shard, Module, Function, Args) ->
-    do_rpc_to_core_node(Shard, Module, Function, Args, mria_config:core_rpc_retries()).
+-spec unwrap_exception({ok, A} | B) -> A | B.
+unwrap_exception({ok, Result}) ->
+    Result;
+unwrap_exception({EC, Err, Stack}) when EC =:= error;
+                                        EC =:= exit;
+                                        EC =:= throw ->
+    %% Get stack trace of the caller:
+    TopStack = try error(dummy) catch _:_:ST -> ST end,
+    erlang:raise(EC, Err, Stack ++ TopStack);
+unwrap_exception(Other) ->
+    Other.
+
+-spec wrap_exception(module(), atom(), list()) -> {ok, term()} | {error | exit | throw, _Reason, _Stack :: list()}.
+wrap_exception(Mod, Fun, Args) ->
+    try {ok, apply(Mod, Fun, Args)}
+    catch
+        EC:Reason:Stack -> {EC, Reason, Stack}
+    end.
 
 %% @doc Do an RPC cast
 -spec rpc_cast(rpc_destination(), module(), atom(), list()) -> term().
@@ -162,95 +178,6 @@ cancel_timer(TRef) ->
 -spec subscriber_node(subscriber()) -> node().
 subscriber_node({Node, _Pid}) ->
     Node.
-
--spec call_backend_rw_trans(mria_rlog:shard(), atom(), list()) -> term().
-call_backend_rw_trans(Shard, Function, Args) ->
-    case {mria_config:whoami(), Shard} of
-        {mnesia, _} ->
-            maybe_middleman(mnesia, Function, Args);
-        {_, ?LOCAL_CONTENT_SHARD} ->
-            maybe_middleman(?MODULE, local_transactional_wrapper, [Function, Args]);
-        {core, _} ->
-            maybe_middleman(?MODULE, transactional_wrapper, [Shard, Function, Args]);
-        {replicant, _} ->
-            rpc_to_core_node(Shard, ?MODULE, transactional_wrapper, [Shard, Function, Args])
-    end.
-
--spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
-call_backend_rw_dirty(Function, Table, Args) ->
-    call_backend_rw_dirty(mnesia, Function, Table, Args).
-
--spec call_backend_rw_dirty(module(), atom(), mria:table(), list()) -> term().
-call_backend_rw_dirty(Module, Function, Table, Args) ->
-    Role = mria_rlog:role(),
-    case mria_rlog:backend() of
-        mnesia ->
-            maybe_middleman(Module, Function, [Table|Args]);
-        rlog ->
-            Shard = mria_config:shard_rlookup(Table),
-            case Shard =:= ?LOCAL_CONTENT_SHARD orelse Role =:= core of
-                true ->
-                    %% Run dirty operation locally:
-                    maybe_middleman(Module, Function, [Table|Args]);
-                false ->
-                    %% Run dirty operation via RPC:
-                    case rpc_to_core_node(Shard, ?MODULE, dirty_wrapper, [Module, Function, Table, Args]) of
-                        {ok, Result} ->
-                            Result;
-                        {exit, Err} ->
-                            exit(Err);
-                        {error, Err} ->
-                            error(Err)
-                    end
-            end
-    end.
-
-%% @doc Perform a transaction and log changes.
-%% the logged changes are to be replicated to other nodes.
--spec transactional_wrapper(mria_rlog:shard(), atom(), list()) -> mria:t_result(term()).
-transactional_wrapper(Shard, Fun, Args) ->
-    ensure_no_transaction(),
-    mria_rlog:wait_for_shards([Shard], infinity),
-    mnesia:transaction(fun() ->
-                               Res = apply(mria_activity, Fun, Args),
-                               {_TID, TxStore} = get_internals(),
-                               ensure_no_ops_outside_shard(TxStore, Shard),
-                               Res
-                       end).
-
--spec local_transactional_wrapper(atom(), list()) -> mria:t_result(term()).
-local_transactional_wrapper(Activity, Args) ->
-    ensure_no_transaction(),
-    mnesia:transaction(fun() ->
-                               Res = apply(mria_activity, Activity, Args),
-                               {_TID, TxStore} = get_internals(),
-                               ensure_no_ops_outside_shard(TxStore, ?LOCAL_CONTENT_SHARD),
-                               Res
-                       end).
-
-%% @doc Perform syncronous dirty operation
--spec dirty_write_sync(mria:table(), tuple()) -> ok.
-dirty_write_sync(Table, Record) ->
-    mnesia:sync_dirty(
-      fun() ->
-              mnesia:write(Table, Record, write)
-      end).
-
--spec dirty_wrapper(module(), atom(), mria:table(), list()) -> {ok | error | exit, term()}.
-dirty_wrapper(Module, Function, Table, Args) ->
-    try apply(Module, Function, [Table|Args]) of
-        Result -> {ok, Result}
-    catch
-        EC : Err ->
-            {EC, Err}
-    end.
-
--spec get_internals() -> {mria_mnesia:tid(), ets:tab()}.
-get_internals() ->
-    case mnesia:get_activity_id() of
-        {_, TID, #tidstore{store = TxStore}} ->
-            {TID, TxStore}
-    end.
 
 ensure_ok(ok) -> ok;
 ensure_ok({error, {Node, {already_exists, Node}}}) -> ok;
@@ -300,122 +227,9 @@ exec_callback_async(Name) ->
     proc_lib:spawn(?MODULE, exec_callback, [Name]),
     ok.
 
--spec maybe_middleman(module(), atom(), list()) -> term().
-maybe_middleman(Mod, Fun, Args) ->
-    [{message_queue_len, MQL}] = process_info(self(), [message_queue_len]),
-    MaxMQL = persistent_term:get({mria, max_mql}, 10),
-    if MQL >= MaxMQL ->
-            with_middleman(Mod, Fun, Args);
-       true ->
-            apply(Mod, Fun, Args)
-    end.
-
--spec with_middleman(module(), atom(), list()) -> term().
-with_middleman(Mod, Fun, Args) ->
-    Ref = make_ref(),
-    Parent = self(),
-    spawn_link(fun() ->
-                       ?tp(mria_lib_with_middleman, #{ module => Mod
-                                                     , function => Fun
-                                                     , args => Args
-                                                     }),
-                       Result = try apply(Mod, Fun, Args) of
-                                    R -> {ok, R}
-                                catch
-                                    EC:Err:Stack ->
-                                        {EC, Err, Stack}
-                                end,
-                       Parent ! {Ref, Result}
-               end),
-    receive
-        {Ref, Result} ->
-            case Result of
-                {ok, R} -> R;
-                {EC, Err, Stack} ->
-                    erlang:raise(EC, Err, Stack)
-            end
-    end.
-
-%% @private Dirty hack: patch mnesia internal table (see
-%% implementation of `mnesia:dirty_rpc')
--spec set_where_to_read(node(), mria:table()) -> boolean().
-set_where_to_read(Node, Table) ->
-    Key = {Table, where_to_read},
-    case ets:lookup(mnesia_gvar, Key) of
-        [{Key, OldNode}] ->
-            %% Sanity check (Hopefully it breaks if something inside
-            %% mnesia changes):
-            true = is_atom(OldNode),
-            %% Now change it:
-            ets:insert(mnesia_gvar, {Key, Node}),
-            ?tp(rlog_read_from,
-                #{ source => Node
-                 , table  => Table
-                 }),
-            true;
-        [] ->
-            false
-    end.
-
 %%================================================================================
 %% Internal
 %%================================================================================
-
--spec do_rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
-do_rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
-    Core = find_upstream_node(Shard),
-    case rpc_call({Core, Shard}, Module, Function, Args) of
-        {Err, Details} when
-              Retries > 0 andalso
-              (Err =:= badrpc orelse Err =:= badtcp) ->
-            ?tp(debug, rpc_to_core_failed,
-                #{ module   => Module
-                 , function => Function
-                 , args     => Args
-                 , err      => Err
-                 , details  => Details
-                 }),
-            %% RPC to core node failed. Retry the operation after
-            %% giving LB some time to discover the failure:
-            SleepTime = (mria_config:core_rpc_retries() - Retries + 1) *
-                mria_config:core_rpc_cooldown(),
-            timer:sleep(SleepTime),
-            do_rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
-        Ret ->
-            Ret
-    end.
-
--spec find_upstream_node(mria_rlog:shard()) -> node().
-find_upstream_node(Shard) ->
-    ?tp_span(find_upstream_node, #{shard => Shard},
-             begin
-                 {ok, Node} = mria_status:get_core_node(Shard, infinity),
-                 Node
-             end).
-
-ensure_no_transaction() ->
-    case mnesia:get_activity_id() of
-        undefined -> ok;
-        _         -> error(nested_transaction)
-    end.
-
-ensure_no_ops_outside_shard(TxStore, Shard) ->
-    case mria_config:strict_mode() of
-        true  -> do_ensure_no_ops_outside_shard(TxStore, Shard);
-        false -> ok
-    end.
-
-do_ensure_no_ops_outside_shard(TxStore, Shard) ->
-    Tables = ets:match(TxStore, {{'$1', '_'}, '_', '_'}),
-    lists:foreach( fun([Table]) ->
-                           case mria_config:shard_rlookup(Table) =:= Shard of
-                               true  -> ok;
-                               false -> mnesia:abort({invalid_transaction, Table, Shard})
-                           end
-                   end
-                 , Tables
-                 ),
-    ok.
 
 -spec node_from_destination(rpc_destination()) -> node().
 node_from_destination({Node, _SerializationKey}) ->
