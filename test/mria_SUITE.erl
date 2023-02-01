@@ -929,6 +929,32 @@ t_dirty_update_counter(_Config) ->
        end,
        []).
 
+t_replicant_manual_join(_Config) ->
+    Cluster = mria_ct:cluster( [ core
+                               , core
+                               , {replicant, [{mria, core_nodes, []}]}
+                               ]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    ?check_trace(
+       #{timetrap => 10000},
+       try
+           [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
+           %% Make sure the load balancer didn't discover any core
+           %% nodes when `core_nodes' environment variable is set to
+           %% `[]':
+           timer:sleep(1000),
+           ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, [])),
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           %% Now after we've manually joined the replicant to the
+           %% core cluster, we should have both core nodes discovered:
+           ?block_until(#{?snk_kind := mria_lb_core_discovery_new_nodes, returned_cores := [N1, N2]}),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10

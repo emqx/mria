@@ -155,7 +155,7 @@ t_reboot_rejoin(Config) when is_list(Config) ->
                TraceC2 = ?of_node(C2, Trace),
                %% C1 joins C2
                ?assert(
-                  ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
+                  ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the cluster"
                                       , seed := C1
                                       }
                                    , #{ ?snk_kind := "Starting autoheal"
@@ -165,7 +165,7 @@ t_reboot_rejoin(Config) when is_list(Config) ->
                ?assert(
                   ?strict_causality( #{ ?snk_kind := "Starting autoheal"
                                       }
-                                   , #{ ?snk_kind := "Mria has joined the core cluster"
+                                   , #{ ?snk_kind := "Mria has joined the cluster"
                                       , seed := C1
                                       , status := #{ running_nodes := [_, _]
                                                    }
@@ -173,7 +173,7 @@ t_reboot_rejoin(Config) when is_list(Config) ->
                                    , TraceC2
                                    )),
                ?assert(
-                  ?strict_causality( #{ ?snk_kind := "Mria has joined the core cluster"
+                  ?strict_causality( #{ ?snk_kind := "Mria has joined the cluster"
                                       , status := #{ running_nodes := [_, _]
                                                    }
                                       }
@@ -191,7 +191,7 @@ assert_replicant_bootstrapped(R, C, Trace) ->
     %% The core that the replicas are connected to is changing
     %% clusters
     ?assert(
-       ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the core cluster"
+       ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the cluster"
                            , ?snk_meta := #{ node := C }
                            }
                         , #{ ?snk_kind := "Remote RLOG agent died"
