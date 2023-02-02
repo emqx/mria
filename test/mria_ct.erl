@@ -103,7 +103,7 @@ teardown_cluster(Specs) ->
                  (_, _)                                  -> true
               end,
     Nodes = lists:sort(SortFun, [I || #{node := I} <- Specs]),
-    [rpc:call(I, mria, stop, []) || I <- Nodes],
+    rpc:multicall(Nodes, mria, stop, [], 10_000),
     [ok = stop_slave(I) || I <- Nodes],
     ok.
 
