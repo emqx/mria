@@ -412,9 +412,9 @@ buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
 
 -spec enter_normal(data()) -> fsm_result().
 enter_normal(D = #d{shard = Shard, agent = Agent}) ->
-    mria_status:notify_shard_up(Shard, Agent),
     %% Now we can enable local reads:
     set_where_to_read(Shard, node()),
+    mria_status:notify_shard_up(Shard, Agent),
     ?tp(notice, "Shard fully up",
         #{ node => node()
          , shard => D#d.shard
