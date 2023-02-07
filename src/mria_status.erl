@@ -67,8 +67,8 @@
 -define(replicant_bootstrap_start, replicant_bootstrap_start).
 -define(replicant_bootstrap_complete, replicant_bootstrap_complete).
 -define(replicant_bootstrap_import, replicant_bootstrap_import).
--define(agent_pid, agent_pid).
--define(local_table, local_table).
+-define(agent_pid, mria_agent_pid).
+-define(local_table, mria_shard_table).
 
 %%================================================================================
 %% API funcions

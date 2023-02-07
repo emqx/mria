@@ -636,13 +636,11 @@ t_core_node_down(_) ->
        #{timetrap => 30_000},
        try
            [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           {ok, _} = ?block_until(#{ ?snk_kind := mria_status_change
-                                   , status := up
-                                   , tag := core_node
-                                   }),
+           mria_mnesia_test_util:stabilize(1000),
            %% Start transaction gen:
            {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
            mria_transaction_gen:start_async_counter(N3, key, NIter + 1),
+           ?tp(warning, "Shutting down all core nodes", #{}),
            %% Stop mria on all the core nodes:
            {_, {ok, _}} =
                ?wait_async_action(
@@ -652,6 +650,7 @@ t_core_node_down(_) ->
                    , tag       := core_node
                    }),
            timer:sleep(5_000),
+           ?tp(warning, "Restaring the core nodes", #{}),
            %% Restart mria:
            {_, {ok, _}} =
                ?wait_async_action(
@@ -923,6 +922,54 @@ t_dirty_update_counter(_Config) ->
            %% generate more transactions
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+t_empty_shard(_Config) ->
+    Cluster = mria_ct:cluster( [ core
+                               , replicant
+                               ]
+                             , [ {mria, rlog_startup_shards, [test_shard, empty_test_shard]}
+                               | mria_mnesia_test_util:common_env()
+                               ]
+                             ),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           %% Check status:
+           ?assertMatch(ok, rpc:call(N1, mria_rlog, wait_for_shards, [[empty_test_shard], 10000])),
+           ?assertMatch(ok, rpc:call(N2, mria_rlog, wait_for_shards, [[empty_test_shard], 10000])),
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       common_checks()).
+
+t_replicant_manual_join(_Config) ->
+    Cluster = mria_ct:cluster( [ core
+                               , core
+                               , {replicant, [{mria, core_nodes, []}]}
+                               ]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    ?check_trace(
+       #{timetrap => 10000},
+       try
+           [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
+           %% Make sure the load balancer didn't discover any core
+           %% nodes when `core_nodes' environment variable is set to
+           %% `[]':
+           timer:sleep(1000),
+           ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, [])),
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           %% Now after we've manually joined the replicant to the
+           %% core cluster, we should have both core nodes discovered:
+           ?block_until(#{?snk_kind := mria_lb_core_discovery_new_nodes, returned_cores := [N1, N2]}),
            ok
        after
            mria_ct:teardown_cluster(Cluster)

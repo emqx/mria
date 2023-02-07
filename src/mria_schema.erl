@@ -36,6 +36,8 @@
         , shards/0
 
         , start_link/0
+
+        , wait_for_tables/1
         ]).
 
 %% gen_server callbacks
@@ -163,6 +165,11 @@ shards() ->
     MS = {#?schema{mnesia_table = '_', shard = '$1', config = '_', storage = '_'}, [], ['$1']},
     {atomic, Shards} = mnesia:transaction(fun mnesia:select/2, [?schema, [MS]], infinity),
     lists:usort(Shards).
+
+-spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
+wait_for_tables(Tables) ->
+    [mria_status:local_table_present(T) || T <- Tables],
+    mria_mnesia:wait_for_tables(Tables).
 
 -spec start_link() -> {ok, pid()}.
 start_link() ->

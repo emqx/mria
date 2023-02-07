@@ -87,7 +87,7 @@ shard_rlookup(Table) ->
 
 -spec shard_config(mria_rlog:shard()) -> mria_rlog:shard_config().
 shard_config(Shard) ->
-    persistent_term:get(?shard_config(Shard)).
+    persistent_term:get(?shard_config(Shard), #{tables => []}).
 
 -spec backend() -> mria:backend().
 backend() ->

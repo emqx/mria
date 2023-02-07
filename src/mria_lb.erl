@@ -24,6 +24,8 @@
 -export([ start_link/0
         , probe/2
         , core_nodes/0
+        , join_cluster/1
+        , leave_cluster/0
         ]).
 
 %% gen_server callbacks
@@ -55,6 +57,12 @@
 -define(update, update).
 -define(SERVER, ?MODULE).
 -define(CORE_DISCOVERY_TIMEOUT, 30000).
+-define(TABLE, mria_lb_node).
+
+-record(?TABLE,
+        { key = seed
+        , node :: node()
+        }).
 
 %%================================================================================
 %% API
@@ -71,12 +79,27 @@ probe(Node, Shard) ->
 core_nodes() ->
     gen_server:call(?SERVER, core_nodes, ?CORE_DISCOVERY_TIMEOUT).
 
+join_cluster(Node) ->
+    {atomic, _} = mnesia:transaction(
+                    fun() ->
+                            mnesia:write(#?TABLE{key = seed, node = Node})
+                    end),
+    ok.
+
+leave_cluster() ->
+    {atomic, _} = mnesia:transaction(
+                    fun() ->
+                            mnesia:delete({?TABLE, seed})
+                    end),
+    ok.
+
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
 
 init(_) ->
     process_flag(trap_exit, true),
+    ok = create_table(),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
     start_timer(),
     State = #s{ core_protocol_versions = #{}
@@ -161,22 +184,29 @@ start_timer() ->
 -spec list_core_nodes([node()]) -> {_CoresChanged :: boolean(), [node()]}.
 list_core_nodes(OldCoreNodes) ->
     DiscoveryFun = mria_config:core_node_discovery_callback(),
-    NewCoreNodes0 = lists:usort(DiscoveryFun()),
-    case NewCoreNodes0 =:= OldCoreNodes of
+    NewCoreNodes0 = case manual_seed() of
+                        [] ->
+                            %% Run the discovery algorithm
+                            DiscoveryFun();
+                        [Seed] ->
+                            discover_manually(Seed)
+                    end,
+    NewCoreNodes1 = lists:usort(NewCoreNodes0),
+    case NewCoreNodes1 =:= OldCoreNodes of
         true ->
             {false, OldCoreNodes};
         false ->
-            case check_same_cluster(NewCoreNodes0) of
-                {ok, NewCoreNodes1} ->
+            case check_same_cluster(NewCoreNodes1) of
+                {ok, NewCoreNodes} ->
                     ?tp( mria_lb_core_discovery_new_nodes
                        , #{ previous_cores => OldCoreNodes
-                          , returned_cores => NewCoreNodes1
+                          , returned_cores => NewCoreNodes
                           , node => node()
                           }
                        ),
                     %% ping new cores so that they get inserted into
                     %% local membership table.
-                    {true, NewCoreNodes1};
+                    {true, NewCoreNodes};
                 {error, {unknown_nodes, UnknownNodes}} ->
                     ?tp( error
                        ,  mria_lb_core_discovery_divergent_cluster
@@ -245,3 +275,27 @@ core_node_weight(Shard) ->
             %% due to the random term:
             {ok, {Load, rand:uniform(), node()}}
     end.
+
+%% Return the last node that has been explicitly specified via
+%% "mria:join" command. It overrides other discovery mechanisms.
+-spec manual_seed() -> [node()].
+manual_seed() ->
+    [Seed || #?TABLE{node = Seed} <- mnesia:dirty_read(?TABLE, seed)].
+
+%% Return the list of core nodes that belong to the same cluster as
+%% the seed node.
+-spec discover_manually(node()) -> [node()].
+discover_manually(Seed) ->
+    try mria_lib:rpc_call(Seed, mria_mnesia, db_nodes, [])
+    catch _:_ ->
+            [Seed]
+    end.
+
+%% Create a local content mnesia table that persists the list of core
+%% nodes added manually
+create_table() ->
+    mria_lib:ensure_tab(
+      mnesia:create_table(?TABLE, [ {disc_copies, [node()]}
+                                  , {local_content, true}
+                                  , {attributes, record_info(fields, ?TABLE)}
+                                  ])).

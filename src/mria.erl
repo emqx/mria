@@ -169,24 +169,34 @@ join(Node, Reason) when is_atom(Node) ->
     %% When `Reason =:= heal' the node should rejoin regardless of
     %% what mnesia thinks:
     IsInCluster = mria_mnesia:is_node_in_cluster(Node) andalso Reason =/= heal,
-    case {mria_rlog:role(), IsInCluster, mria_node:is_running(Node)} of
-        {replicant, _, _} ->
-            ok;
-        {core, false, true} ->
-            do_join(Node, Reason);
-        {core, false, false} ->
+    case {IsInCluster, mria_node:is_running(Node), mria_rlog:role(Node)} of
+        {false, true, core} ->
+            %% FIXME: reading role via `mria_config' may be unsafe
+            %% when the app is not running, since it defaults to core.
+            %% Replicant may try to join the cluster as a core and wreak
+            %% havok
+            Role = application:get_env(mria, node_role, core),
+            do_join(Role, Node, Reason);
+        {false, false, _} ->
             {error, {node_down, Node}};
-        {core, true, _} ->
-            {error, {already_in_cluster, Node}}
+        {true, _, _} ->
+            {error, {already_in_cluster, Node}};
+        {_, _, _} ->
+            {error, {cannot_join_to_replicant, Node}}
     end.
 
-%% @doc Leave from cluster
+%% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.
 leave() ->
     case mria_mnesia:running_nodes() -- [node()] of
         [_|_] ->
             stop(leave),
-            ok = mria_mnesia:leave_cluster(),
+            ok = case mria_config:whoami() of
+                     replicant ->
+                         mria_lb:leave_cluster();
+                     _ ->
+                         mria_mnesia:leave_cluster()
+                 end,
             start();
         [] ->
             {error, node_not_in_cluster}
@@ -413,16 +423,14 @@ rpc_to_core_node(Shard, Module, Function, Args) ->
 -spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
 rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
     Core = find_upstream_node(Shard),
-    case mria_lib:rpc_call({Core, Shard}, Module, Function, Args) of
-        {Err, Details} when
-              Retries > 0 andalso
-              (Err =:= badrpc orelse Err =:= badtcp) ->
-            ?tp(debug, rpc_to_core_failed,
+    Ret = mria_lib:rpc_call({Core, Shard}, Module, Function, Args),
+    case should_retry_rpc(Ret) of
+        true when Retries > 0 ->
+            ?tp(debug, mria_retry_rpc_to_core,
                 #{ module   => Module
                  , function => Function
                  , args     => Args
-                 , err      => Err
-                 , details  => Details
+                 , reason   => Ret
                  }),
             %% RPC to core node failed. Retry the operation after
             %% giving LB some time to discover the failure:
@@ -430,9 +438,18 @@ rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
                 mria_config:core_rpc_cooldown(),
             timer:sleep(SleepTime),
             rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
-        Ret ->
+        _ ->
             Ret
     end.
+
+should_retry_rpc({badrpc, _}) ->
+    true;
+should_retry_rpc({badtcp, _}) ->
+    true;
+should_retry_rpc({aborted, {retry, _}}) ->
+    true;
+should_retry_rpc(_) ->
+    false.
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->
@@ -442,22 +459,26 @@ find_upstream_node(Shard) ->
                  Node
              end).
 
--spec do_join(node(), join_reason()) -> ok | ignore.
-do_join(Node, Reason) ->
-  case mria_rlog:role(Node) of
-      core ->
-          ?tp(notice, "Mria is restarting to join the core cluster", #{seed => Node}),
-          mria_membership:announce(Reason),
-          stop(Reason),
-          ok = mria_mnesia:join_cluster(Node),
-          start(),
-          ?tp(notice, "Mria has joined the core cluster",
-              #{ seed   => Node
-               , status => info()
-               });
-      replicant ->
-          ignore
-  end.
+-spec do_join(mria_rlog:role(), node(), join_reason()) -> ok | ignore.
+do_join(core, Node, Reason) ->
+    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+    [mria_membership:announce(Reason) || mria_config:role() =:= core],
+    stop(Reason),
+    mria_mnesia:join_cluster(Node),
+    start(),
+    ?tp(notice, "Mria has joined the cluster",
+        #{ seed   => Node
+         , status => info()
+         });
+do_join(replicant, Node, Reason) ->
+    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+    mria_lb:join_cluster(Node),
+    stop(Reason),
+    start(),
+    ?tp(notice, "Mria has joined the cluster",
+        #{ seed   => Node
+         , status => info()
+         }).
 
 -spec ro_transaction(fun(() -> A)) -> A.
 ro_transaction(Fun) ->

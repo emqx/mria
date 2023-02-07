@@ -103,7 +103,7 @@ teardown_cluster(Specs) ->
                  (_, _)                                  -> true
               end,
     Nodes = lists:sort(SortFun, [I || #{node := I} <- Specs]),
-    [rpc:call(I, mria, stop, []) || I <- Nodes],
+    %rpc:multicall(Nodes, mria, stop, [], 10_000),
     [ok = stop_slave(I) || I <- Nodes],
     ok.
 
@@ -112,10 +112,15 @@ start_slave(NodeOrMria, #{name := Name, env := Env}) ->
 start_slave(NodeOrMria, Name) when is_atom(Name) ->
     start_slave(NodeOrMria, Name, []).
 
-start_mria(#{node := Node, join_to := JoinTo}) ->
+start_mria(#{node := Node} = Spec) ->
     ok = rpc:call(Node, mria, start, []),
+    maybe_join_core_cluster(Spec),
     %% Emulate start of the business apps:
     rpc:call(Node, mria_transaction_gen, init, []),
+    ?tp(mria_ct_cluster_join, #{node => Node}),
+    Node.
+
+maybe_join_core_cluster(#{node := Node, role := core, join_to := JoinTo}) ->
     %% Join the cluster if needed:
     case rpc:call(Node, mria, join, [JoinTo]) of
         ok     -> ok;
@@ -125,9 +130,9 @@ start_mria(#{node := Node, join_to := JoinTo}) ->
                           , join_to => JoinTo
                           , error   => Err
                           })
-    end,
-    ?tp(mria_ct_cluster_join, #{node => Node}),
-    Node.
+    end;
+maybe_join_core_cluster(_) ->
+    ok.
 
 write(Record) ->
     ?tp_span(trans_write, #{record => Record, txid => get_txid()},

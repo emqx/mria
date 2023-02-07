@@ -42,8 +42,15 @@ find_shard(Shard) ->
 -spec start_shard(mria_rlog:shard()) -> {ok, pid()}
                                       | {error, _}.
 start_shard(Shard) ->
-    Child = shard_sup(Shard),
-    supervisor:start_child(?SUPERVISOR, Child).
+    case whereis(?SUPERVISOR) of
+        undefined ->
+            %% FIXME: communicate via CVAR instead
+            timer:sleep(100),
+            start_shard(Shard);
+        _Pid ->
+            Child = shard_sup(Shard),
+            supervisor:start_child(?SUPERVISOR, Child)
+    end.
 
 %% @doc Restart a shard
 -spec restart_shard(mria_rlog:shard(), _Reason) -> ok.
