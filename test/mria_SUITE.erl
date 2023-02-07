@@ -636,13 +636,11 @@ t_core_node_down(_) ->
        #{timetrap => 30_000},
        try
            [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           {ok, _} = ?block_until(#{ ?snk_kind := mria_status_change
-                                   , status := up
-                                   , tag := core_node
-                                   }),
+           mria_mnesia_test_util:stabilize(1000),
            %% Start transaction gen:
            {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
            mria_transaction_gen:start_async_counter(N3, key, NIter + 1),
+           ?tp(warning, "Shutting down all core nodes", #{}),
            %% Stop mria on all the core nodes:
            {_, {ok, _}} =
                ?wait_async_action(
@@ -652,6 +650,7 @@ t_core_node_down(_) ->
                    , tag       := core_node
                    }),
            timer:sleep(5_000),
+           ?tp(warning, "Restaring the core nodes", #{}),
            %% Restart mria:
            {_, {ok, _}} =
                ?wait_async_action(

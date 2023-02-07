@@ -42,12 +42,13 @@
 
 -spec transactional_wrapper(mria_rlog:shard(), fun(), list()) -> mria:t_result(term()).
 transactional_wrapper(Shard, Fun, Args) ->
+    OldServerPid = whereis(Shard),
     ensure_no_transaction(),
     mria_rlog:wait_for_shards([Shard], infinity),
     mnesia:transaction(fun() ->
                                Res = apply(Fun, Args),
                                {_TID, TxStore} = mria_mnesia:get_internals(),
-                               ensure_no_ops_outside_shard(TxStore, Shard),
+                               ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid),
                                Res
                        end).
 
@@ -78,18 +79,23 @@ ensure_no_transaction() ->
         _         -> error(nested_transaction)
     end.
 
-ensure_no_ops_outside_shard(TxStore, Shard) ->
+ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid) ->
     case mria_config:strict_mode() of
-        true  -> do_ensure_no_ops_outside_shard(TxStore, Shard);
+        true  -> do_ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid);
         false -> ok
     end.
 
-do_ensure_no_ops_outside_shard(TxStore, Shard) ->
+do_ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid) ->
     Tables = ets:match(TxStore, {{'$1', '_'}, '_', '_'}),
     lists:foreach( fun([Table]) ->
                            case mria_config:shard_rlookup(Table) =:= Shard of
                                true  -> ok;
-                               false -> mnesia:abort({invalid_transaction, Table, Shard})
+                               false -> case whereis(Shard) of
+                                            OldServerPid ->
+                                                mnesia:abort({invalid_transaction, Table, Shard});
+                                            ServerPid ->
+                                                mnesia:abort({retry, {OldServerPid, ServerPid}})
+                                        end
                            end
                    end
                  , Tables

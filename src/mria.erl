@@ -423,16 +423,14 @@ rpc_to_core_node(Shard, Module, Function, Args) ->
 -spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
 rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
     Core = find_upstream_node(Shard),
-    case mria_lib:rpc_call({Core, Shard}, Module, Function, Args) of
-        {Err, Details} when
-              Retries > 0 andalso
-              (Err =:= badrpc orelse Err =:= badtcp) ->
-            ?tp(debug, rpc_to_core_failed,
+    Ret = mria_lib:rpc_call({Core, Shard}, Module, Function, Args),
+    case should_retry_rpc(Ret) of
+        true when Retries > 0 ->
+            ?tp(debug, mria_retry_rpc_to_core,
                 #{ module   => Module
                  , function => Function
                  , args     => Args
-                 , err      => Err
-                 , details  => Details
+                 , reason   => Ret
                  }),
             %% RPC to core node failed. Retry the operation after
             %% giving LB some time to discover the failure:
@@ -440,9 +438,18 @@ rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
                 mria_config:core_rpc_cooldown(),
             timer:sleep(SleepTime),
             rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
-        Ret ->
+        _ ->
             Ret
     end.
+
+should_retry_rpc({badrpc, _}) ->
+    true;
+should_retry_rpc({badtcp, _}) ->
+    true;
+should_retry_rpc({aborted, {retry, _}}) ->
+    true;
+should_retry_rpc(_) ->
+    false.
 
 -spec find_upstream_node(mria_rlog:shard()) -> node().
 find_upstream_node(Shard) ->

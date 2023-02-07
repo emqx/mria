@@ -230,11 +230,15 @@ running_nodes() ->
         replicant ->
             case mria_status:shards_up() of
                 [Shard|_] ->
-                    {ok, CoreNode} = mria_status:upstream_node(Shard),
-                    case mria_lib:rpc_call_nothrow(CoreNode, ?MODULE, running_nodes, []) of
-                        {badrpc, _} -> [];
-                        {badtcp, _} -> [];
-                        Result      -> Result
+                    case mria_status:upstream_node(Shard) of
+                        {ok, CoreNode} ->
+                            case mria_lib:rpc_call_nothrow(CoreNode, ?MODULE, running_nodes, []) of
+                                {badrpc, _} -> [];
+                                {badtcp, _} -> [];
+                                Result      -> Result
+                            end;
+                        disconnected ->
+                            []
                     end;
                 [] ->
                     []
@@ -431,7 +435,7 @@ db_nodes_maybe_rpc() ->
         replicant ->
             case mria_status:shards_up() of
                 [Shard|_] ->
-                    {ok, CoreNode} = mria_status:upstream_node(Shard),
+                    {ok, CoreNode} = mria_status:get_core_node(Shard, 5_000),
                     case mria_lib:rpc_call_nothrow(CoreNode, mnesia, system_info, [db_nodes]) of
                         {badrpc, _} -> [];
                         {badtcp, _} -> [];

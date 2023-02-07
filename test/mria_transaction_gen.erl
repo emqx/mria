@@ -57,6 +57,7 @@ verify_trans_sum(N, Delay) ->
     verify_trans_sum_loop(N, Delay).
 
 create_data() ->
+    ok = mria:wait_for_tables([test_tab]),
     mria:transaction(
       test_shard,
       fun() ->
@@ -84,6 +85,7 @@ start_async_counter(Node, Key, N) ->
     rpc:cast(Node, proc_lib, spawn, [?MODULE, counter, [Key, N]]).
 
 counter(Key, N) ->
+    process_flag(trap_exit, true),
     counter(Key, N, 0).
 
 counter(_Key, 0, _) ->
@@ -108,7 +110,12 @@ counter(Key, NIter, Delay) ->
          , value => Val
          }),
     timer:sleep(Delay),
-    counter(Key, NIter - 1, Delay).
+    receive
+        {'EXIT', From, Reason} ->
+            error({exit, From, Reason})
+    after 0 ->
+            counter(Key, NIter - 1, Delay)
+    end.
 
 %% Test that behavior of mria_mnesia is the same when transacion aborts:
 abort(Backend, AbortKind) ->
