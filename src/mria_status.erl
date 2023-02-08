@@ -56,6 +56,7 @@
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %% Tables and table keys:
+-define(optvar(KEY), {mria, KEY}).
 -define(upstream_pid, upstream_pid).
 -define(core_node, core_node).
 
@@ -88,7 +89,7 @@ upstream_node(Shard) ->
 %% @doc Return pid of the core node agent that serves us.
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
 upstream(Shard) ->
-    case mria_condition_var:peek({?upstream_pid, Shard}) of
+    case optvar:peek(?optvar({?upstream_pid, Shard})) of
         {ok, Pid} -> {ok, Pid};
         undefined -> disconnected
     end.
@@ -180,7 +181,7 @@ get_shard_lag(Shard) ->
 %% accept or RPC calls.
 -spec get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
 get_core_node(Shard, Timeout) ->
-    mria_condition_var:read({?core_node, Shard}, Timeout).
+    optvar:read(?optvar({?core_node, Shard}), Timeout).
 
 -spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]}.
 wait_for_shards(Shards, Timeout) ->
@@ -188,16 +189,17 @@ wait_for_shards(Shards, Timeout) ->
         #{ shards => Shards
          , timeout => Timeout
          }),
-    Result = mria_condition_var:wait_vars( [{?upstream_pid, I} || I <- Shards,
-                                                                  I =/= ?LOCAL_CONTENT_SHARD]
-                                         , Timeout
-                                         ),
+    Result = optvar:wait_vars( [?optvar({?upstream_pid, I})
+                                || I <- Shards,
+                                   I =/= ?LOCAL_CONTENT_SHARD]
+                                 , Timeout
+                             ),
     Ret = case Result of
               ok ->
                   ok;
               {timeout, L} ->
-                  %% Unzip to transform `[{upstream_shard, foo}, {upstream_shard, bar}]' to `[foo, bar]':
-                  {timeout, element(2, lists:unzip(L))}
+                  TimedOutShards = [Shard || ?optvar({upstream_sahrd, Shard}) <- L],
+                  {timeout, TimedOutShards}
           end,
     ?tp(done_waiting_for_shards,
         #{ shards => Shards
@@ -297,7 +299,7 @@ notify_local_table(Table) ->
 
 -spec local_table_present(mria:table()) -> true.
 local_table_present(Table) ->
-    mria_condition_var:read({?local_table, Table}).
+    optvar:read(?optvar({?local_table, Table})).
 
 %%================================================================================
 %% gen_server callbacks:
@@ -305,7 +307,6 @@ local_table_present(Table) ->
 
 init(_) ->
     process_flag(trap_exit, true),
-    mria_condition_var:init(),
     ets:new(?stats_tab, [ set
                         , named_table
                         , public
@@ -314,7 +315,7 @@ init(_) ->
     {ok, []}.
 
 terminate(_Reason, _State) ->
-    mria_condition_var:stop(),
+    [optvar:unset(K) || ?optvar(K) <- optvar:list()],
     {exit, normal}.
 
 handle_call(_, _, State) ->
@@ -353,7 +354,7 @@ get_bootstrap_time(Shard) ->
 -spec do_notify_up(atom(), term(), term()) -> ok.
 do_notify_up(Tag, Object, Value) ->
     Key = {Tag, Object},
-    mria_condition_var:is_set(Key) orelse
+    optvar:is_set(?optvar(Key)) orelse
         ?tp(mria_status_change,
             #{ status => up
              , tag    => Tag
@@ -361,15 +362,15 @@ do_notify_up(Tag, Object, Value) ->
              , value  => Value
              , node   => node()
              }),
-    mria_condition_var:set(Key, Value).
+    optvar:set(?optvar(Key), Value).
 
 -spec do_notify_down(atom(), term()) -> ok.
 do_notify_down(Tag, Object) ->
     Key = {Tag, Object},
-    mria_condition_var:is_set(Key) andalso
+    optvar:is_set(?optvar(Key)) andalso
         ?tp(mria_status_change,
             #{ status => down
              , key    => Object
              , tag    => Tag
              }),
-    mria_condition_var:unset(Key).
+    optvar:unset(?optvar(Key)).

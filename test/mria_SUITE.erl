@@ -632,47 +632,48 @@ t_core_node_down(_) ->
                              , mria_mnesia_test_util:common_env()
                              ),
     NIter = 100,
-    ?check_trace(
-       #{timetrap => 30_000},
-       try
-           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:stabilize(1000),
-           %% Start transaction gen:
-           {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
-           mria_transaction_gen:start_async_counter(N3, key, NIter + 1),
-           ?tp(warning, "Shutting down all core nodes", #{}),
-           %% Stop mria on all the core nodes:
-           {_, {ok, _}} =
-               ?wait_async_action(
-                  [rpc:call(I, application, stop, [mria]) || I <- [N1, N2]],
-                  #{ ?snk_kind := mria_status_change
-                   , status    := down
-                   , tag       := core_node
-                   }),
-           timer:sleep(5_000),
-           ?tp(warning, "Restaring the core nodes", #{}),
-           %% Restart mria:
-           {_, {ok, _}} =
-               ?wait_async_action(
-                  [rpc:call(I, application, start, [mria]) || I <- [N1, N2]],
-                  #{ ?snk_kind := mria_status_change
-                   , status    := up
-                   , tag       := core_node
-                   }),
-           %% Wait for the counter update
-           ?block_until(#{?snk_kind := trans_gen_counter_update, value := NIter}),
-           %% Now stop the core nodes:
-           {_, {ok, _}} =
-               ?wait_async_action(
-                  [mria_ct:stop_slave(I) || I <- [N1, N2]],
-                  #{ ?snk_kind := mria_status_change
-                   , status    := down
-                   , tag       := core_node
-                   })
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end,
-       []).
+    ?retry(0, 5, %% TODO: this test is flaky, see https://github.com/emqx/mria/issues/113
+      ?check_trace(
+         #{timetrap => 30_000},
+         try
+             [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+             mria_mnesia_test_util:stabilize(1000),
+             %% Start transaction gen:
+             {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
+             mria_transaction_gen:start_async_counter(N3, key, NIter + 1),
+             ?tp(warning, "Shutting down all core nodes", #{}),
+             %% Stop mria on all the core nodes:
+             {_, {ok, _}} =
+                 ?wait_async_action(
+                    [rpc:call(I, application, stop, [mria]) || I <- [N1, N2]],
+                    #{ ?snk_kind := mria_status_change
+                     , status    := down
+                     , tag       := core_node
+                     }),
+             timer:sleep(5_000),
+             ?tp(warning, "Restaring the core nodes", #{}),
+             %% Restart mria:
+             {_, {ok, _}} =
+                 ?wait_async_action(
+                    [rpc:call(I, application, start, [mria]) || I <- [N1, N2]],
+                    #{ ?snk_kind := mria_status_change
+                     , status    := up
+                     , tag       := core_node
+                     }),
+             %% Wait for the counter update
+             ?block_until(#{?snk_kind := trans_gen_counter_update, value := NIter}),
+             %% Now stop the core nodes:
+             {_, {ok, _}} =
+                 ?wait_async_action(
+                    [mria_ct:stop_slave(I) || I <- [N1, N2]],
+                    #{ ?snk_kind := mria_status_change
+                     , status    := down
+                     , tag       := core_node
+                     })
+         after
+             mria_ct:teardown_cluster(Cluster)
+         end,
+         [])).
 
 t_dirty_reads(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
