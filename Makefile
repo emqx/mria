@@ -75,9 +75,10 @@ app.config: $(CUTTLEFISH_SCRIPT)
 CONCUERROR := $(BUILD_DIR)/Concuerror/bin/concuerror
 CONCUERROR_RUN := $(CONCUERROR) \
 	--treat_as_normal shutdown --treat_as_normal normal --treat_as_normal intentional \
-	--treat_as_normal cvar_set --treat_as_normal cvar_stopped --treat_as_normal cvar_retry \
+	--treat_as_normal optvar_set --treat_as_normal optvar_stopped --treat_as_normal optvar_retry \
 	-x code -x code_server -x error_handler \
 	-pa $(BUILD_DIR)/concuerror+test/lib/snabbkaffe/ebin \
+	-pa $(BUILD_DIR)/concuerror+test/lib/optvar/ebin \
 	-pa $(BUILD_DIR)/concuerror+test/lib/mria/ebin
 
 concuerror = $(CONCUERROR_RUN) -f $(BUILD_DIR)/concuerror+test/lib/mria/test/concuerror_tests.beam -t $(1) || \
@@ -86,13 +87,6 @@ concuerror = $(CONCUERROR_RUN) -f $(BUILD_DIR)/concuerror+test/lib/mria/test/con
 .PHONY: concuerror_test
 concuerror_test: $(CONCUERROR)
 	rebar3 as concuerror eunit -m concuerror_tests
-	$(call concuerror,cvar_read_test)
-	$(call concuerror,cvar_unset_test)
-	$(call concuerror,cvar_double_wait_test)
-	$(call concuerror,cvar_waiter_killed_test)
-	$(call concuerror,cvar_wait_multiple_test)
-	$(call concuerror,cvar_wait_multiple_timeout_test)
-	$(call concuerror,wait_for_shards_inf_test)
 	# $(call concuerror,wait_for_shards_crash_test)
 	$(call concuerror,notify_different_tags_test)
 	$(call concuerror,get_core_node_test)
