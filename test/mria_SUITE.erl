@@ -977,6 +977,35 @@ t_replicant_manual_join(_Config) ->
        end,
        []).
 
+t_wait_for_shards_timeout(_Config) ->
+    Cluster = mria_ct:cluster( [ core
+                               , replicant
+                               ]
+                             , mria_mnesia_test_util:common_env()
+                             ),
+    Shard = unknown_shard,
+    ?check_trace(
+       #{timetrap => 10000},
+       try
+           Nodes = [_N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           Shards = [Shard],
+           Timeout = 1,
+           Res = erpc:call(N2, mria_status, wait_for_shards, [Shards, Timeout]),
+           Res
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       fun(Res, Trace0) ->
+         ?assertEqual({timeout, [Shard]}, Res),
+         Trace = [Event || Event = #{shards := [Shard0]} <-
+                               ?of_kind(done_waiting_for_shards, Trace0),
+                           Shard0 =:= Shard],
+         ?assertMatch([#{shards := [Shard], result := {timeout, _}}], Trace),
+         ok
+       end),
+    ok.
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10
