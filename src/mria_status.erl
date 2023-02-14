@@ -198,7 +198,7 @@ wait_for_shards(Shards, Timeout) ->
               ok ->
                   ok;
               {timeout, L} ->
-                  TimedOutShards = [Shard || ?optvar({upstream_sahrd, Shard}) <- L],
+                  TimedOutShards = [Shard || ?optvar({?upstream_pid, Shard}) <- L],
                   {timeout, TimedOutShards}
           end,
     ?tp(done_waiting_for_shards,

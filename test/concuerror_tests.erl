@@ -91,7 +91,11 @@ wait_for_shards_timeout_test() ->
                 %% It should always succeed the second time:
                 ?assertMatch(ok, mria_status:wait_for_shards([foo, bar], 100));
             {timeout, Shards} ->
-                ?assertMatch([], Shards -- [foo, bar])
+                case lists:sort(Shards) of
+                    [bar, foo] -> ok;
+                    [foo] -> ok;
+                    [bar] -> ok
+                end
         end,
         ?assertMatch([], flush())
     after
