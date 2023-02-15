@@ -190,7 +190,7 @@ join(Node, Reason) when is_atom(Node) ->
 leave() ->
     case mria_mnesia:running_nodes() -- [node()] of
         [_|_] ->
-            stop(leave),
+            prep_restart(leave),
             ok = case mria_config:whoami() of
                      replicant ->
                          mria_lb:leave_cluster();
@@ -462,8 +462,8 @@ find_upstream_node(Shard) ->
 -spec do_join(mria_rlog:role(), node(), join_reason()) -> ok | ignore.
 do_join(core, Node, Reason) ->
     ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    [mria_membership:announce(Reason) || mria_config:role() =:= core],
-    stop(Reason),
+    mria_membership:announce(Reason),
+    prep_restart(Reason),
     mria_mnesia:join_cluster(Node),
     start(),
     ?tp(notice, "Mria has joined the cluster",
@@ -473,7 +473,7 @@ do_join(core, Node, Reason) ->
 do_join(replicant, Node, Reason) ->
     ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
     mria_lb:join_cluster(Node),
-    stop(Reason),
+    prep_restart(Reason),
     start(),
     ?tp(notice, "Mria has joined the cluster",
         #{ seed   => Node
@@ -512,3 +512,9 @@ is_upstream(Shard) ->
         _ -> % core or mnesia
             true
     end.
+
+%% Stop the application and reload the basic config from scratch.
+-spec prep_restart(stop_reason()) -> ok.
+prep_restart(Reason) ->
+    stop(Reason),
+    mria_config:load_config().
