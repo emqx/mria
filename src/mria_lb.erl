@@ -57,12 +57,6 @@
 -define(update, update).
 -define(SERVER, ?MODULE).
 -define(CORE_DISCOVERY_TIMEOUT, 30000).
--define(TABLE, mria_lb_node).
-
--record(?TABLE,
-        { key = seed
-        , node :: node()
-        }).
 
 %%================================================================================
 %% API
@@ -80,18 +74,17 @@ core_nodes() ->
     gen_server:call(?SERVER, core_nodes, ?CORE_DISCOVERY_TIMEOUT).
 
 join_cluster(Node) ->
-    {atomic, _} = mnesia:transaction(
-                    fun() ->
-                            mnesia:write(#?TABLE{key = seed, node = Node})
-                    end),
-    ok.
+    ok = file:write_file(seed_file(), term_to_binary(Node)).
 
 leave_cluster() ->
-    {atomic, _} = mnesia:transaction(
-                    fun() ->
-                            mnesia:delete({?TABLE, seed})
-                    end),
-    ok.
+    case file:delete(seed_file()) of
+        ok ->
+            ok;
+        {error, enoent} ->
+            ok;
+        {error, Err} ->
+            error(Err)
+    end.
 
 %%================================================================================
 %% gen_server callbacks
@@ -99,7 +92,6 @@ leave_cluster() ->
 
 init(_) ->
     process_flag(trap_exit, true),
-    ok = create_table(),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
     start_timer(),
     State = #s{ core_protocol_versions = #{}
@@ -280,7 +272,12 @@ core_node_weight(Shard) ->
 %% "mria:join" command. It overrides other discovery mechanisms.
 -spec manual_seed() -> [node()].
 manual_seed() ->
-    [Seed || #?TABLE{node = Seed} <- mnesia:dirty_read(?TABLE, seed)].
+    case file:read_file(seed_file()) of
+        {ok, Bin} ->
+            [binary_to_term(Bin)];
+        {error, enoent} ->
+            []
+    end.
 
 %% Return the list of core nodes that belong to the same cluster as
 %% the seed node.
@@ -291,11 +288,5 @@ discover_manually(Seed) ->
             [Seed]
     end.
 
-%% Create a local content mnesia table that persists the list of core
-%% nodes added manually
-create_table() ->
-    mria_lib:ensure_tab(
-      mnesia:create_table(?TABLE, [ {disc_copies, [node()]}
-                                  , {local_content, true}
-                                  , {attributes, record_info(fields, ?TABLE)}
-                                  ])).
+seed_file() ->
+    filename:join(mnesia:system_info(directory), "mria_replicant_cluster_seed").

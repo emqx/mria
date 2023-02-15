@@ -962,15 +962,21 @@ t_replicant_manual_join(_Config) ->
        #{timetrap => 10000},
        try
            [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
-           %% Make sure the load balancer didn't discover any core
+           %% 1. Make sure the load balancer didn't discover any core
            %% nodes when `core_nodes' environment variable is set to
            %% `[]':
            timer:sleep(1000),
            ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, [])),
+           %% 2. Manually connect the replicant to the core cluster:
            ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
            %% Now after we've manually joined the replicant to the
            %% core cluster, we should have both core nodes discovered:
            ?block_until(#{?snk_kind := mria_lb_core_discovery_new_nodes, returned_cores := [N1, N2]}),
+           timer:sleep(1000),
+           ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N1])),
+           %% 3. Disconnect the replicant from the cluster and check idempotency of this operation:
+           ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
+           ?assertMatch({error, node_not_in_cluster}, rpc:call(N3, mria, leave, [])),
            ok
        after
            mria_ct:teardown_cluster(Cluster)
