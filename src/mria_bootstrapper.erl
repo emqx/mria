@@ -106,6 +106,7 @@ init({server, Shard, Subscriber}) ->
                                  , shard  => Shard
                                  }),
     #{tables := Tables} = mria_config:shard_config(Shard),
+    mria_schema:wait_for_tables(Tables),
     ?tp(info, rlog_bootstrapper_start,
         #{ shard     => Shard
          , subscribe => Subscriber

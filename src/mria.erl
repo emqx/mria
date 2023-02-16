@@ -177,12 +177,14 @@ join(Node, Reason) when is_atom(Node) ->
             %% havok
             Role = application:get_env(mria, node_role, core),
             do_join(Role, Node, Reason);
-        {false, false, _} ->
+        {_, false, _} ->
             {error, {node_down, Node}};
         {true, _, _} ->
             {error, {already_in_cluster, Node}};
+        {_, _, replicant} ->
+            {error, {cannot_join_to_replicant, Node}};
         {_, _, _} ->
-            {error, {cannot_join_to_replicant, Node}}
+            {error, {illegal_target, Node}}
     end.
 
 %% @doc Leave the cluster
@@ -190,7 +192,7 @@ join(Node, Reason) when is_atom(Node) ->
 leave() ->
     case mria_mnesia:running_nodes() -- [node()] of
         [_|_] ->
-            stop(leave),
+            prep_restart(leave),
             ok = case mria_config:whoami() of
                      replicant ->
                          mria_lb:leave_cluster();
@@ -459,21 +461,15 @@ find_upstream_node(Shard) ->
                  Node
              end).
 
--spec do_join(mria_rlog:role(), node(), join_reason()) -> ok | ignore.
-do_join(core, Node, Reason) ->
+-spec do_join(mria_rlog:role(), node(), join_reason()) -> ok.
+do_join(Role, Node, Reason) ->
     ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    [mria_membership:announce(Reason) || mria_config:role() =:= core],
-    stop(Reason),
-    mria_mnesia:join_cluster(Node),
-    start(),
-    ?tp(notice, "Mria has joined the cluster",
-        #{ seed   => Node
-         , status => info()
-         });
-do_join(replicant, Node, Reason) ->
-    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    mria_lb:join_cluster(Node),
-    stop(Reason),
+    [mria_membership:announce(Reason) || Role =:= core],
+    prep_restart(Reason),
+    case Role of
+        core      -> mria_mnesia:join_cluster(Node);
+        replicant -> mria_lb:join_cluster(Node)
+    end,
     start(),
     ?tp(notice, "Mria has joined the cluster",
         #{ seed   => Node
@@ -512,3 +508,9 @@ is_upstream(Shard) ->
         _ -> % core or mnesia
             true
     end.
+
+%% Stop the application and reload the basic config from scratch.
+-spec prep_restart(stop_reason()) -> ok.
+prep_restart(Reason) ->
+    stop(Reason),
+    mria_config:load_config().
