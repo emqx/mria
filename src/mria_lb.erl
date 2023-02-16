@@ -74,7 +74,9 @@ core_nodes() ->
     gen_server:call(?SERVER, core_nodes, ?CORE_DISCOVERY_TIMEOUT).
 
 join_cluster(Node) ->
-    ok = file:write_file(seed_file(), term_to_binary(Node)).
+    {ok, FD} = file:open(seed_file(), [write]),
+    ok = io:format(FD, "~p.", [Node]),
+    file:close(FD).
 
 leave_cluster() ->
     case file:delete(seed_file()) of
@@ -272,9 +274,9 @@ core_node_weight(Shard) ->
 %% "mria:join" command. It overrides other discovery mechanisms.
 -spec manual_seed() -> [node()].
 manual_seed() ->
-    case file:read_file(seed_file()) of
-        {ok, Bin} ->
-            [binary_to_term(Bin)];
+    case file:consult(seed_file()) of
+        {ok, [Node]} ->
+            [Node];
         {error, enoent} ->
             []
     end.
