@@ -275,10 +275,14 @@ core_node_weight(Shard) ->
 -spec manual_seed() -> [node()].
 manual_seed() ->
     case file:consult(seed_file()) of
-        {ok, [Node]} ->
+        {ok, [Node]} when is_atom(Node) ->
             [Node];
         {error, enoent} ->
-            []
+            [];
+        _ ->
+            logger:critical("~p is corrupt. Delete this file and re-join the node to the cluster. Stopping.",
+                            [seed_file()]),
+            exit(corrupt_seed)
     end.
 
 %% Return the list of core nodes that belong to the same cluster as
