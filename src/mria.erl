@@ -169,7 +169,7 @@ join(Node, Reason) when is_atom(Node) ->
     %% When `Reason =:= heal' the node should rejoin regardless of
     %% what mnesia thinks:
     IsInCluster = mria_mnesia:is_node_in_cluster(Node) andalso Reason =/= heal,
-    case {IsInCluster, mria_node:is_running(Node), mria_rlog:role(Node)} of
+    case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
         {false, true, core} ->
             %% FIXME: reading role via `mria_config' may be unsafe
             %% when the app is not running, since it defaults to core.
