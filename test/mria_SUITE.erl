@@ -977,6 +977,7 @@ t_replicant_manual_join(_Config) ->
            %% 3. Disconnect the replicant from the cluster and check idempotency of this operation:
            ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
            ?assertMatch({error, node_not_in_cluster}, rpc:call(N3, mria, leave, [])),
+           ?assertMatch({error, {node_down, _}}, rpc:call(N3, mria, join, ['badnode@badhost'])),
            ok
        after
            mria_ct:teardown_cluster(Cluster)
