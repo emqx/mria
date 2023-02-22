@@ -965,8 +965,8 @@ t_replicant_manual_join(_Config) ->
            %% 1. Make sure the load balancer didn't discover any core
            %% nodes when `core_nodes' environment variable is set to
            %% `[]':
-           timer:sleep(1000),
-           ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, [])),
+           ?retry(1000, 10,
+                  ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, []))),
            %% 2. Manually connect the replicant to the core cluster:
            ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
            %% Now after we've manually joined the replicant to the
