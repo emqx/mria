@@ -267,23 +267,7 @@ core_clusters(NewCoreNodes) ->
                          end
                  end,
                  NewCoreNodes),
-    %% Unless mnesia schema is totally broken, `mria_mnesia:db_nodes'
-    %% returns the same value on all nodes that belong to the same
-    %% cluster.  Hence we can assume that the first
-    %% (lexicographically) db_node can be used as the identity of the
-    %% cluster:
-    NodeClusters = [{N, lists:min(DBNodes)} || {N, DBNodes} <- NodeInfo],
-    %% Group the nodes into clusters according to the first db_node:
-    Clusters = lists:foldl(
-                 fun({Node, ClusterId}, Clusters) ->
-                         maps:update_with(ClusterId,
-                                          fun(Nodes) -> [Node|Nodes] end,
-                                          [Node],
-                                          Clusters)
-                 end,
-                 #{},
-                 NodeClusters),
-    [lists:usort(Val) || Val <- maps:values(Clusters)].
+    lists:usort([lists:usort(DBNodes0) || {N, DBNodes0} <- NodeInfo]).
 
 -spec ping_core_nodes([node()]) -> ok.
 ping_core_nodes(NewCoreNodes) ->
