@@ -39,6 +39,7 @@
 
 %% Internal exports
 -export([ core_node_weight/1
+        , lb_callback/1
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -54,6 +55,16 @@
         { core_protocol_versions :: core_protocol_versions()
         , core_nodes :: [node()]
         }).
+
+-type node_info() ::
+        {node(),
+         #{ running := boolean()
+          , whoami := core | replicant | mnesia
+          , version := string() | undefined
+          , protocol_version := non_neg_integer()
+          , db_nodes => [node()]
+          , shard_weights => [{mria_rlog:shard(), float()}]
+          }}.
 
 -define(update, update).
 -define(SERVER, ?MODULE).
@@ -159,14 +170,21 @@ terminate(_Reason, St) ->
 %%================================================================================
 
 do_update(State) ->
-    {CoresChanged, NewCoreNodes} = list_core_nodes(State#s.core_nodes),
+    DiscoveredNodes = discover_nodes(),
+    {NodeInfo0, _BadNodes} = rpc:multicall( NewCoreNodes0
+                                          , ?MODULE, lb_callback, []
+                                          , mria_config:lb_timeout()
+                                          ),
+    NodeInfo = [I || I = #{whoami := core, running := true} <- NodeInfo0],
+
+    {CoresChanged, NewCoreNodes} = list_core_nodes(State#s.core_nodes, NodeInfo),
     %% Update the local membership table when new cores appear
     CoresChanged andalso ping_core_nodes(NewCoreNodes),
     [do_update_shard(Shard, NewCoreNodes) || Shard <- mria_schema:shards()],
     State#s{core_nodes = NewCoreNodes}.
 
 do_update_shard(Shard, CoreNodes) ->
-    Timeout = application:get_env(mria, rlog_lb_update_timeout, 300),
+    Timeout = mria_config:lb_timeout(),
     {Resp0, _} = rpc:multicall(CoreNodes, ?MODULE, core_node_weight, [Shard], Timeout),
     Resp = lists:sort([I || {ok, I} <- Resp0]),
     case Resp of
@@ -177,7 +195,7 @@ do_update_shard(Shard, CoreNodes) ->
     end.
 
 start_timer() ->
-    Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
+    Interval = mria_config:lb_poll_interval(),
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
 -spec list_core_nodes([node()]) -> {_CoresChanged :: boolean(), [node()]}.
@@ -190,6 +208,8 @@ list_core_nodes(OldCoreNodes) ->
                         [Seed] ->
                             discover_manually(Seed)
                     end,
+    {NodeInfo, _BadNodes} =
+    CoreNode
     CoreClusters = core_clusters(lists:usort(NewCoreNodes0)),
     {IsChanged, NewCoreNodes} = find_best_cluster(OldCoreNodes, CoreClusters),
     IsChanged andalso
@@ -267,7 +287,7 @@ core_clusters(NewCoreNodes) ->
                          end
                  end,
                  NewCoreNodes),
-    lists:usort([lists:usort(DBNodes0) || {N, DBNodes0} <- NodeInfo]).
+    lists:usort([lists:usort(DBNodes0) || {_N, DBNodes0} <- NodeInfo]).
 
 -spec ping_core_nodes([node()]) -> ok.
 ping_core_nodes(NewCoreNodes) ->
@@ -283,7 +303,7 @@ ping_core_nodes(NewCoreNodes) ->
 %% Internal exports
 %%================================================================================
 
-%% This function runs on the core node. TODO: check OLP
+%% This function runs on the core node. TODO: remove in the next release
 core_node_weight(Shard) ->
     case whereis(Shard) of
         undefined ->
@@ -296,6 +316,50 @@ core_node_weight(Shard) ->
             %% be distributed evenly between the nodes with the same weight
             %% due to the random term:
             {ok, {Load, rand:uniform(), node()}}
+    end.
+
+%% Return a bunch of information about the node. Called via RPC.
+-spec lb_callback() -> node_info().
+lb_callback() ->
+    IsRunning = is_pid(whereis(mria_rlog_sup)),
+    Whoami = mria_config:whoami(),
+    Version = case application:get_key(mria, vsn) of
+                  {ok, Vsn} -> Vsn;
+                  undefined -> undefined
+              end,
+    BasicInfo =
+        #{ running => IsRunning
+         , version => Version
+         , whoami => Whoami
+         },
+    MoreInfo =
+        case Whoami of
+            core when IsRunning ->
+                Weights = [begin
+                               Load = length(mria_status:agents(Shard)) + rand:uniform(),
+                               {Shard, Load}
+                           end || Shard <- mria_schema:shards()],
+                #{ db_nodes => mria_mnesia:db_nodes()
+                 , shard_weights => Weights
+                 };
+            _ ->
+                #{}
+        end,
+    {node(), maps:merge(BasicInfo, MoreInfo)}.
+
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+-spec discover_nodes() -> [node()].
+discover_nodes() ->
+    DiscoveryFun = mria_config:core_node_discovery_callback(),
+    case manual_seed() of
+        [] ->
+            %% Run the discovery algorithm
+            DiscoveryFun();
+        [Seed] ->
+            discover_manually(Seed)
     end.
 
 %% Return the last node that has been explicitly specified via

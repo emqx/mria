@@ -32,7 +32,7 @@ stop() ->
 is_running() ->
     is_pid(whereis(?MODULE)).
 
--spec init(mria:backend()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
+-spec init(mria:backend()) -> {ok, {`supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init(mnesia) ->
     {ok, {#{ strategy => one_for_all
            , intensity => 0

@@ -26,6 +26,8 @@
         , strict_mode/0
         , replay_batch_size/0
         , set_replay_batch_size/1
+        , lb_timeout/0
+        , lb_poll_interval/0
 
         , load_config/0
         , erase_all_config/0
@@ -131,6 +133,14 @@ replay_batch_size() ->
 -spec set_replay_batch_size(non_neg_integer()) -> ok.
 set_replay_batch_size(N) ->
     persistent_term:put(?mria(replay_batch_size), N).
+
+-spec lb_timeout() -> timeout().
+lb_timeout() ->
+    application:get_env(mria, rlog_lb_update_timeout, 300).
+
+-spec lb_poll_interval() -> non_neg_integer().
+lb_poll_interval() ->
+    application:get_env(mria, rlog_lb_update_interval, 1000).
 
 -spec load_config() -> ok.
 load_config() ->
