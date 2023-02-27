@@ -185,60 +185,100 @@ list_core_nodes(OldCoreNodes) ->
                         [Seed] ->
                             discover_manually(Seed)
                     end,
-    NewCoreNodes1 = lists:usort(NewCoreNodes0),
-    case NewCoreNodes1 =:= OldCoreNodes of
-        true ->
-            {false, OldCoreNodes};
-        false ->
-            case check_same_cluster(NewCoreNodes1) of
-                {ok, NewCoreNodes} ->
-                    ?tp( mria_lb_core_discovery_new_nodes
-                       , #{ previous_cores => OldCoreNodes
-                          , returned_cores => NewCoreNodes
-                          , node => node()
-                          }
-                       ),
-                    %% ping new cores so that they get inserted into
-                    %% local membership table.
-                    {true, NewCoreNodes};
-                {error, {unknown_nodes, UnknownNodes}} ->
-                    ?tp( error
-                       ,  mria_lb_core_discovery_divergent_cluster
-                       , #{ previous_cores => OldCoreNodes
-                          , returned_cores => NewCoreNodes0
-                          , unknown_nodes => UnknownNodes
-                          , node => node()
-                          }),
-                    {false, OldCoreNodes}
-            end
-    end.
-
-%% ensure that the nodes returned by the discovery callback are all
-%% from the same mnesia cluster.
--spec check_same_cluster([node()]) -> {ok, [node()]} | {error, {unknown_nodes, [node()]}}.
-check_same_cluster(NewCoreNodes0) ->
-    Roles = lists:map(
-              fun(N) ->
-                      mria_lib:rpc_call_nothrow(N, mria_rlog, role, [])
-              end,
-              NewCoreNodes0),
-    NewCoreNodes1 = [N || {N, core} <- lists:zip(NewCoreNodes0, Roles)],
-    DbNodes = lists:usort([N || N0 <- NewCoreNodes1,
-                                DbNodes <- [mria_lib:rpc_call_nothrow(N0, mria_mnesia, db_nodes, [])],
-                                is_list(DbNodes),
-                                N <- DbNodes]),
-    UnknownNodes = DbNodes -- NewCoreNodes0,
-    ?tp(mria_lb_db_nodes_results,
-        #{ me => node()
-         , db_nodes => DbNodes
-         , new_unfiltered => NewCoreNodes0
-         , new_filtered_by_role => NewCoreNodes1
-         , unknown_nodes => UnknownNodes
+    CoreClusters = core_clusters(lists:usort(NewCoreNodes0)),
+    {IsChanged, NewCoreNodes} = find_best_cluster(OldCoreNodes, CoreClusters),
+    ?tp(mria_lb_core_discovery_new_nodes,
+        #{ previous_cores => OldCoreNodes
+         , returned_cores => NewCoreNodes
+         , unknown_nodes => NewCoreNodes0 -- NewCoreNodes
+         , is_changed => IsChanged
+         , node => node()
          }),
-    case UnknownNodes =:= [] of
-        true -> {ok, NewCoreNodes1};
-        false -> {error, {unknown_nodes, UnknownNodes}}
-    end.
+    {IsChanged, NewCoreNodes}.
+
+-spec find_best_cluster([node()], [[node()]]) -> {_Changed :: boolean(), [node()]}.
+find_best_cluster([], []) ->
+    {false, []};
+find_best_cluster(_OldNodes, []) ->
+    %% Discovery failed:
+    {true, []};
+find_best_cluster(OldNodes, Clusters) ->
+    %% Heuristic: pick the best cluster in case of a split brain:
+    [Cluster | _] = lists:sort(fun(Cluster1, Cluster2) ->
+                                       cluster_score(OldNodes, Cluster1) >=
+                                           cluster_score(OldNodes, Cluster2)
+                               end,
+                               Clusters),
+    maybe_report_netsplit(OldNodes, Clusters),
+    IsChanged = OldNodes =/= Cluster,
+    {IsChanged, Cluster}.
+
+-spec maybe_report_netsplit([node()], [[node()]]) -> ok.
+maybe_report_netsplit(OldNodes, Clusters) ->
+    Alarm = mria_lb_divergent_alarm,
+    case Clusters of
+        [_] -> %% All discovered nodes belong to the same cluster:
+            erase(Alarm);
+        _ ->
+            case get(Alarm) of
+                undefined ->
+                    put(Alarm, true),
+                    ?tp(error, mria_lb_spit_brain,
+                        #{ previous_cores => OldNodes
+                         , clusters => Clusters
+                         , node => node()
+                         });
+                _ ->
+                    ok
+            end
+    end,
+    ok.
+
+%% Transform a list of nodes into a list of core node clusters.
+-spec core_clusters([node()]) -> [[node()]].
+core_clusters(NewCoreNodes) ->
+    %% Get a list of `{Node, DbNodes}` tuples for the running core
+    %% nodes returned by the discovery callback function:
+    NodeInfo = lists:filtermap(
+                 fun(Node) ->
+                         try
+                             IsRunning = mria_node:is_running(Node),
+                             case mria_rlog:role(Node) of
+                                 core when IsRunning ->
+                                     case db_nodes(Node) of
+                                         DBNodes = [_|_] -> {true, {Node, DBNodes}};
+                                         _               -> false
+                                     end;
+                                 _ ->
+                                     false
+                             end
+                         catch EC:Err:Stack ->
+                                 ?tp(debug, mria_lb_probe_failure,
+                                     #{ node => Node
+                                      , EC => Err
+                                      , stacktrace => Stack
+                                      }),
+                                 false
+                         end
+                 end,
+                 NewCoreNodes),
+    %% Unless mnesia schema is totally broken, `mria_mnesia:db_nodes'
+    %% returns the same value on all nodes that belong to the same
+    %% cluster.  Hence we can assume that the first
+    %% (lexicographically) db_node can be used as the identity of the
+    %% cluster:
+    NodeClusters = [{N, lists:min(DBNodes)} || {N, DBNodes} <- NodeInfo],
+    %% Group the nodes into clusters according to the first db_node:
+    Clusters = lists:foldl(
+                 fun({Node, ClusterId}, Clusters) ->
+                         maps:update_with(ClusterId,
+                                          fun(Nodes) -> [Node|Nodes] end,
+                                          [Node],
+                                          Clusters)
+                 end,
+                 #{},
+                 NodeClusters),
+    [lists:usort(Val) || Val <- maps:values(Clusters)].
 
 -spec ping_core_nodes([node()]) -> ok.
 ping_core_nodes(NewCoreNodes) ->
@@ -296,3 +336,47 @@ discover_manually(Seed) ->
 
 seed_file() ->
     filename:join(mnesia:system_info(directory), "mria_replicant_cluster_seed").
+
+db_nodes(Node) ->
+    mria_lib:rpc_call(Node, mria_mnesia, db_nodes, []).
+
+cluster_score(OldNodes, Cluster) ->
+    %% First we compare the clusters by the number of nodes that are
+    %% already in the cluster.  In case of a tie, we choose a bigger
+    %% cluster:
+    { lists:foldl(fun(Node, Acc) ->
+                          case lists:member(Node, OldNodes) of
+                              true -> Acc + 1;
+                              false -> Acc
+                          end
+                  end,
+                  0,
+                  Cluster)
+    , length(Cluster)
+    }.
+
+%%================================================================================
+%% Unit tests
+%%================================================================================
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+cluster_score_test_() ->
+    [ ?_assertMatch({0, 0}, cluster_score([], []))
+    , ?_assertMatch({0, 2}, cluster_score([], [1, 2]))
+    , ?_assertMatch({2, 3}, cluster_score([1, 2, 4], [1, 2, 3]))
+    ].
+
+find_best_cluster_test_() ->
+    [ ?_assertMatch({false, []}, find_best_cluster([], []))
+    , ?_assertMatch({true, []}, find_best_cluster([1], []))
+    , ?_assertMatch({false, [1, 2]}, find_best_cluster([1, 2], [[1, 2]]))
+    , ?_assertMatch({true, [1, 2, 3]}, find_best_cluster([1, 2], [[1, 2, 3]]))
+    , ?_assertMatch({true, [1, 2]}, find_best_cluster([1, 2, 3], [[1, 2]]))
+    , ?_assertMatch({false, [1, 2]}, find_best_cluster([1, 2], [[1, 2], [3, 4, 5], [6, 7]]))
+    , ?_assertMatch({true, [6, 7]}, find_best_cluster([6, 7, 8], [[1, 2], [3, 4, 5], [6, 7]]))
+    , ?_assertMatch({true, [3, 4, 5]}, find_best_cluster([], [[1, 2], [3, 4, 5]]))
+    ].
+
+-endif.

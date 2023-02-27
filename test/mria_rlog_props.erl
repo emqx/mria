@@ -20,6 +20,7 @@
 
 -export([ no_unexpected_events/1
         , replicant_no_restarts/1
+        , no_split_brain/1
         , replicant_bootstrap_stages/2
         , all_intercepted_commit_logs_received/1
         , all_batches_received/1
@@ -50,6 +51,11 @@ replicant_no_restarts(Trace0) ->
     {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
     StartEvents = ?projection([node, shard], ?of_kind(rlog_replica_start, Trace)),
     ?assertEqual(length(StartEvents), length(lists:usort(StartEvents))),
+    true.
+
+no_split_brain(Trace0) ->
+    {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
+    ?assertMatch([], ?of_kind(mria_lb_spit_brain, Trace)),
     true.
 
 %% Check that replicant FSM goes through all the stages in the right sequence
