@@ -228,7 +228,7 @@ maybe_report_netsplit(OldNodes, Clusters) ->
             case get(Alarm) of
                 undefined ->
                     put(Alarm, true),
-                    ?tp(error, mria_lb_spit_brain,
+                    ?tp(error, mria_lb_split_brain,
                         #{ previous_cores => OldNodes
                          , clusters => Clusters
                          , node => node()

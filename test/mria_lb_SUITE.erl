@@ -165,7 +165,7 @@ t_core_node_discovery(_Config) ->
                      {_, {ok, _}} =
                          ?wait_async_action(
                             {R1, mria_lb} ! update,
-                            #{ ?snk_kind := mria_lb_spit_brain
+                            #{ ?snk_kind := mria_lb_split_brain
                              , node := R1
                              , clusters := [_, _]
                              }, 5000),
@@ -222,7 +222,7 @@ t_core_node_leave(_Config) ->
            ?assertMatch([C1, C3], lists:sort(rpc:call(C1, mria_mnesia, db_nodes, []))),
            %% Ensure the replicant detected the split:
            {R1, mria_lb} ! update,
-           ?block_until(#{ ?snk_kind := mria_lb_spit_brain
+           ?block_until(#{ ?snk_kind := mria_lb_split_brain
                          , clusters := [_, _]
                          }),
            %% It should prefer the larger cluster:
