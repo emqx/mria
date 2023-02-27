@@ -155,8 +155,8 @@ t_core_node_discovery(_Config) ->
            %% 1. no conflict: accepts nodes
            ?assertEqual([C1, C2], rpc:call(R1, mria_lb, core_nodes, [])),
            ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, [])),
-           %% 2. nodes in cluster returned by core candidates are not
-           %% contained in callback return; rejects nodes
+           %% 2. Emulate split brain
+           ?tp(test_inject_split_brain, #{}),
            InexistentNodes = ["inexistent@127.0.0.1"],
            clear_core_node_list(R1),
            with_reported_cores(
@@ -165,36 +165,20 @@ t_core_node_discovery(_Config) ->
                      {_, {ok, _}} =
                          ?wait_async_action(
                             {R1, mria_lb} ! update,
-                            #{ ?snk_kind := mria_lb_core_discovery_divergent_cluster
+                            #{ ?snk_kind := mria_lb_spit_brain
                              , node := R1
-                             , previous_cores := _
-                             , returned_cores := [C1, C2]
-                             , unknown_nodes := InexistentNodes
+                             , clusters := [_, _]
                              }, 5000),
-                     ?assertEqual([], rpc:call(R1, mria_lb, core_nodes, [])),
-                     ?assertEqual([], rpc:call(R1, mria_rlog, core_nodes, []))
+                     %% In case of split brain the replicant will fallback to C2, since it has known it before the split
+                     ?assertEqual([C2], rpc:call(R1, mria_lb, core_nodes, [])),
+                     ?assertEqual([C2], rpc:call(R1, mria_rlog, core_nodes, []))
              end),
-           %% 3. if one candidate core returns an empty list, should
-           %% not have an effect on the whole; accepts nodes
-           with_reported_cores(
-             C1, [],
-             fun() ->
-                     {_, {ok, _}} =
-                         ?wait_async_action(
-                            {R1, mria_lb} ! update,
-                            #{ ?snk_kind := mria_lb_core_discovery_new_nodes
-                             , node := R1
-                             , previous_cores := []
-                             , returned_cores := [C1, C2]
-                             }, 5000),
-                     ?assertEqual([C1, C2], rpc:call(R1, mria_lb, core_nodes, [])),
-                     ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, []))
-             end),
-           %% 4. if a candidate is a replicant, it's excluded from the final list
+           %% 3. if a candidate is a replicant, it's excluded from the
+           %% final list.  So the LB now decided to fall back to C1
+           %% partition:
            clear_core_node_list(R1),
            with_role(
              C2, replicant,
-
              fun() ->
                      {_, {ok, _}} =
                          ?wait_async_action(
@@ -210,6 +194,41 @@ t_core_node_discovery(_Config) ->
            ok
        after
            ok = mria_ct:teardown_cluster(Cluster)
+       end, []).
+
+%% Check that removing a core node from the cluster is handled
+%% correctly by the LB: it prefers the larger cluster.
+t_core_node_leave(_Config) ->
+    Cluster = mria_ct:cluster([core, replicant, core, core], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 60000},
+       try
+           {[C1, R1, C2, C3], {ok, _}} =
+               ?wait_async_action(
+                  begin
+                      Nodes = [_, R1, _, _] = mria_ct:start_cluster(mria, Cluster),
+                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+                      {R1, mria_lb} ! update,
+                      Nodes
+                  end,
+                  #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                   , returned_cores := [_, _, _]
+                   }, 10000),
+           %% Kick C2 from the cluster:
+           ?tp(test_kick_core_node, #{}),
+           ?assertMatch(ok, rpc:call(C2, mria, leave, [])),
+           %% Make sure there is a netsplit:
+           ?assertMatch([C2], rpc:call(C2, mria_mnesia, db_nodes, [])),
+           ?assertMatch([C1, C3], lists:sort(rpc:call(C1, mria_mnesia, db_nodes, []))),
+           %% Ensure the replicant detected the split:
+           {R1, mria_lb} ! update,
+           ?block_until(#{ ?snk_kind := mria_lb_spit_brain
+                         , clusters := [_, _]
+                         }),
+           %% It should prefer the larger cluster:
+           ?assertEqual([C1, C3], rpc:call(R1, mria_rlog, core_nodes, []))
+       after
+           mria_ct:teardown_cluster(Cluster)
        end, []).
 
 clear_core_node_list(Replicant) ->

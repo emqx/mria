@@ -42,6 +42,7 @@
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
+-include("mria_rlog.hrl").
 
 %%================================================================================
 %% Type declarations
@@ -96,6 +97,7 @@ init(_) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
     start_timer(),
+    mria_membership:monitor(membership, self(), true),
     State = #s{ core_protocol_versions = #{}
               , core_nodes = []
               },
@@ -104,17 +106,19 @@ init(_) ->
 handle_info(?update, St) ->
     start_timer(),
     {noreply, do_update(St)};
-handle_info({membership, {node, NewStatus, Node}}, St) ->
-    ?tp(debug, core_node_monitor, #{node => Node, status => NewStatus}),
-    case NewStatus of
-        down -> {noreply, do_update(St)}; %% Trigger the update immediately
-        up   -> {noreply, St}             %% Node ups are handled via periodic probe
+handle_info({membership, Event}, St) ->
+    case Event of
+        {mnesia, down, _Node} -> %% Trigger update immediately when core node goes down
+            {noreply, do_update(St)};
+        _ ->  %% Everything else is handled via timer
+            {noreply, St}
     end;
 handle_info(Info, St) ->
-    ?tp(warning, "Received unknown info", #{info => Info, worker => ?MODULE}),
+    ?unexpected_event_tp(#{info => Info, state => St}),
     {noreply, St}.
 
-handle_cast(_Cast, St) ->
+handle_cast(Cast, St) ->
+    ?unexpected_event_tp(#{cast => Cast, state => St}),
     {noreply, St}.
 
 handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = ProtoVSNs}) ->
@@ -140,7 +144,8 @@ handle_call({probe, Node, Shard}, _From, St0 = #s{core_protocol_versions = Proto
     {reply, Reply, St};
 handle_call(core_nodes, _From, St = #s{core_nodes = CoreNodes}) ->
     {reply, CoreNodes, St};
-handle_call(Call, _From, St) ->
+handle_call(Call, From, St) ->
+    ?unexpected_event_tp(#{call => Call, from => From, state => St}),
     {reply, {error, {unknown_call, Call}}, St}.
 
 code_change(_OldVsn, St, _Extra) ->
@@ -155,7 +160,7 @@ terminate(_Reason, St) ->
 
 do_update(State) ->
     {CoresChanged, NewCoreNodes} = list_core_nodes(State#s.core_nodes),
-    %% update the local membership table when new cores appear
+    %% Update the local membership table when new cores appear
     CoresChanged andalso ping_core_nodes(NewCoreNodes),
     [do_update_shard(Shard, NewCoreNodes) || Shard <- mria_schema:shards()],
     State#s{core_nodes = NewCoreNodes}.
@@ -190,7 +195,7 @@ list_core_nodes(OldCoreNodes) ->
     ?tp(mria_lb_core_discovery_new_nodes,
         #{ previous_cores => OldCoreNodes
          , returned_cores => NewCoreNodes
-         , unknown_nodes => NewCoreNodes0 -- NewCoreNodes
+         , ignored_nodes => NewCoreNodes0 -- NewCoreNodes
          , is_changed => IsChanged
          , node => node()
          }),
@@ -268,6 +273,10 @@ core_clusters(NewCoreNodes) ->
     %% (lexicographically) db_node can be used as the identity of the
     %% cluster:
     NodeClusters = [{N, lists:min(DBNodes)} || {N, DBNodes} <- NodeInfo],
+    ?tp(debug, mria_lb_core_discovery_raw_return,
+        #{ node_clusters => NodeClusters
+         , node_info => NodeInfo
+         }),
     %% Group the nodes into clusters according to the first db_node:
     Clusters = lists:foldl(
                  fun({Node, ClusterId}, Clusters) ->
@@ -287,8 +296,7 @@ ping_core_nodes(NewCoreNodes) ->
     LocalMember = mria_membership:make_new_local_member(),
     lists:foreach(
       fun(Core) ->
-              mria_membership:ping(Core, LocalMember),
-              mria_membership:monitor(membership, self(), true)
+              mria_membership:ping(Core, LocalMember)
       end, NewCoreNodes).
 
 %%================================================================================

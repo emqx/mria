@@ -163,8 +163,7 @@ shard_of_table(Table) ->
 -spec shards() -> [mria_rlog:shard()].
 shards() ->
     MS = {#?schema{mnesia_table = '_', shard = '$1', config = '_', storage = '_'}, [], ['$1']},
-    {atomic, Shards} = mnesia:transaction(fun mnesia:select/2, [?schema, [MS]], infinity),
-    lists:usort(Shards).
+    lists:usort(ets:select(?schema, [MS])).
 
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
 wait_for_tables(Tables) ->

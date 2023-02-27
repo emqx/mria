@@ -178,7 +178,7 @@ wait_running(Node, Timeout) ->
 
 stop_slave(Node) ->
     ok = cover:stop([Node]),
-    rpc:call(Node, mnesia, stop, []),
+    rpc:call(Node, mria, stop, []),
     mnesia:delete_schema([Node]),
     slave:stop(Node).
 
