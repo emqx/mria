@@ -192,13 +192,13 @@ list_core_nodes(OldCoreNodes) ->
                     end,
     CoreClusters = core_clusters(lists:usort(NewCoreNodes0)),
     {IsChanged, NewCoreNodes} = find_best_cluster(OldCoreNodes, CoreClusters),
-    ?tp(mria_lb_core_discovery_new_nodes,
-        #{ previous_cores => OldCoreNodes
-         , returned_cores => NewCoreNodes
-         , ignored_nodes => NewCoreNodes0 -- NewCoreNodes
-         , is_changed => IsChanged
-         , node => node()
-         }),
+    IsChanged andalso
+        ?tp(info, mria_lb_core_discovery_new_nodes,
+            #{ previous_cores => OldCoreNodes
+             , returned_cores => NewCoreNodes
+             , ignored_nodes => NewCoreNodes0 -- NewCoreNodes
+             , node => node()
+             }),
     {IsChanged, NewCoreNodes}.
 
 -spec find_best_cluster([node()], [[node()]]) -> {_Changed :: boolean(), [node()]}.
@@ -273,10 +273,6 @@ core_clusters(NewCoreNodes) ->
     %% (lexicographically) db_node can be used as the identity of the
     %% cluster:
     NodeClusters = [{N, lists:min(DBNodes)} || {N, DBNodes} <- NodeInfo],
-    ?tp(debug, mria_lb_core_discovery_raw_return,
-        #{ node_clusters => NodeClusters
-         , node_info => NodeInfo
-         }),
     %% Group the nodes into clusters according to the first db_node:
     Clusters = lists:foldl(
                  fun({Node, ClusterId}, Clusters) ->
