@@ -39,6 +39,7 @@
 
 %% Internal exports
 -export([ core_node_weight/1
+        , lb_callback/0
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -54,6 +55,15 @@
         { core_protocol_versions :: core_protocol_versions()
         , core_nodes :: [node()]
         }).
+
+-type node_info() ::
+        #{ running := boolean()
+         , whoami := core | replicant | mnesia
+         , version := string() | undefined
+         , protocol_version := non_neg_integer()
+         , db_nodes => [node()]
+         , shard_badness => [{mria_rlog:shard(), float()}]
+         }.
 
 -define(update, update).
 -define(SERVER, ?MODULE).
@@ -158,48 +168,89 @@ terminate(_Reason, St) ->
 %% Internal functions
 %%================================================================================
 
-do_update(State) ->
-    {CoresChanged, NewCoreNodes} = list_core_nodes(State#s.core_nodes),
-    %% Update the local membership table when new cores appear
-    CoresChanged andalso ping_core_nodes(NewCoreNodes),
-    [do_update_shard(Shard, NewCoreNodes) || Shard <- mria_schema:shards()],
-    State#s{core_nodes = NewCoreNodes}.
-
-do_update_shard(Shard, CoreNodes) ->
-    Timeout = application:get_env(mria, rlog_lb_update_timeout, 300),
-    {Resp0, _} = rpc:multicall(CoreNodes, ?MODULE, core_node_weight, [Shard], Timeout),
-    Resp = lists:sort([I || {ok, I} <- Resp0]),
-    case Resp of
-        [] ->
-            mria_status:notify_core_node_down(Shard);
-        [{_Load, _Rand, Core}|_] ->
-            mria_status:notify_core_node_up(Shard, Core)
-    end.
-
-start_timer() ->
-    Interval = application:get_env(mria, rlog_lb_update_interval, 1000),
-    erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
-
--spec list_core_nodes([node()]) -> {_CoresChanged :: boolean(), [node()]}.
-list_core_nodes(OldCoreNodes) ->
-    DiscoveryFun = mria_config:core_node_discovery_callback(),
-    NewCoreNodes0 = case manual_seed() of
-                        [] ->
-                            %% Run the discovery algorithm
-                            DiscoveryFun();
-                        [Seed] ->
-                            discover_manually(Seed)
-                    end,
-    CoreClusters = core_clusters(lists:usort(NewCoreNodes0)),
-    {IsChanged, NewCoreNodes} = find_best_cluster(OldCoreNodes, CoreClusters),
+do_update(State = #s{core_nodes = OldCoreNodes}) ->
+    DiscoveredNodes = discover_nodes(),
+    %% Get information about core nodes:
+    {NodeInfo0, _BadNodes} = rpc:multicall( DiscoveredNodes
+                                          , ?MODULE, lb_callback, []
+                                          , mria_config:lb_timeout()
+                                          ),
+    NodeInfo1 = [I || I = {_, #{whoami := core, running := true}} <- NodeInfo0],
+    NodeInfo = maps:from_list(NodeInfo1),
+    %% Find partitions of the core cluster, and if the core cluster is
+    %% partitioned choose the best partition to connect to:
+    Clusters = find_clusters(NodeInfo),
+    maybe_report_netsplit(OldCoreNodes, Clusters),
+    {IsChanged, NewCoreNodes} = find_best_cluster(OldCoreNodes, Clusters),
+    %% Update shards:
+    ShardBadness = shard_badness(maps:with(NewCoreNodes, NodeInfo)),
+    maps:map(fun(Shard, {Node, _Badness}) ->
+                     mria_status:notify_core_node_up(Shard, Node)
+             end,
+             ShardBadness),
+    [mria_status:notify_core_node_down(Shard)
+     || Shard <- mria_schema:shards() -- maps:keys(ShardBadness)],
+    %% Notify changes
     IsChanged andalso
         ?tp(info, mria_lb_core_discovery_new_nodes,
             #{ previous_cores => OldCoreNodes
              , returned_cores => NewCoreNodes
-             , ignored_nodes => NewCoreNodes0 -- NewCoreNodes
+             , ignored_nodes => DiscoveredNodes -- NewCoreNodes
              , node => node()
              }),
-    {IsChanged, NewCoreNodes}.
+    IsChanged andalso
+        ping_core_nodes(NewCoreNodes),
+    State#s{core_nodes = NewCoreNodes}.
+
+%% Find fully connected clusters (i.e. cliques of nodes)
+-spec find_clusters(#{node() => node_info()}) -> [[node()]].
+find_clusters(NodeInfo) ->
+    find_clusters(maps:keys(NodeInfo), NodeInfo, []).
+
+find_clusters([], _NodeInfo, Acc) ->
+    Acc;
+find_clusters([Node|Rest], NodeInfo, Acc) ->
+    #{Node := #{db_nodes := Emanent}} = NodeInfo,
+    MutualConnections =
+        lists:filter(
+          fun(Peer) ->
+                  case NodeInfo of
+                      #{Peer := #{db_nodes := Incident}} ->
+                          lists:member(Node, Incident);
+                      _ ->
+                          false
+                  end
+          end,
+          Emanent),
+    Cluster = lists:usort([Node|MutualConnections]),
+    find_clusters(Rest -- MutualConnections, NodeInfo, [Cluster|Acc]).
+
+%% Find the preferred core node for each shard:
+-spec shard_badness(#{node() => node_info()}) -> #{mria_rlog:shard() => {node(), Badness}}
+              when Badness :: float().
+shard_badness(NodeInfo) ->
+    maps:fold(
+      fun(Node, #{shard_badness := Shards}, Acc) ->
+              lists:foldl(
+                fun({Shard, Badness}, Acc1) ->
+                        maps:update_with(Shard,
+                                         fun({_OldNode, OldBadness}) when OldBadness > Badness ->
+                                                 {Node, Badness};
+                                            (Old) ->
+                                                 Old
+                                         end,
+                                         {Node, Badness},
+                                         Acc1)
+                end,
+                Acc,
+                Shards)
+      end,
+      #{},
+      NodeInfo).
+
+start_timer() ->
+    Interval = mria_config:lb_poll_interval(),
+    erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
 -spec find_best_cluster([node()], [[node()]]) -> {_Changed :: boolean(), [node()]}.
 find_best_cluster([], []) ->
@@ -214,7 +265,6 @@ find_best_cluster(OldNodes, Clusters) ->
                                            cluster_score(OldNodes, Cluster2)
                                end,
                                Clusters),
-    maybe_report_netsplit(OldNodes, Clusters),
     IsChanged = OldNodes =/= Cluster,
     {IsChanged, Cluster}.
 
@@ -222,9 +272,7 @@ find_best_cluster(OldNodes, Clusters) ->
 maybe_report_netsplit(OldNodes, Clusters) ->
     Alarm = mria_lb_divergent_alarm,
     case Clusters of
-        [_] -> %% All discovered nodes belong to the same cluster:
-            erase(Alarm);
-        _ ->
+        [_,_|_] ->
             case get(Alarm) of
                 undefined ->
                     put(Alarm, true),
@@ -235,39 +283,12 @@ maybe_report_netsplit(OldNodes, Clusters) ->
                          });
                 _ ->
                     ok
-            end
+            end;
+        _ ->
+            %% All discovered nodes belong to the same cluster (or no clusters found):
+            erase(Alarm)
     end,
     ok.
-
-%% Transform a list of nodes into a list of core node clusters.
--spec core_clusters([node()]) -> [[node()]].
-core_clusters(NewCoreNodes) ->
-    %% Get a list of `{Node, DbNodes}` tuples for the running core
-    %% nodes returned by the discovery callback function:
-    NodeInfo = lists:filtermap(
-                 fun(Node) ->
-                         try
-                             IsRunning = mria_node:is_running(Node),
-                             case mria_rlog:role(Node) of
-                                 core when IsRunning ->
-                                     case db_nodes(Node) of
-                                         DBNodes = [_|_] -> {true, {Node, DBNodes}};
-                                         _               -> false
-                                     end;
-                                 _ ->
-                                     false
-                             end
-                         catch EC:Err:Stack ->
-                                 ?tp(debug, mria_lb_probe_failure,
-                                     #{ node => Node
-                                      , EC => Err
-                                      , stacktrace => Stack
-                                      }),
-                                 false
-                         end
-                 end,
-                 NewCoreNodes),
-    lists:usort([lists:usort(DBNodes0) || {N, DBNodes0} <- NodeInfo]).
 
 -spec ping_core_nodes([node()]) -> ok.
 ping_core_nodes(NewCoreNodes) ->
@@ -283,7 +304,7 @@ ping_core_nodes(NewCoreNodes) ->
 %% Internal exports
 %%================================================================================
 
-%% This function runs on the core node. TODO: check OLP
+%% This function runs on the core node. TODO: remove in the next release
 core_node_weight(Shard) ->
     case whereis(Shard) of
         undefined ->
@@ -296,6 +317,51 @@ core_node_weight(Shard) ->
             %% be distributed evenly between the nodes with the same weight
             %% due to the random term:
             {ok, {Load, rand:uniform(), node()}}
+    end.
+
+%% Return a bunch of information about the node. Called via RPC.
+-spec lb_callback() -> {node(), node_info()}.
+lb_callback() ->
+    IsRunning = is_pid(whereis(mria_rlog_sup)),
+    Whoami = mria_config:whoami(),
+    Version = case application:get_key(mria, vsn) of
+                  {ok, Vsn} -> Vsn;
+                  undefined -> undefined
+              end,
+    BasicInfo =
+        #{ running => IsRunning
+         , version => Version
+         , whoami => Whoami
+         , protocol_version => mria_rlog:get_protocol_version()
+         },
+    MoreInfo =
+        case Whoami of
+            core when IsRunning ->
+                Badness = [begin
+                               Load = length(mria_status:agents(Shard)) + rand:uniform(),
+                               {Shard, Load}
+                           end || Shard <- mria_schema:shards()],
+                #{ db_nodes => mria_mnesia:db_nodes()
+                 , shard_badness => Badness
+                 };
+            _ ->
+                #{}
+        end,
+    {node(), maps:merge(BasicInfo, MoreInfo)}.
+
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+-spec discover_nodes() -> [node()].
+discover_nodes() ->
+    DiscoveryFun = mria_config:core_node_discovery_callback(),
+    case manual_seed() of
+        [] ->
+            %% Run the discovery algorithm
+            DiscoveryFun();
+        [Seed] ->
+            discover_manually(Seed)
     end.
 
 %% Return the last node that has been explicitly specified via
@@ -325,9 +391,6 @@ discover_manually(Seed) ->
 seed_file() ->
     filename:join(mnesia:system_info(directory), "mria_replicant_cluster_seed").
 
-db_nodes(Node) ->
-    mria_lib:rpc_call(Node, mria_mnesia, db_nodes, []).
-
 cluster_score(OldNodes, Cluster) ->
     %% First we compare the clusters by the number of nodes that are
     %% already in the cluster.  In case of a tie, we choose a bigger
@@ -349,6 +412,38 @@ cluster_score(OldNodes, Cluster) ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+find_clusters_test_() ->
+    [ ?_assertMatch( [[1, 2, 3]]
+                   , lists:sort(find_clusters(#{ 1 => #{db_nodes => [1, 2, 3]}
+                                               , 2 => #{db_nodes => [2, 1, 3]}
+                                               , 3 => #{db_nodes => [2, 3, 1]}
+                                               }))
+                   )
+    , ?_assertMatch( [[1], [2, 3]]
+                   , lists:sort(find_clusters(#{ 1 => #{db_nodes => [1, 2, 3]}
+                                               , 2 => #{db_nodes => [2, 3]}
+                                               , 3 => #{db_nodes => [3, 2]}
+                                               }))
+                   )
+    , ?_assertMatch( [[1, 2, 3], [4, 5], [6]]
+                   , lists:sort(find_clusters(#{ 1 => #{db_nodes => [1, 2, 3]}
+                                               , 2 => #{db_nodes => [1, 2, 3]}
+                                               , 3 => #{db_nodes => [3, 2, 1]}
+                                               , 4 => #{db_nodes => [4, 5]}
+                                               , 5 => #{db_nodes => [4, 5]}
+                                               , 6 => #{db_nodes => [6, 4, 5]}
+                                               }))
+                   )
+    ].
+
+shard_badness_test_() ->
+    [ ?_assertMatch( #{foo := {n1, 1}, bar := {n2, 2}}
+                   , shard_badness(#{ n1 => #{shard_badness => [{foo, 1}]}
+                                    , n2 => #{shard_badness => [{foo, 2}, {bar, 2}]}
+                                    })
+                   )
+    ].
 
 cluster_score_test_() ->
     [ ?_assertMatch({0, 0}, cluster_score([], []))

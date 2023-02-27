@@ -177,6 +177,7 @@ t_core_node_discovery(_Config) ->
            %% final list.  So the LB now decided to fall back to C1
            %% partition:
            clear_core_node_list(R1),
+           ?tp(test_inject_replicant_role, #{}),
            with_role(
              C2, replicant,
              fun() ->
@@ -279,10 +280,10 @@ with_reported_cores(Node, CoresToReport, TestFun) ->
 
 with_role(Node, Role, TestFun) ->
     ok = erpc:call(Node, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
-    ok = erpc:call(Node, meck, expect, [mria_rlog, role,
+    ok = erpc:call(Node, meck, expect, [mria_config, whoami,
                                         fun() -> Role end]),
     try
         TestFun()
     after
-        ok = erpc:call(Node, meck, unload, [mria_rlog])
+        ok = erpc:call(Node, meck, unload, [mria_config])
     end.
