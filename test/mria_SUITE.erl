@@ -1153,4 +1153,5 @@ assert_dirty_commit_record(Trace, Node, Name, PersistenceType, Value) ->
 common_checks() ->
     [ fun mria_rlog_props:replicant_no_restarts/1
     , fun mria_rlog_props:no_unexpected_events/1
+    , fun mria_rlog_props:no_split_brain/1
     ].
