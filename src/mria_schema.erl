@@ -68,16 +68,6 @@
 
 -export_type([entry/0, subscription/0, event/0]).
 
-%% WARNING: Treatment of the schema table is different on the core
-%% nodes and replicants. Schema transactions on core nodes are
-%% replicated via mnesia and therefore this table is consistent, but
-%% these updates do not reach the replicants. The replicants use
-%% regular mnesia transactions to update the schema, so it might be
-%% inconsistent with the core nodes' view.
-%%
-%% Therefore one should be rather careful with the contents of the
-%% `?schema' table.
-
 %%================================================================================
 %% Type declarations
 %%================================================================================
