@@ -109,7 +109,11 @@ role() ->
 
 -spec role(node()) -> mria_rlog:role().
 role(Node) ->
-    mria_lib:rpc_call(Node, ?MODULE, role, []).
+    %% TODO: replace with the throwing version, once we stop supporting EMQX releases <  5.0.17
+    case mria_lib:rpc_call_nothrow(Node, ?MODULE, role, []) of
+        core -> core;
+        replicant -> replicant
+    end.
 
 backend() ->
     mria_config:backend().
