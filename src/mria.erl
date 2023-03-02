@@ -183,8 +183,13 @@ join(Node, Reason) when is_atom(Node) ->
             {error, {already_in_cluster, Node}};
         {_, _, replicant} ->
             {error, {cannot_join_to_replicant, Node}};
-        {_, _, _} ->
-            {error, {illegal_target, Node}}
+        {_, IsRunning, Role} ->
+            {error, #{ reason => illegal_target
+                     , target_node => Node
+                     , in_cluster => IsInCluster
+                     , is_running => IsRunning
+                     , target_role => Role
+                     }}
     end.
 
 %% @doc Leave the cluster
