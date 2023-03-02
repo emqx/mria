@@ -33,6 +33,10 @@ jobs:
           run: |
             scripts/get-dep-refs.sh
 
+        - name: Configure git
+          run: |
+            git config --global --add safe.directory "*"
+
         - name: load rocksdb cache
           uses: actions/cache@v2
           with:
@@ -43,6 +47,10 @@ jobs:
         - name: Compile
           run: |
             make
+
+        - name: Concuerror tests
+          run : |
+            make concuerror_test
 
         - name: Smoke test
           run: |
@@ -55,10 +63,6 @@ jobs:
         - name: Consistency tests
           run: |
             make ct-consistency
-
-        - name: Concuerror tests
-          run : |
-            make concuerror_test
 
         - name: Coveralls
           env:

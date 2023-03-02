@@ -106,7 +106,7 @@ t_join_after_node_down(_) ->
 
 t_diagnosis_tab(_)->
     TestTab = test_tab_1,
-    Cluster = mria_ct:cluster([core, core], []),
+    Cluster = [NS1, NS2] = mria_ct:cluster([core, core], []),
     ?check_trace(
        #{timetrap => 30_000},
        try
@@ -132,7 +132,7 @@ t_diagnosis_tab(_)->
 
            %% Start N1, N1 mnesia doesn't know N2 is down
            ?tp(notice, ?FUNCTION_NAME, #{step => start_n1}),
-           N1 = mria_ct:start_slave(node, n1),
+           N1 = mria_ct:start_slave(node, NS1),
            ok = rpc:call(N1, mria, start, []),
            ?assertEqual([N2], lists:sort(rpc:call(N1, mria_mnesia, cluster_nodes, [stopped]))),
            %% N1 is waiting for N2 since N1 knows N2 has the latest copy of data
@@ -142,7 +142,7 @@ t_diagnosis_tab(_)->
 
            %% Start N2 only, but not mnesia
            ?tp(notice, ?FUNCTION_NAME, #{step => start_n2_node}),
-           N2 = mria_ct:start_slave(node, n2),
+           N2 = mria_ct:start_slave(node, NS2),
            %% Check N1 still waits for the mnesia on N2
            ?assertEqual( {timeout,[test_tab_1]}
                        , rpc:call(N1, mnesia, wait_for_tables, [[TestTab], 1000])),

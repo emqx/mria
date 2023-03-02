@@ -192,7 +192,7 @@ wait_for_shards(Shards, Timeout) ->
     Result = optvar:wait_vars( [?optvar({?upstream_pid, I})
                                 || I <- Shards,
                                    I =/= ?LOCAL_CONTENT_SHARD]
-                                 , Timeout
+                             , Timeout
                              ),
     Ret = case Result of
               ok ->
