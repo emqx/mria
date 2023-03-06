@@ -152,7 +152,10 @@ shard_of_table(Table) ->
 %% @private Return the list of known shards
 -spec shards() -> [mria_rlog:shard()].
 shards() ->
-    MS = {#?schema{mnesia_table = '_', shard = '$1', config = '_', storage = '_'}, [], ['$1']},
+    MS = { #?schema{mnesia_table = '_', shard = '$1', config = '_', storage = '_'}
+         , [{'=/=', '$1', ?LOCAL_CONTENT_SHARD}]
+         , ['$1']
+         },
     lists:usort(ets:select(?schema, [MS])).
 
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
