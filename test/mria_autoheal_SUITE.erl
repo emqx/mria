@@ -126,15 +126,16 @@ t_reboot_rejoin(Config) when is_list(Config) ->
     CommonEnv = [ {mria, cluster_autoheal, 200}
                 , {mria, db_backend, rlog}
                 ],
-    Cluster1 = mria_ct:cluster([{core, n0}], CommonEnv),
-    Cluster2 = mria_ct:cluster([core, replicant, replicant],
-                               CommonEnv,
-                               [{base_gen_rpc_port, 9001}]),
-    Cluster = mria_ct:merge_gen_rpc_env(Cluster1 ++ Cluster2),
+    Cluster = mria_ct:cluster([core, core, replicant, replicant],
+                              CommonEnv,
+                              [{base_gen_rpc_port, 9001}]),
     ?check_trace(
        #{timetrap => 25000},
        try
-           AllNodes = [C1, C2, _R1, _R2] = mria_ct:start_cluster(mria, Cluster),
+           AllNodes = [C1, C2, R1, R2] = mria_ct:start_cluster(node, Cluster),
+           [?assertMatch(ok, mria_ct:rpc(N, mria, start, [])) || N <- AllNodes],
+           [?assertMatch(ok, mria_ct:rpc(N, mria_transaction_gen, init, [])) || N <- AllNodes],
+           [mria_ct:rpc(N, mria, join, [C2]) || N <- [R1, R2]],
            ?tp(about_to_join, #{}),
            %% performs a full "power cycle" in C2.
            rpc:call(C2, mria, join, [C1]),

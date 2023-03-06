@@ -37,17 +37,21 @@ cleanup(Testcase) ->
 -type env() :: [{atom(), atom(), term()}].
 
 -type start_spec() ::
-        #{ name    := atom()
-         , node    := node()
-         , join_to => node()
-         , env     := env()
-         , number  := integer()
+        #{ name       := atom()
+         , node       := node()
+         , join_to    => node()
+         , env        := env()
+         , number     := integer()
+         , code_paths := [file:filename_all()]
          }.
 
 -type node_spec() :: mria_rlog:role() % name automatically, use default environment
-                   | {mria_rlog:role(), env()} % name automatically
-                   | {mria_rlog:role(), atom()} % give name, use default environment
-                   | {mria_rlog:role(), atom(), env()}. % customize everything
+                   | {mria_rlog:role(), env()} % name automatically, customize env
+                   | #{ role := mria_rlog:role()
+                      , name => atom()
+                      , env => env()
+                      , code_paths => [file:filename_all()]
+                      }.
 
 -type cluster_opt() :: {base_gen_rpc_port, non_neg_integer()}. % starting grpc port
 
@@ -61,11 +65,11 @@ cluster(Specs, CommonEnv) ->
 cluster(Specs0, CommonEnv, ClusterOpts) ->
     Specs1 = lists:zip(Specs0, lists:seq(1, length(Specs0))),
     Specs = expand_node_specs(Specs1, CommonEnv),
-    CoreNodes = [node_id(Name) || {{core, Name, _}, _} <- Specs],
+    CoreNodes = [node_id(Name) || #{role := core, name := Name} <- Specs],
     %% Assign grpc ports:
     BaseGenRpcPort = proplists:get_value(base_gen_rpc_port, ClusterOpts, 9000),
     GenRpcPorts = maps:from_list([{node_id(Name), {tcp, BaseGenRpcPort + Num}}
-                                  || {{_, Name, _}, Num} <- Specs]),
+                                  || #{name := Name, num := Num} <- Specs]),
     %% Set the default node of the cluster:
     JoinTo = case CoreNodes of
                  [First|_] -> #{join_to => First};
@@ -81,8 +85,10 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
                         | Env]
             , number => Number
             , role   => Role
+            , code_paths => CodePaths
+            , cover => Cover
             }
-     || {{Role, Name, Env}, Number} <- Specs].
+     || #{role := Role, name := Name, env := Env, code_paths := CodePaths, num := Number, cover := Cover} <- Specs].
 
 start_cluster(node, Specs) ->
     Nodes = [start_slave(node, I) || I <- Specs],
@@ -96,6 +102,38 @@ start_cluster(mria_async, Specs) ->
     spawn(fun() -> [start_mria(I) || I <- Specs] end),
     Ret.
 
+start_slave(node, #{name := Name, env := Env, code_paths := CodePaths, cover := Cover}) ->
+    CommonBeamOpts = "+S 1:1 " % We want VMs to only occupy a single core
+        "-kernel inet_dist_listen_min 3000 " % Avoid collisions with gen_rpc ports
+        "-kernel inet_dist_listen_max 3050 "
+        "-kernel prevent_overlapping_partitions false ",
+    Node = do_start_slave(Name, CommonBeamOpts),
+    Self = filename:dirname(code:which(?MODULE)),
+    [rpc:call(Node, code, add_patha, [Path]) || Path <- [Self|CodePaths]],
+    %% Load apps before setting the enviroment variables to avoid
+    %% overriding the environment during mria start:
+    [rpc(Node, application, load, [App]) || App <- [gen_rpc]],
+    FormatterConfig = #{ template => [[header, node], "\n", msg, "\n"]
+                       , legacy_header => false
+                       , single_line => false
+                       },
+    rpc(Node, logger, set_formatter_config, [default, FormatterConfig]),
+    [{ok, _} = cover:start([Node]) || Cover],
+    %% Disable gen_rpc listener by default:
+    Env1 = [{gen_rpc, tcp_server_port, false}|Env],
+    setenv(Node, Env1),
+    ok = snabbkaffe:forward_trace(Node),
+    Node;
+start_slave(mria, Spec) ->
+    Node = start_slave(node, Spec),
+    ok = rpc(Node, mria, start, []),
+    ok = rpc(Node, mria_transaction_gen, init, []),
+    Node.
+
+do_start_slave(Name, BeamArgs) ->
+    {ok, Node} = slave:start_link(host(), Name, BeamArgs),
+    Node.
+
 teardown_cluster(Specs) ->
     ?tp(notice, teardown_cluster, #{}),
     %% Shut down replicants first, otherwise they will make noise about core nodes going down:
@@ -107,22 +145,17 @@ teardown_cluster(Specs) ->
     [ok = stop_slave(I) || I <- Nodes],
     ok.
 
-start_slave(NodeOrMria, #{name := Name, env := Env}) ->
-    start_slave(NodeOrMria, Name, Env);
-start_slave(NodeOrMria, Name) when is_atom(Name) ->
-    start_slave(NodeOrMria, Name, []).
-
 start_mria(#{node := Node} = Spec) ->
-    ok = rpc:call(Node, mria, start, []),
+    ok = rpc(Node, mria, start, []),
     maybe_join_core_cluster(Spec),
     %% Emulate start of the business apps:
-    rpc:call(Node, mria_transaction_gen, init, []),
+    rpc(Node, mria_transaction_gen, init, []),
     ?tp(mria_ct_cluster_join, #{node => Node}),
     Node.
 
 maybe_join_core_cluster(#{node := Node, role := core, join_to := JoinTo}) ->
     %% Join the cluster if needed:
-    case rpc:call(Node, mria, join, [JoinTo]) of
+    case rpc(Node, mria, join, [JoinTo]) of
         ok     -> ok;
         ignore -> ok;
         Err    -> ?panic(failed_to_join_cluster,
@@ -142,26 +175,8 @@ read(Tab, Key) ->
     ?tp_span(trans_read, #{tab => Tab, txid => get_txid()},
              mnesia:read(Tab, Key)).
 
-start_slave(node, Name, Env) ->
-    CommonBeamOpts = "+S 1:1 " % We want VMs to only occupy a single core
-        "-kernel inet_dist_listen_min 3000 " % Avoid collisions with gen_rpc ports
-        "-kernel inet_dist_listen_max 3050 "
-        "-kernel prevent_overlapping_partitions false ",
-    {ok, Node} = slave:start_link(host(), Name, CommonBeamOpts ++ ebin_path()),
-    %% Load apps before setting the enviroment variables to avoid
-    %% overriding the environment during mria start:
-    [rpc:call(Node, application, load, [App]) || App <- [gen_rpc]],
-    {ok, _} = cover:start([Node]),
-    %% Disable gen_rpc listener by default:
-    Env1 = [{gen_rpc, tcp_server_port, false}|Env],
-    setenv(Node, Env1),
-    ok = snabbkaffe:forward_trace(Node),
-    Node;
-start_slave(mria, Name, Env) ->
-    Node = start_slave(node, Name, Env),
-    ok = rpc:call(Node, mria, start, []),
-    ok = rpc:call(Node, mria_transaction_gen, init, []),
-    Node.
+master_code_paths() ->
+    lists:filter(fun is_lib/1, code:get_path()).
 
 wait_running(Node) ->
     wait_running(Node, 30000).
@@ -170,7 +185,7 @@ wait_running(Node, Timeout) when Timeout < 0 ->
     throw({wait_timeout, Node});
 
 wait_running(Node, Timeout) ->
-    case rpc:call(Node, mria, is_running, [Node, mria]) of
+    case rpc(Node, mria, is_running, [Node, mria]) of
         true  -> ok;
         false -> timer:sleep(100),
                  wait_running(Node, Timeout - 100)
@@ -178,15 +193,15 @@ wait_running(Node, Timeout) ->
 
 stop_slave(Node) ->
     ok = cover:stop([Node]),
-    rpc:call(Node, mria, stop, []),
+    rpc(Node, mria, stop, []),
     mnesia:delete_schema([Node]),
     slave:stop(Node).
 
 host() ->
     [_, Host] = string:tokens(atom_to_list(node()), "@"), Host.
 
-ebin_path() ->
-    string:join(["-pa" | lists:filter(fun is_lib/1, code:get_path())], " ").
+ebin_path(CodePaths) ->
+    string:join(["-pa" | CodePaths], " ").
 
 is_lib(Path) ->
     string:prefix(Path, code:lib_dir()) =:= nomatch.
@@ -200,7 +215,7 @@ run_on(Node, Fun) ->
 run_on(Node, Fun, Args) ->
     %% Sending closures over erlang distribution is wrong, but for
     %% test purposes it should be ok.
-    case rpc:call(Node, erlang, apply, [Fun, Args]) of
+    case rpc(Node, erlang, apply, [Fun, Args]) of
         {badrpc, Err} ->
             error(Err);
         Result ->
@@ -214,23 +229,39 @@ vals_to_csv(L) ->
     string:join([lists:flatten(io_lib:format("~p", [N])) || N <- L], ",") ++ "\n".
 
 setenv(Node, Env) ->
-    [rpc:call(Node, application, set_env, [App, Key, Val]) || {App, Key, Val} <- Env].
+    [rpc(Node, application, set_env, [App, Key, Val]) || {App, Key, Val} <- Env].
 
 expand_node_specs(Specs, CommonEnv) ->
     lists:map(
-      fun({Spec, Num}) ->
-              {case Spec of
-                   core ->
-                       {core, gen_node_name(Num), CommonEnv};
-                   replicant ->
-                       {replicant, gen_node_name(Num), CommonEnv};
-                   {Role, Name} when is_atom(Name) ->
-                       {Role, Name, CommonEnv};
-                   {Role, Env} when is_list(Env) ->
-                       {Role, gen_node_name(Num), CommonEnv ++ Env};
-                   {Role, Name, Env} ->
-                       {Role, Name, CommonEnv ++ Env}
-               end, Num}
+      fun({Spec0, Num}) ->
+              Spec1 =
+                  case Spec0 of
+                      core ->
+                          #{ role => core
+                           };
+                      replicant ->
+                          #{ role => replicant
+                           };
+                      {Role, Env} when is_list(Env) ->
+                          #{ role => Role
+                           , env => Env
+                           };
+                      #{role := _} = Map ->
+                          Map
+                  end,
+              %% If code path is not default, we have to disable
+              %% cover. It will replace custom paths with
+              %% cover-compiled paths, and generally mess things up:
+              Cover = not maps:is_key(code_paths, Spec1),
+              DefaultSpec = #{ name => gen_node_name(Num)
+                             , env => []
+                             , code_paths => master_code_paths()
+                             , num => Num
+                             , cover => Cover
+                             },
+              maps:update_with(env,
+                               fun(Env) -> CommonEnv ++ Env end,
+                               maps:merge(DefaultSpec, Spec1))
       end,
       Specs).
 
@@ -243,21 +274,6 @@ get_txid() ->
             TID
     end.
 
-merge_gen_rpc_env(Cluster) ->
-    AllGenRpcPorts0 =
-        [GenRpcPorts
-         || #{env := Env} <- Cluster,
-            {gen_rpc, client_config_per_node, {internal, GenRpcPorts}} <- Env
-        ],
-    AllGenRpcPorts = lists:foldl(fun maps:merge/2, #{}, AllGenRpcPorts0),
-    [Node#{env => lists:map(
-                    fun({gen_rpc, client_config_per_node, _}) ->
-                            {gen_rpc, client_config_per_node, {internal, AllGenRpcPorts}};
-                       (Env) -> Env
-                    end,
-                    Envs)}
-     || Node = #{env := Envs} <- Cluster].
-
 -if(?OTP_RELEASE >= 25).
 start_dist() ->
     ensure_epmd(),
@@ -265,6 +281,17 @@ start_dist() ->
         {ok, _Pid} -> ok;
         {error, {already_started, _}} -> ok
     end.
+
+%% TODO: migrate to peer
+%%
+%% do_start_slave(Name, BeamArgs) ->
+%%     %% {ok, _Pid, Node} = peer:start_link(#{ name => Name
+%%     %%                                     , longnames => true
+%%     %%                                     , host => host()
+%%     %%                                     , args => [BeamArgs]
+%%     %%                                     }),
+%%     Node.
+
 -else.
 start_dist() ->
     ensure_epmd(),
@@ -276,3 +303,10 @@ start_dist() ->
 
 ensure_epmd() ->
     open_port({spawn, "epmd"}, []).
+
+shim(Mod, Fun, Args) ->
+    group_leader(self(), whereis(init)),
+    apply(Mod, Fun, Args).
+
+rpc(Node, Mod, Fun, Args) ->
+    rpc:call(Node, ?MODULE, shim, [Mod, Fun, Args]).

@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euxo pipefail
+
+echo "Building "${tag}""
+
+[ -d "${tmp_dir}" ] ||
+    git clone "${root_dir}" "${tmp_dir}"
+
+cd "${tmp_dir}"
+git checkout "${tag}"
+
+# Avoid rebuilding rocksdb:
+mkdir -p "_checkouts"
+pushd "_checkouts"
+[ -L rocksdb ] ||
+    ln -s "${root_dir}/_build/default/lib/rocksdb" rocksdb
+popd
+
+[ ! -z $(find . -name mria.app) ] ||
+    rebar3 as test compile
