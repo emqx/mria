@@ -41,7 +41,9 @@
          local_table_present/1,
          notify_local_table/1,
 
-         notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1
+         notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1,
+
+         waiting_shards/0
         ]).
 
 %% gen_server callbacks:
@@ -300,6 +302,11 @@ notify_local_table(Table) ->
 -spec local_table_present(mria:table()) -> true.
 local_table_present(Table) ->
     optvar:read(?optvar({?local_table, Table})).
+
+-spec waiting_shards() -> [mria_rlog:shard()].
+waiting_shards() ->
+    [Shard || ?optvar({?upstream_pid, Shard}) <- optvar:list_all(),
+              not optvar:is_set({?upstream_pid, Shard})].
 
 %%================================================================================
 %% gen_server callbacks:
