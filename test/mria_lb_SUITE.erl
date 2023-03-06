@@ -279,7 +279,7 @@ with_reported_cores(Node, CoresToReport, TestFun) ->
     with_reported_cores([Node], CoresToReport, TestFun).
 
 with_role(Node, Role, TestFun) ->
-    ok = erpc:call(Node, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
+    ok = erpc:call(Node, meck, new, [mria_config, [passthrough, no_history, no_link]]),
     ok = erpc:call(Node, meck, expect, [mria_config, whoami,
                                         fun() -> Role end]),
     try
