@@ -982,7 +982,7 @@ t_replicant_manual_join(_Config) ->
     ?check_trace(
        #{timetrap => 10000},
        try
-           [N1, _N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
+           [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
            %% 1. Make sure the load balancer didn't discover any core
            %% nodes when `core_nodes' environment variable is set to
            %% `[]':
@@ -991,12 +991,12 @@ t_replicant_manual_join(_Config) ->
            %% 2. Manually connect the replicant to the core cluster:
            ?wait_async_action(
               ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-              #{?snk_kind := mria_status_change, status := up, tag := upstream_pid, key := test_shard, ?snk_meta := #{node := N3}}),
+              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N3}}),
            %% Check that meta shard is up:
            ?assertMatch({ok, Pid} when is_pid(Pid), rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% Now after we've manually joined the replicant to the
            %% core cluster, we should have both core nodes discovered:
-           ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N1])),
+           ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N2])),
            %% 3. Disconnect the replicant from the cluster and check idempotency of this operation:
            ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
            ?assertMatch({error, node_not_in_cluster}, rpc:call(N3, mria, leave, [])),
@@ -1004,9 +1004,19 @@ t_replicant_manual_join(_Config) ->
            %% 4. Now connect the replicant to the core cluster again (bug: EMQX-9021):
            ?wait_async_action(
               ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-              #{?snk_kind := mria_status_change, status := up, tag := upstream_pid, key := test_shard, ?snk_meta := #{node := N3}}),
+              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N3}}),
            ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N1])),
            ?assertMatch({ok, _}, rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
+           %% 5. Do the same to the other core node:
+           %%    - Disconnect
+           ?wait_async_action(
+              ?assertMatch(ok, rpc:call(N2, mria, leave, [])),
+              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N2}}),
+           %%    - Rejoin the cluster
+           ?wait_async_action(
+              ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
+              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N2}}),
+           ?assertMatch([N1, N2, N3], lists:sort(rpc:call(N2, mria_mnesia, running_nodes, []))),
            ok
        after
            mria_ct:teardown_cluster(Cluster)
