@@ -36,11 +36,11 @@ is_running() ->
     is_pid(whereis(?MODULE)).
 
 post_init(Parent) ->
-    ?tp(notice, "Mria is running", #{}),
     proc_lib:init_ack(Parent, {ok, self()}),
     %% Exec the start callback, but first make sure the schema is in
     %% sync:
     ok = mria_status:wait_for_shards([?mria_meta_shard], infinity),
+    ?tp(notice, "Mria is running", #{}),
     mria_lib:exec_callback(start).
 
 -spec init(mria:backend()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
@@ -91,7 +91,7 @@ post_init_child() ->
     #{ id => post_init
      , start => {proc_lib, start_link, [?MODULE, post_init, [self()]]}
      , restart => temporary
-     , shutdown => brutal_kill
+     , shutdown => 5_000
      , type => worker
      , modules => []
      }.
