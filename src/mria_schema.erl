@@ -186,7 +186,7 @@ init([]) ->
     State0 = boostrap(),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),
     %% Recreate all the known tables:
-    ?tp(notice, "Converging schema", #{}),
+    ?tp(info, "Converging schema", #{}),
     Specs = table_specs_of_shard('_'),
     State = converge_schema(Specs, State0),
     {ok, State}.

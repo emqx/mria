@@ -126,7 +126,7 @@ handle_continue(post_init, {Parent, Shard}) ->
     AgentSup = mria_core_shard_sup:start_agent_sup(Parent, Shard),
     BootstrapperSup = mria_core_shard_sup:start_bootstrapper_sup(Parent, Shard),
     mria_status:notify_shard_up(Shard, self()),
-    ?tp(notice, "Shard fully up",
+    ?tp(info, "Shard fully up",
         #{ node  => node()
          , shard => Shard
          }),
