@@ -430,7 +430,7 @@ rpc_to_core_node(Shard, Module, Function, Args) ->
 -spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
 rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
     Core = find_upstream_node(Shard),
-    Ret = mria_lib:rpc_call({Core, Shard}, Module, Function, Args),
+    Ret = mria_lib:rpc_call_nothrow({Core, Shard}, Module, Function, Args),
     case should_retry_rpc(Ret) of
         true when Retries > 0 ->
             ?tp(debug, mria_retry_rpc_to_core,
