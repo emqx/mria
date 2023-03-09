@@ -1017,7 +1017,13 @@ t_cluster_nodes(_) ->
            [?assertEqual([Core1, Core2], lists:sort(rpc:call(N1, mria, cluster_nodes, [cores])), N1)
             || N1 <- Nodes],
            [?assertEqual([], rpc:call(N1, mria, cluster_nodes, [stopped]), N1)
-            || N1 <- Nodes]
+            || N1 <- Nodes],
+           [?assertMatch(true, rpc:call(N1, mria, is_node_in_cluster, [N2]), {N1, N2})
+            || N1 <- Nodes,
+               N2 <- Nodes],
+           [?assertMatch(running, rpc:call(N1, mria, cluster_status, [N2]), {N1, N2})
+            || N1 <- Nodes,
+               N2 <- Nodes]
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,

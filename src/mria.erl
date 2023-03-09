@@ -23,13 +23,18 @@
         ]).
 
 %% Info
--export([info/0, info/1, rocksdb_backend_available/0, running_nodes/0, cluster_nodes/1]).
+-export([info/0, info/1, rocksdb_backend_available/0]).
 
 %% Cluster API
 -export([ join/1
         , join/2
         , leave/0
         , force_leave/1
+
+        , running_nodes/0
+        , cluster_nodes/1
+        , cluster_status/1
+        , is_node_in_cluster/1
         ]).
 
 %% Register callback
@@ -169,6 +174,22 @@ cluster_nodes(cores) ->
         replicant ->
             mria_lb:core_nodes()
     end.
+
+%% @doc Cluster status of the node
+-spec(cluster_status(node()) -> running | stopped | false).
+cluster_status(Node) ->
+    case is_node_in_cluster(Node) of
+        true ->
+            case lists:member(Node, running_nodes()) of
+                true  -> running;
+                false -> stopped
+            end;
+        false -> false
+    end.
+
+-spec is_node_in_cluster(node()) -> boolean().
+is_node_in_cluster(Node) ->
+    lists:member(Node, cluster_nodes(all)).
 
 %% @doc Running nodes.
 -spec running_nodes() -> list(node()).
@@ -562,11 +583,6 @@ is_upstream(Shard) ->
 prep_restart(Reason) ->
     stop(Reason),
     mria_config:load_config().
-
-
--spec is_node_in_cluster(node()) -> boolean().
-is_node_in_cluster(Node) ->
-    lists:member(Node, cluster_nodes(all)).
 
 %% TODO: Remove this function and cache the results.
 db_nodes_maybe_rpc() ->
