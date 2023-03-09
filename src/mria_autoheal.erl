@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -78,7 +78,7 @@ handle_msg(Msg = {create_splitview, Node}, Autoheal = #autoheal{delay = Delay, t
     ensure_cancel_timer(TRef),
     case mria_membership:is_all_alive() of
         true ->
-            Nodes = mria_mnesia:cluster_nodes(cores),
+            Nodes = mria_mnesia:db_nodes(),
             case rpc:multicall(Nodes, mria_mnesia, cluster_view, []) of
                 {Views, []} ->
                     SplitView = lists:sort(fun compare_view/2, lists:usort(Views)),

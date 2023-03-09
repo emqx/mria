@@ -48,6 +48,7 @@
         , register_callback/2
         , unregister_callback/1
         , callback/1
+        , rocksdb_backend_available/0
         ]).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
@@ -210,6 +211,10 @@ unregister_callback(Name) ->
 -spec callback(mria_config:callback()) -> {ok, fun(() -> term())} | undefined.
 callback(Name) ->
     apply(application, get_env, [mria, {callback, Name}]).
+
+-spec rocksdb_backend_available() -> boolean().
+rocksdb_backend_available() ->
+    ?MRIA_HAS_ROCKSDB.
 
 %%================================================================================
 %% Internal
