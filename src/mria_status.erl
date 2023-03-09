@@ -162,7 +162,7 @@ replicants() ->
 
 -spec get_shard_lag(mria_rlog:shard()) -> non_neg_integer() | disconnected.
 get_shard_lag(Shard) ->
-    case {mria_rlog:role(), upstream_node(Shard)} of
+    case {mria_config:role(), upstream_node(Shard)} of
         {core, _} ->
             0;
         {replicant, disconnected} ->
@@ -225,7 +225,7 @@ shards_down() ->
 
 -spec get_shard_stats(mria_rlog:shard()) -> map().
 get_shard_stats(Shard) ->
-    case mria_rlog:role() of
+    case mria_config:role() of
         core ->
             Weight = case mria_lb:core_node_weight(Shard) of
                          undefined          -> undefined;

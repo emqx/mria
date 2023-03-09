@@ -240,7 +240,7 @@ init([]) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, membership]}),
     _ = ets:new(membership, [ordered_set, protected, named_table, {keypos, 2}]),
-    case mria_rlog:role() of
+    case mria_config:role() of
         core -> initialize_members();
         replicant -> ok
     end,
@@ -402,7 +402,7 @@ make_new_local_member() ->
     with_hash(#member{node = node(), guid = mria_guid:gen(),
                       status = up, mnesia = IsMnesiaRunning,
                       ltime = erlang:timestamp(),
-                      role = mria_rlog:role()
+                      role = mria_config:role()
                      }).
 
 initialize_members() ->

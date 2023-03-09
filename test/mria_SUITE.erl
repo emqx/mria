@@ -1005,6 +1005,24 @@ t_replicant_manual_join(_Config) ->
        end,
        []).
 
+t_cluster_nodes(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           [Core1, Core2|_] = Nodes = mria_ct:start_cluster(mria, Cluster),
+           [?assertEqual(Nodes, lists:sort(rpc:call(N1, mria, cluster_nodes, [State])), {N1, State})
+            || N1 <- Nodes,
+               State <- [all, running]],
+           [?assertEqual([Core1, Core2], lists:sort(rpc:call(N1, mria, cluster_nodes, [cores])), N1)
+            || N1 <- Nodes],
+           [?assertEqual([], rpc:call(N1, mria, cluster_nodes, [stopped]), N1)
+            || N1 <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10

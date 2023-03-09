@@ -142,7 +142,7 @@ connect(Node) ->
 %% @doc Add the node to the cluster schema
 -spec join_cluster(node()) -> ok.
 join_cluster(Node) when Node =/= node() ->
-    case {mria_rlog:role(), mria_rlog:role(Node)} of
+    case {mria_config:role(), mria_rlog:role(Node)} of
         {core, core} ->
             %% Stop mnesia and delete schema first
             mria_lib:ensure_ok(ensure_stopped()),
@@ -251,7 +251,7 @@ copy_table(Name) ->
 
 -spec(copy_table(Name:: atom(), mria:storage()) -> ok).
 copy_table(Name, Storage) ->
-    case mria_rlog:role() of
+    case mria_config:role() of
         core ->
             mria_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
         replicant ->
@@ -414,7 +414,7 @@ init_schema() ->
                   []    -> true;
                   [_|_] -> false
               end,
-    case (mria_rlog:role() =:= replicant) orelse IsAlone of
+    case (mria_config:role() =:= replicant) orelse IsAlone of
         true ->
             Ret = mnesia:create_schema([node()]),
             ?tp(notice, "Creating new mnesia schema", #{result => Ret}),
