@@ -119,7 +119,7 @@ core_rpc_retries() ->
 
 -spec core_rpc_cooldown() -> integer(). %% milliseconds
 core_rpc_cooldown() ->
-    persistent_term:get(?mria(core_rpc_cooldown), 10).
+    persistent_term:get(?mria(core_rpc_cooldown), lb_poll_interval()).
 
 %% Flag that enables additional verification of transactions
 -spec strict_mode() -> boolean().
