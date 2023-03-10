@@ -41,7 +41,9 @@
          local_table_present/1,
          notify_local_table/1,
 
-         notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1
+         notify_agent_connect/3, notify_agent_disconnect/2, notify_agent_disconnect/1,
+
+         waiting_shards/0
         ]).
 
 %% gen_server callbacks:
@@ -78,7 +80,10 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%% @doc Return core node used as the upstream for the replica
+%% @doc Return name of the core node that is _currently serving_ the
+%% downstream shard. Note the difference in behavior as compared with
+%% `get_core_node'. Returns `disconnected' if the local replica of the
+%% shard is down.
 -spec upstream_node(mria_rlog:shard()) -> {ok, node()} | disconnected.
 upstream_node(Shard) ->
     case upstream(Shard) of
@@ -93,6 +98,12 @@ upstream(Shard) ->
         {ok, Pid} -> {ok, Pid};
         undefined -> disconnected
     end.
+
+%% @doc Return a core node that _might_ be able to serve the specified
+%% shard.
+-spec get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
+get_core_node(Shard, Timeout) ->
+    optvar:read(?optvar({?core_node, Shard}), Timeout).
 
 -spec notify_shard_up(mria_rlog:shard(), _AgentPid :: pid()) -> ok.
 notify_shard_up(Shard, Upstream) ->
@@ -176,12 +187,6 @@ get_shard_lag(Shard) ->
                     RemoteSeqNo - MySeqNo
             end
     end.
-
-%% Get a healthy core node that has the specified shard, and can
-%% accept or RPC calls.
--spec get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
-get_core_node(Shard, Timeout) ->
-    optvar:read(?optvar({?core_node, Shard}), Timeout).
 
 -spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]}.
 wait_for_shards(Shards, Timeout) ->
@@ -300,6 +305,11 @@ notify_local_table(Table) ->
 -spec local_table_present(mria:table()) -> true.
 local_table_present(Table) ->
     optvar:read(?optvar({?local_table, Table})).
+
+-spec waiting_shards() -> [mria_rlog:shard()].
+waiting_shards() ->
+    [Shard || ?optvar({?upstream_pid, Shard}) <- optvar:list_all(),
+              not optvar:is_set({?upstream_pid, Shard})].
 
 %%================================================================================
 %% gen_server callbacks:

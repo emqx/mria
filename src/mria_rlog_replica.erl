@@ -242,7 +242,7 @@ initiate_local_replay(D) ->
 
 -spec handle_bootstrap_complete(mria_rlog_server:checkpoint(), data()) -> fsm_result().
 handle_bootstrap_complete(Checkpoint, D) ->
-    ?tp(notice, "Bootstrap of the shard is complete",
+    ?tp(info, "Bootstrap of the shard is complete",
         #{ checkpoint => Checkpoint
          , shard      => D#d.shard
          }),
@@ -384,12 +384,12 @@ try_connect(Shard, Checkpoint) ->
 try_connect([], _, _) ->
     {error, no_core_available};
 try_connect([Node|Rest], Shard, Checkpoint) ->
-    ?tp(info, "Trying to connect to the core node",
+    ?tp(debug, "Trying to connect to the core node",
         #{ node => Node
          }),
     case mria_rlog:subscribe(Shard, Node, self(), Checkpoint) of
         {ok, NeedBootstrap, Agent, TableSpecs, SeqNo} ->
-            ?tp(notice, "Connected to the core node",
+            ?tp(debug, "Connected to the core node",
                 #{ shard => Shard
                  , node  => Node
                  , seqno => SeqNo
@@ -397,7 +397,7 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
             link(Agent),
             {ok, NeedBootstrap, Node, Agent, TableSpecs, SeqNo};
         Err ->
-            ?tp(info, "Failed to connect to the core node",
+            ?tp(debug, "Failed to connect to the core node",
                 #{ node => Node
                  , reason => Err
                  }),

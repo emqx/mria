@@ -35,10 +35,7 @@ start(_Type, _Args) ->
     mria_mnesia:ensure_schema(),
     mria_mnesia:ensure_started(),
     ?tp(notice, "Starting shards", #{}),
-    Sup = mria_sup:start_link(),
-    ?tp(notice, "Mria is running", #{}),
-    mria_lib:exec_callback_async(start),
-    Sup.
+    mria_sup:start_link().
 
 stop(_State) ->
     mria_config:erase_all_config(),

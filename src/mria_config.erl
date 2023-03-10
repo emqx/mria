@@ -181,7 +181,7 @@ shard_transport(Shard) ->
 
 -spec load_shard_config(mria_rlog:shard(), [mria:table()]) -> ok.
 load_shard_config(Shard, Tables) ->
-    ?tp(notice, "Setting RLOG shard config",
+    ?tp(info, "Setting RLOG shard config",
         #{ shard => Shard
          , tables => Tables
          }),
