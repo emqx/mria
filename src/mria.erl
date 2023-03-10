@@ -30,6 +30,11 @@
         , join/2
         , leave/0
         , force_leave/1
+
+        , running_nodes/0
+        , cluster_nodes/1
+        , cluster_status/1
+        , is_node_in_cluster/1
         ]).
 
 %% Register callback
@@ -141,16 +146,75 @@ info(Key) ->
 
 -spec info() -> infos().
 info() ->
-    ClusterInfo = mria_mnesia:cluster_info(),
-    Partitions = mria_node_monitor:partitions(),
-    maps:merge(ClusterInfo,
-               #{ members    => mria_membership:members()
-                , partitions => Partitions
-                , rlog       => mria_rlog:status()
-                }).
+    #{ running_nodes => cluster_nodes(running)
+     , stopped_nodes => cluster_nodes(stopped)
+     , members       => mria_membership:members()
+     , partitions    => mria_node_monitor:partitions()
+     , rlog          => mria_rlog:status()
+     }.
 
 -spec rocksdb_backend_available() -> boolean().
-rocksdb_backend_available() -> ?MRIA_HAS_ROCKSDB.
+rocksdb_backend_available() ->
+    mria_config:rocksdb_backend_available().
+
+%% @doc Cluster nodes.
+-spec cluster_nodes(all | running | stopped | cores) -> [node()].
+cluster_nodes(all) ->
+    Running = running_nodes(),
+    %% Note: stopped replicant nodes won't appear in the list
+    lists:usort(Running ++ db_nodes_maybe_rpc());
+cluster_nodes(running) ->
+    running_nodes();
+cluster_nodes(stopped) ->
+    cluster_nodes(all) -- cluster_nodes(running);
+cluster_nodes(cores) ->
+    case mria_rlog:role() of
+        core ->
+            mria_mnesia:db_nodes();
+        replicant ->
+            mria_lb:core_nodes()
+    end.
+
+%% @doc Cluster status of the node
+-spec(cluster_status(node()) -> running | stopped | false).
+cluster_status(Node) ->
+    case is_node_in_cluster(Node) of
+        true ->
+            case lists:member(Node, running_nodes()) of
+                true  -> running;
+                false -> stopped
+            end;
+        false -> false
+    end.
+
+-spec is_node_in_cluster(node()) -> boolean().
+is_node_in_cluster(Node) ->
+    lists:member(Node, cluster_nodes(all)).
+
+%% @doc Running nodes.
+-spec running_nodes() -> list(node()).
+running_nodes() ->
+    %% TODO: cache the results (this could be a hot call) and don't
+    %% fail on the first unsuccessful call, since other nodes may be
+    %% alive. Use info from `mria_membership'?
+    case mria_rlog:role() of
+        core ->
+            CoreNodes = mria_mnesia:running_nodes(),
+            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, [], 15000),
+            Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
+            lists:usort(CoreNodes ++ Replicants);
+        replicant ->
+            case mria_lb:core_nodes() of
+                [CoreNode|_] ->
+                    case mria_lib:rpc_call_nothrow(CoreNode, ?MODULE, running_nodes, []) of
+                        {badrpc, _} -> [];
+                        {badtcp, _} -> [];
+                        Result      -> Result
+                    end;
+                [] ->
+                    []
+            end
+    end.
 
 %%--------------------------------------------------------------------
 %% Cluster API
@@ -168,7 +232,7 @@ join(Node, _) when Node =:= node() ->
 join(Node, Reason) when is_atom(Node) ->
     %% When `Reason =:= heal' the node should rejoin regardless of
     %% what mnesia thinks:
-    IsInCluster = mria_mnesia:is_node_in_cluster(Node) andalso Reason =/= heal,
+    IsInCluster = is_node_in_cluster(Node) andalso Reason =/= heal,
     case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
         {false, true, core} ->
             %% FIXME: reading role via `mria_config' may be unsafe
@@ -195,7 +259,7 @@ join(Node, Reason) when is_atom(Node) ->
 %% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.
 leave() ->
-    case mria_mnesia:running_nodes() -- [node()] of
+    case running_nodes() -- [node()] of
         [_|_] ->
             prep_restart(leave),
             ok = case mria_config:whoami() of
@@ -214,7 +278,7 @@ leave() ->
 force_leave(Node) when Node =:= node() ->
     ignore;
 force_leave(Node) ->
-    case {mria_mnesia:is_node_in_cluster(Node), mria_mnesia:is_running_db_node(Node)} of
+    case {is_node_in_cluster(Node), mria_mnesia:is_running_db_node(Node)} of
         {true, true} ->
             mria_lib:ensure_ok(rpc:call(Node, ?MODULE, leave, []));
         {true, false} ->
@@ -519,3 +583,22 @@ is_upstream(Shard) ->
 prep_restart(Reason) ->
     stop(Reason),
     mria_config:load_config().
+
+%% TODO: Remove this function and cache the results.
+db_nodes_maybe_rpc() ->
+    case mria_rlog:role() of
+        core ->
+            mria_mnesia:db_nodes();
+        replicant ->
+            case mria_status:shards_up() of
+                [Shard|_] ->
+                    {ok, CoreNode} = mria_status:get_core_node(Shard, 5_000),
+                    case mria_lib:rpc_call_nothrow(CoreNode, mnesia, system_info, [db_nodes]) of
+                        {badrpc, _} -> [];
+                        {badtcp, _} -> [];
+                        Result      -> Result
+                    end;
+                [] ->
+                    []
+            end
+    end.

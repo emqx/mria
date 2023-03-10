@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -240,7 +240,7 @@ init([]) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, membership]}),
     _ = ets:new(membership, [ordered_set, protected, named_table, {keypos, 2}]),
-    case mria_rlog:role() of
+    case mria_config:role() of
         core -> initialize_members();
         replicant -> ok
     end,
@@ -280,7 +280,7 @@ handle_cast({node_up, Node}, State) ->
                        [M] -> M#member{status = up};
                        []  -> #member{node = Node, status = up, role = mria_rlog:role(Node)}
                      end,
-            insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)});
+            insert(Member#member{mnesia = mnesia_cluster_status(Node)});
         false -> ignore
     end,
     notify({node, up, Node}, State),
@@ -319,12 +319,12 @@ handle_cast({healing, Node}, State) ->
 handle_cast({ping, Member = #member{node = Node}}, State) ->
     ?tp(mria_membership_ping, #{member => Member}),
     pong(Node, local_member()),
-    insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)}),
+    insert(Member#member{mnesia = mnesia_cluster_status(Node)}),
     {noreply, State};
 
 handle_cast({pong, Member = #member{node = Node}}, State) ->
     ?tp(mria_membership_pong, #{member => Member}),
-    insert(Member#member{mnesia = mria_mnesia:cluster_status(Node)}),
+    insert(Member#member{mnesia = mnesia_cluster_status(Node)}),
     {noreply, State};
 
 handle_cast({leaving, Node}, State) ->
@@ -402,7 +402,7 @@ make_new_local_member() ->
     with_hash(#member{node = node(), guid = mria_guid:gen(),
                       status = up, mnesia = IsMnesiaRunning,
                       ltime = erlang:timestamp(),
-                      role = mria_rlog:role()
+                      role = mria_config:role()
                      }).
 
 initialize_members() ->
@@ -458,4 +458,13 @@ del_monitor({Type, PidOrFun}, S = #state{monitors = Monitors}) ->
         {_, MRef} ->
             is_pid(PidOrFun) andalso erlang:demonitor(MRef, [flush]),
             S#state{monitors = lists:delete({{Type, PidOrFun}, MRef}, Monitors)}
+    end.
+
+mnesia_cluster_status(Node) ->
+    %% FIXME: ugly workaround. Mnesia status is wrong on the replicant
+    case mria_config:role() of
+        core ->
+            mria_mnesia:cluster_status(Node);
+        replicant ->
+            running
     end.

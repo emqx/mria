@@ -111,7 +111,7 @@ ensure_schema() ->
 ensure_started() ->
     ok = mnesia:start(),
     {ok, _} = mria_mnesia_null_storage:register(),
-    case mria:rocksdb_backend_available() of
+    case mria_config:rocksdb_backend_available() of
         true ->
             {ok, _} = application:ensure_all_started(mnesia_rocksdb),
             {ok, _} = mnesia_rocksdb:register();
@@ -142,7 +142,7 @@ connect(Node) ->
 %% @doc Add the node to the cluster schema
 -spec join_cluster(node()) -> ok.
 join_cluster(Node) when Node =/= node() ->
-    case {mria_rlog:role(), mria_rlog:role(Node)} of
+    case {mria_config:role(), mria_rlog:role(Node)} of
         {core, core} ->
             %% Stop mnesia and delete schema first
             mria_lib:ensure_ok(ensure_stopped()),
@@ -196,54 +196,22 @@ cluster_status(Node) ->
 
 -spec(cluster_view() -> {[node()], [node()]}).
 cluster_view() ->
-    list_to_tuple([lists:sort([N || N <- cluster_nodes(Status),
-                                    mria_rlog:role(N) =:= core])
+    list_to_tuple([lists:sort([N || N <- cluster_nodes(Status)])
                    || Status <- [running, stopped]]).
 
 %% @doc Cluster nodes.
 -spec(cluster_nodes(all | running | stopped | cores) -> [node()]).
 cluster_nodes(all) ->
-    Running = running_nodes(),
-    %% Note: stopped replicant nodes won't appear in the list
-    lists:usort(Running ++ db_nodes_maybe_rpc());
+    db_nodes();
 cluster_nodes(running) ->
     running_nodes();
 cluster_nodes(stopped) ->
-    cluster_nodes(all) -- cluster_nodes(running);
-cluster_nodes(cores) ->
-    case mria_rlog:role() of
-        core ->
-            db_nodes();
-        replicant ->
-            mria_lb:core_nodes()
-    end.
+    cluster_nodes(all) -- cluster_nodes(running).
 
 %% @doc Running nodes.
 -spec(running_nodes() -> list(node())).
 running_nodes() ->
-    case mria_rlog:role() of
-        core ->
-            CoreNodes = mnesia:system_info(running_db_nodes),
-            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, [], 15000),
-            Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
-            lists:usort(CoreNodes ++ Replicants);
-        replicant ->
-            case mria_status:shards_up() of
-                [Shard|_] ->
-                    case mria_status:upstream_node(Shard) of
-                        {ok, CoreNode} ->
-                            case mria_lib:rpc_call_nothrow(CoreNode, ?MODULE, running_nodes, []) of
-                                {badrpc, _} -> [];
-                                {badtcp, _} -> [];
-                                Result      -> Result
-                            end;
-                        disconnected ->
-                            []
-                    end;
-                [] ->
-                    []
-            end
-    end.
+    mnesia:system_info(running_db_nodes).
 
 %% @doc List Mnesia DB nodes.  Used by `mria_lb' to check if nodes
 %% reported by core discovery callback are in the same cluster.  This
@@ -253,7 +221,7 @@ db_nodes() ->
 
 %% @doc Is this node in mnesia cluster?
 is_node_in_cluster() ->
-    cluster_nodes(cores) =/= [node()].
+    db_nodes() =/= [node()].
 
 %% @doc Is the node in mnesia cluster?
 -spec(is_node_in_cluster(node()) -> boolean()).
@@ -283,7 +251,7 @@ copy_table(Name) ->
 
 -spec(copy_table(Name:: atom(), mria:storage()) -> ok).
 copy_table(Name, Storage) ->
-    case mria_rlog:role() of
+    case mria_config:role() of
         core ->
             mria_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
         replicant ->
@@ -428,25 +396,6 @@ get_internals() ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
-db_nodes_maybe_rpc() ->
-    case mria_rlog:role() of
-        core ->
-            mnesia:system_info(db_nodes);
-        replicant ->
-            case mria_status:shards_up() of
-                [Shard|_] ->
-                    {ok, CoreNode} = mria_status:get_core_node(Shard, 5_000),
-                    case mria_lib:rpc_call_nothrow(CoreNode, mnesia, system_info, [db_nodes]) of
-                        {badrpc, _} -> [];
-                        {badtcp, _} -> [];
-                        Result      -> Result
-                    end;
-                [] ->
-                    []
-            end
-    end.
-
-
 %% @doc Data dir
 -spec(data_dir() -> string()).
 data_dir() -> mnesia:system_info(directory).
@@ -465,7 +414,7 @@ init_schema() ->
                   []    -> true;
                   [_|_] -> false
               end,
-    case (mria_rlog:role() =:= replicant) orelse IsAlone of
+    case (mria_config:role() =:= replicant) orelse IsAlone of
         true ->
             Ret = mnesia:create_schema([node()]),
             ?tp(notice, "Creating new mnesia schema", #{result => Ret}),

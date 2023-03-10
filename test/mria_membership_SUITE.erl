@@ -40,6 +40,7 @@ init_per_testcase(_TestCase, Config) ->
     Config.
 
 end_per_testcase(_TestCase, Config) ->
+    snabbkaffe:stop(),
     ok = mria_membership:stop(),
     ok = meck:unload(mria_mnesia),
     Config.

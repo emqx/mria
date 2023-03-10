@@ -340,7 +340,7 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
                ) ->
     case lists:keyfind(Table, #?schema.mnesia_table, OldEntries) of
         false -> % new entry
-            Ret = case mria_rlog:role() of
+            Ret = case mria_config:role() of
                       core ->
                           mria_lib:ensure_ok(mria_mnesia:copy_table(Table, Storage));
                       replicant ->

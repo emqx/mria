@@ -46,34 +46,29 @@ end_per_testcase(TestCase, Config) ->
     snabbkaffe:stop(),
     Config.
 
-t_cluster_core_nodes_on_replicant(_) ->
+t_cluster_status(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
        try
-           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_full_replication(Cluster, 15000),
-           ?assertEqual(
-              [N1, N2],
-              erpc:call(N3, mria_mnesia, cluster_nodes, [cores])),
-           ?assertEqual(
-              [N1, N2, N3],
-              erpc:call(N3, mria_mnesia, cluster_nodes, [all])),
-           ?assertEqual(
-              [N1, N2, N3],
-              erpc:call(N3, mria_mnesia, cluster_nodes, [running])),
-           slave:stop(N2),
-           timer:sleep(5000),
-           ?assertEqual(
-              [N1, N2, N3],
-              erpc:call(N3, mria_mnesia, cluster_nodes, [all])),
-           ?assertEqual(
-              [N2],
-              erpc:call(N3, mria_mnesia, cluster_nodes, [stopped])),
-           ?assertEqual(
-              [N1, N3],
-              erpc:call(N3, mria_mnesia, cluster_nodes, [running])),
-           ok
+           [Core1, Core2|_] = mria_ct:start_cluster(mria, Cluster),
+           Nodes = [Core1, Core2],
+           [?assertMatch(running, rpc:call(N1, mria_mnesia, cluster_status, [N2]))
+            || N1 <- Nodes,
+               N2 <- Nodes],
+           [?assertMatch(true, rpc:call(N1, mria_mnesia, is_node_in_cluster, [N2]))
+            || N1 <- Nodes,
+               N2 <- Nodes],
+           [?assertMatch(true, rpc:call(N1, mria_mnesia, is_node_in_cluster, []))
+            || N1 <- Nodes],
+           [?assertMatch(Nodes, lists:sort(rpc:call(N1, mria_mnesia, cluster_nodes, [State])))
+            || N1 <- Nodes,
+               State <- [all, running]],
+           [begin
+                {Nodes1, []} = rpc:call(N1, mria_mnesia, cluster_view, []),
+                ?assertMatch(Nodes, lists:sort(Nodes1))
+            end
+            || N1 <- Nodes]
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
@@ -90,14 +85,14 @@ t_join_after_node_down(_) ->
            ?assertMatch(ok, rpc:call(N1, mria, start, [])),
            ?assertMatch(ok, rpc:call(N2, mria, start, [])),
            ?assertMatch(ok, rpc:call(N1, mria, join, [N2])),
-           ?assertMatch([N1, N2], lists:sort(rpc:call(N1, mnesia, system_info, [running_db_nodes]))),
+           ?assertMatch([N1, N2], lists:sort(rpc:call(N1, mria_mnesia, running_nodes, []))),
            ?assertMatch(ok, rpc:call(N1, mria_transaction_gen, init, [])),
            %% Shut down one of the nodes and start N3:
            ?assertMatch(ok, slave:stop(N2)),
            ?assertMatch(ok, rpc:call(N3, mria, start, [])),
            %% Join N3 to N1:
            ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-           ?assertMatch([N1, N3], lists:sort(rpc:call(N1, mnesia, system_info, [running_db_nodes]))),
+           ?assertMatch([N1, N3], lists:sort(rpc:call(N1, mria_mnesia, running_nodes, []))),
            ok
        after
            ok = mria_ct:teardown_cluster(Cluster)
