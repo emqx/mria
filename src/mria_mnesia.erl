@@ -200,7 +200,7 @@ cluster_view() ->
                    || Status <- [running, stopped]]).
 
 %% @doc Cluster nodes.
--spec(cluster_nodes(all | running | stopped | cores) -> [node()]).
+-spec(cluster_nodes(all | running | stopped) -> [node()]).
 cluster_nodes(all) ->
     db_nodes();
 cluster_nodes(running) ->
