@@ -38,6 +38,7 @@ start(_Type, _Args) ->
     mria_sup:start_link().
 
 stop(_State) ->
+    mria_rlog:cleanup(),
     mria_config:erase_all_config(),
     ?tp(notice, "Mria is stopped", #{}).
 

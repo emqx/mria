@@ -30,6 +30,7 @@
         , subscribe/4
         , wait_for_shards/2
         , init/0
+        , cleanup/0
 
         , intercept_trans/2
         , ensure_shard/1
@@ -209,6 +210,14 @@ init() ->
     case mria_config:whoami() of
         core ->
             mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2);
+        _ ->
+            ok
+    end.
+
+cleanup() ->
+    case mria_config:whoami() of
+        core ->
+            mnesia_hook:unregister_hook(post_commit);
         _ ->
             ok
     end.
