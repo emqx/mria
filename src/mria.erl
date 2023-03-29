@@ -192,29 +192,27 @@ is_node_in_cluster(Node) ->
     lists:member(Node, cluster_nodes(all)).
 
 %% @doc Running nodes.
+%% This function should be used with care, as it may not return the most up-to-date
+%% view of replicant nodes, as changes in mria_membership are reflected asynchronously.
+%% For example:
+%% - a core node leaves the cluster and joins it back quickly,
+%% - a replicant node receives monitor DOWN message (see mria_membership)
+%%   and marks the core node as leaving/stopped,
+%% - mria_lb on the replicant re-discovers the core node (rlog_lb_update_interval),
+%% - the replicant pings the core, the core pongs the replicant,
+%%   now each nodes shows the other one as running.
 -spec running_nodes() -> list(node()).
 running_nodes() ->
-    %% TODO: cache the results (this could be a hot call) and don't
-    %% fail on the first unsuccessful call, since other nodes may be
-    %% alive. Use info from `mria_membership'?
-    case mria_rlog:role() of
-        core ->
-            CoreNodes = mria_mnesia:running_nodes(),
-            {Replicants0, _} = rpc:multicall(CoreNodes, mria_status, replicants, [], 15000),
-            Replicants = [Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes],
-            lists:usort(CoreNodes ++ Replicants);
-        replicant ->
-            case mria_lb:core_nodes() of
-                [CoreNode|_] ->
-                    case mria_lib:rpc_call_nothrow(CoreNode, ?MODULE, running_nodes, []) of
-                        {badrpc, _} -> [];
-                        {badtcp, _} -> [];
-                        Result      -> Result
-                    end;
-                [] ->
-                    []
-            end
-    end.
+    CoreNodes = case mria_rlog:role() of
+                    core -> mria_mnesia:running_nodes();
+                    replicant ->
+                        %% Can be used on core node as well, eliminating this
+                        %% case statement, but mria_mnesia:running_nodes/0
+                        %% must be more accurate than mria_membership:nodelist/0...
+                        mria_membership:running_core_nodelist()
+                end,
+    Replicants = mria_membership:running_replicant_nodelist(),
+    lists:usort(CoreNodes ++ Replicants).
 
 %%--------------------------------------------------------------------
 %% Cluster API
