@@ -19,6 +19,7 @@
 %% Node API
 -export([ is_aliving/1
         , is_running/1
+        , is_running/3
         ]).
 
 %% @doc Is the node aliving?
@@ -31,7 +32,13 @@ is_aliving(Node) ->
 %% @doc Is the application running?
 -spec is_running(node()) -> boolean().
 is_running(Node) ->
-    case rpc:call(Node, mria_sup, is_running, []) of
+    is_running(Node, mria_sup, is_running).
+
+%% @doc Is the application running?
+%% M:F/0 must return boolean()
+-spec is_running(node(), module(), atom()) -> boolean().
+is_running(Node, M, F) ->
+    case rpc:call(Node, M, F, []) of
         {badrpc, _} -> false;
         Result -> Result
     end.

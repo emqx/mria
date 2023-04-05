@@ -24,6 +24,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include("mria_rlog.hrl").
+-include("mria.hrl").
 
 -record(kv_tab, {key, val}).
 
@@ -1022,7 +1023,8 @@ t_replicant_manual_join(_Config) ->
            ?tp(test_reconnect_node, #{node => N2}),
            ?wait_async_action(
               ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
-              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N2}}),
+              %% need to wait until N3 pings re-joined N2 and N2 pongs N3
+              #{?snk_kind := mria_membership_pong, member := #member{node = N2}, ?snk_meta := #{node := N3}}),
            ?assertMatch([N1, N2, N3], lists:sort(rpc:call(N2, mria, running_nodes, []))),
            ok
        after

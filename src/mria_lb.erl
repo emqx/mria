@@ -198,8 +198,8 @@ do_update(State = #s{core_nodes = OldCoreNodes}) ->
              , ignored_nodes => DiscoveredNodes -- NewCoreNodes
              , node => node()
              }),
-    IsChanged andalso
-        ping_core_nodes(NewCoreNodes),
+    DiscoveredReplicants = discover_replicants(NewCoreNodes),
+    ping_new_nodes(NewCoreNodes, DiscoveredReplicants),
     State#s{core_nodes = NewCoreNodes}.
 
 %% Find fully connected clusters (i.e. cliques of nodes)
@@ -290,16 +290,6 @@ maybe_report_netsplit(OldNodes, Clusters) ->
     end,
     ok.
 
--spec ping_core_nodes([node()]) -> ok.
-ping_core_nodes(NewCoreNodes) ->
-    %% Replicants do not have themselves as local members.
-    %% We make an entry on the fly.
-    LocalMember = mria_membership:make_new_local_member(),
-    lists:foreach(
-      fun(Core) ->
-              mria_membership:ping(Core, LocalMember)
-      end, NewCoreNodes).
-
 %%================================================================================
 %% Internal exports
 %%================================================================================
@@ -364,6 +354,13 @@ discover_nodes() ->
             discover_manually(Seed)
     end.
 
+-spec discover_replicants([node()]) -> [node()].
+discover_replicants(CoreNodes) ->
+    {Replicants0, _BadNodes} = rpc:multicall( CoreNodes
+                                            , mria_membership, replicant_nodelist, []
+                                            ),
+    lists:usort([Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes]).
+
 %% Return the last node that has been explicitly specified via
 %% "mria:join" command. It overrides other discovery mechanisms.
 -spec manual_seed() -> [node()].
@@ -405,6 +402,29 @@ cluster_score(OldNodes, Cluster) ->
                   Cluster)
     , length(Cluster)
     }.
+
+%% Ping all new nodes to update mria_membership state
+-spec ping_new_nodes([node()], [node()]) -> ok.
+ping_new_nodes(CoreNodes, Replicants) ->
+    %% mria_membership:running_core_nodelist/0 is a more reliable source
+    %% of previous nodes comparing to the list of core nodes stored in
+    %% mria_lb state. mria_lb makes updates periodically, so it can overlook
+    %% changes when another (core) node leaves and joins quickly
+    %% (within mria_lb update period).
+    %% At the same time, mria_membership on a replicant node monitors its
+    %% corresponding registered processes on all other nodes, so it will
+    %% eventually detect a left node.
+    NewCoreNodes = CoreNodes -- mria_membership:running_core_nodelist(),
+    NewReplicants = Replicants -- mria_membership:running_replicant_nodelist(),
+    ping_nodes(NewCoreNodes ++ NewReplicants).
+
+-spec ping_nodes([node()]) -> ok.
+ping_nodes(Nodes) ->
+    LocalMember = mria_membership:local_any_member(),
+    lists:foreach(
+      fun(Node) ->
+              mria_membership:ping(Node, LocalMember)
+      end, Nodes).
 
 %%================================================================================
 %% Unit tests
