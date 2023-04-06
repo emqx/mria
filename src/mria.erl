@@ -45,6 +45,9 @@
 -export([ ro_transaction/2
         , transaction/3
         , transaction/2
+        , sync_transaction/4
+        , sync_transaction/3
+        , sync_transaction/2
         , clear_table/1
 
         , dirty_write/2
@@ -368,6 +371,42 @@ ro_transaction(Shard, Fun) ->
             end
     end.
 
+%% @doc Synchronous transaction.
+%% This function has a behavior different from transaction/2,3 only when called on a replicant node.
+%% When a process on a replicant node calls sync_transaction/4,3,2, it will be blocked
+%% until the transaction is replicated on that node or a timeout occurs.
+%% It should be noted that a ReplTimeout doesn't control the total maximum execution time
+%% of sync_transaction/4,3,2. It is only used to wait for a transaction to be imported
+%% to the local node which originated the transaction.
+%% Thus, the total execution time may be significantly higher,
+%% e. g. when rpc to core node was slow and/or retried.
+%% Moreover, when {timeout, t_result(A)} is returned, the result can be successful.
+%% This type of return value signifies only that a local node has not managed
+%% to replicate the transaction within a requested ReplTimeout.
+-spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list(), timeout()) ->
+          t_result(A) | {timeout, t_result(A)} | {timeout, {error, shard_not_ready}}.
+sync_transaction(Shard, Function, Args, ReplTimeout) ->
+    case {mria_config:whoami(), Shard} of
+        {mnesia, _} ->
+            maybe_middleman(mnesia, transaction, [Function, Args]);
+        {_, ?LOCAL_CONTENT_SHARD} ->
+            maybe_middleman(mria_upstream, transactional_wrapper, [?LOCAL_CONTENT_SHARD, Function, Args]);
+        {core, _} ->
+            maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
+        {replicant, _} ->
+            sync_replicant_trans(Shard, Function, Args, ReplTimeout)
+    end.
+
+-spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list()) ->
+          t_result(A) | {timeout, t_result(A)} | {timeout, {error, shard_not_ready}}.
+sync_transaction(Shard, Function, Args) ->
+    sync_transaction(Shard, Function, Args, infinity).
+
+-spec sync_transaction(mria_rlog:shard(), fun(() -> A)) ->
+          t_result(A) | {timeout, t_result(A)} | {timeout, {error, shard_not_ready}}.
+sync_transaction(Shard, Fun) ->
+    sync_transaction(Shard, Fun, []).
+
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
 transaction(Shard, Function, Args) ->
     case {mria_config:whoami(), Shard} of
@@ -600,3 +639,69 @@ db_nodes_maybe_rpc() ->
                     []
             end
     end.
+
+sync_replicant_trans(Shard, Function, Args, ReplTimeout) ->
+    case mria_rlog:wait_for_shards([Shard], ReplTimeout) of
+        ok ->
+            WorkerName = mria_replica_importer_worker:name(Shard),
+            ReplyTo = reply_to(Shard, WorkerName),
+            CoreRes = rpc_to_core_node(Shard, mria_upstream, sync_transactional_wrapper,
+                                       [Shard, Function, Args, ReplyTo]),
+            maybe_retry_waiting(CoreRes, CoreRes, Shard, WorkerName, ReplyTo, ReplTimeout);
+        {timeout, _} -> {timeout, {error, shard_not_ready}}
+    end.
+
+sync_replicant_trans_wait_retry(Shard, CoreRes, WorkerName, ReplTimeout) ->
+    case mria_rlog:wait_for_shards([Shard], ReplTimeout) of
+        ok ->
+            ReplyTo = reply_to(Shard, WorkerName),
+            DummyRes = rpc_to_core_node(Shard, mria_upstream, sync_dummy_wrapper,
+                                       [Shard, ReplyTo]),
+            maybe_retry_waiting(CoreRes, DummyRes, Shard, WorkerName, ReplyTo, ReplTimeout);
+        {timeout, _} -> {timeout, {error, shard_not_ready}}
+    end.
+
+reply_to(Shard, WorkerName) ->
+    AliasRef = monitor(process, WorkerName, [{alias, reply_demonitor}]),
+    #?rlog_sync{reply_to = AliasRef, shard = Shard}.
+
+maybe_retry_waiting(PrevCoreRes, CoreRes, Shard, WorkerName, ReplyTo, ReplTimeout) ->
+    case maybe_wait_for_replication(CoreRes, ReplyTo, ReplTimeout) of
+        ok -> PrevCoreRes;
+        timeout -> {timeout, PrevCoreRes};
+        error ->
+            %% DOWN message can be received if the process crashed/stopped,
+            %% restarted and bootstrapped faster the transaction committed.
+            %% In this case, we can't be sure whether we should wait for
+            %% the shard or for normal {done, Ref} message that can manage
+            %% to be sent after the shard is restored to normal state.
+            %% If we wait for {done, Ref} message with infinity timeout
+            %% we face a risk of hanging forever.
+            %% If we call wait_for_shards/2 instead, it can return earlier
+            %% than the transaction is replicated on the local node.
+            %% Thus, we initiate a dummy (empty) transaction and expect
+            %% a new reply which is guaranteed to be received after
+            %% the original transaction is replicated.
+            sync_replicant_trans_wait_retry(Shard, PrevCoreRes, WorkerName, ReplTimeout)
+    end.
+
+maybe_wait_for_replication({atomic, _} = _CoreRes, #?rlog_sync{reply_to = Ref}, ReplTimeout) ->
+    receive
+        {done, Ref} ->
+            ?tp(mria_replicant_sync_trans_done, #{reply_to => Ref}),
+            ok;
+        {'DOWN', Ref, process, _, _} ->
+            ?tp(mria_replicant_sync_trans_down, #{reply_to => Ref}),
+            error
+    after ReplTimeout ->
+            ?tp(mria_replicant_sync_trans_timeout, #{reply_to => Ref}),
+            demonitor(Ref, [flush]),
+            receive {done, Ref} -> ok
+            after 0 -> timeout
+            end
+    end;
+%% Aborted transaction can't be replicated and mustn't be awaited
+maybe_wait_for_replication(_CoreRes, #?rlog_sync{reply_to = Ref}, _ReplTimeout) ->
+    ?tp(mria_replicant_sync_trans_aborted, #{reply_to => Ref}),
+    demonitor(Ref, [flush]),
+    ok.

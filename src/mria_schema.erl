@@ -330,9 +330,22 @@ boostrap() ->
     %% Create (or copy) the mnesia table and wait for it:
     ok = create_table(MetaSpec),
     ok = mria_mnesia:copy_table(?schema, Storage),
-    mria_mnesia:wait_for_tables([?schema]),
+    RlogSyncOpts = [{type, set},
+                    {record_name, ?rlog_sync},
+                    {attributes, record_info(fields, ?rlog_sync)}
+                   ],
+    RlogSyncSpec = #?schema{ mnesia_table = ?rlog_sync
+                           , shard = ?mria_meta_shard
+                           , storage = null_copies
+                           , config = RlogSyncOpts
+                           },
+    ok = create_table(RlogSyncSpec),
+    %% TODO: is it needed?
+    ok = mria_mnesia:copy_table(?rlog_sync, Storage),
+    mria_mnesia:wait_for_tables([?schema, ?rlog_sync]),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
+    {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, RlogSyncSpec, write], infinity),
     apply_schema_op(MetaSpec, #s{specs = []}).
 
 %%%%% Handling of the online schema updates
