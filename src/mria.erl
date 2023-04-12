@@ -372,15 +372,15 @@ ro_transaction(Shard, Fun) ->
     end.
 
 %% @doc Synchronous transaction.
-%% This function has a behavior different from transaction/2,3 only when called on a replicant node.
-%% When a process on a replicant node calls sync_transaction/4,3,2, it will be blocked
+%% This function has a behavior different from 'transaction/2,3' only when called on a replicant node.
+%% When a process on a replicant node calls 'sync_transaction/4,3,2', it will be blocked
 %% until the transaction is replicated on that node or a timeout occurs.
 %% It should be noted that a ReplTimeout doesn't control the total maximum execution time
-%% of sync_transaction/4,3,2. It is only used to wait for a transaction to be imported
+%% of 'sync_transaction/4,3,2'. It is only used to wait for a transaction to be imported
 %% to the local node which originated the transaction.
 %% Thus, the total execution time may be significantly higher,
 %% e. g. when rpc to core node was slow and/or retried.
-%% Moreover, when {timeout, t_result(A)} is returned, the result can be successful.
+%% Moreover, when '{timeout, t_result(A)}' is returned, the result can be successful.
 %% This type of return value signifies only that a local node has not managed
 %% to replicate the transaction within a requested ReplTimeout.
 -spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list(), timeout()) ->
@@ -640,36 +640,55 @@ db_nodes_maybe_rpc() ->
             end
     end.
 
-sync_replicant_trans(Shard, Function, Args, ReplTimeout) ->
+%% Macro is used instead of a function helper to keep ref trick optimization,
+%% compile with 'recv_opt_info' to check:
+%%  erlc  +recv_opt_info -I src -I include \
+%%        -I _build/default/lib/ -o /tmp/ src/mria.erl
+-define(reply_to(Shard_, WorkerName_),
+        begin
+            AliasRef_ = monitor(process, WorkerName_, [{alias, reply_demonitor}]),
+            #?rlog_sync{reply_to = AliasRef_, shard = Shard_}
+        end).
+
+sync_replicant_trans(Shard, Fun, Args, ReplTimeout) ->
+    StartT = maybe_time(ReplTimeout),
     case mria_rlog:wait_for_shards([Shard], ReplTimeout) of
         ok ->
+            WaitShardT = maybe_time(ReplTimeout),
             WorkerName = mria_replica_importer_worker:name(Shard),
-            ReplyTo = reply_to(Shard, WorkerName),
-            CoreRes = rpc_to_core_node(Shard, mria_upstream, sync_transactional_wrapper,
-                                       [Shard, Function, Args, ReplyTo]),
-            maybe_retry_waiting(CoreRes, CoreRes, Shard, WorkerName, ReplyTo, ReplTimeout);
+            #?rlog_sync{reply_to = Ref} = ReplyTo = ?reply_to(Shard, WorkerName),
+            SyncFun = fun(Args_) ->
+                              Res_ = apply(Fun, Args_),
+                              ok = mnesia:write(ReplyTo),
+                              Res_
+                      end,
+            CoreRes = rpc_to_core_node(Shard, mria_upstream, transactional_wrapper,
+                                       [Shard, SyncFun, [Args]]),
+            ReplTimeout1 = rem_time(ReplTimeout, StartT, WaitShardT),
+            maybe_retry_waiting(CoreRes, CoreRes, Shard, WorkerName, Ref, ReplTimeout1);
         {timeout, _} -> {timeout, {error, shard_not_ready}}
     end.
 
 sync_replicant_trans_wait_retry(Shard, CoreRes, WorkerName, ReplTimeout) ->
+    StartT = maybe_time(ReplTimeout),
     case mria_rlog:wait_for_shards([Shard], ReplTimeout) of
         ok ->
-            ReplyTo = reply_to(Shard, WorkerName),
+            WaitShardT = maybe_time(ReplTimeout),
+            #?rlog_sync{reply_to = Ref} = ReplyTo = ?reply_to(Shard, WorkerName),
             DummyRes = rpc_to_core_node(Shard, mria_upstream, sync_dummy_wrapper,
                                        [Shard, ReplyTo]),
-            maybe_retry_waiting(CoreRes, DummyRes, Shard, WorkerName, ReplyTo, ReplTimeout);
+            ReplTimeout1 = rem_time(ReplTimeout, StartT, WaitShardT),
+            maybe_retry_waiting(CoreRes, DummyRes, Shard, WorkerName, Ref, ReplTimeout1);
         {timeout, _} -> {timeout, {error, shard_not_ready}}
     end.
 
-reply_to(Shard, WorkerName) ->
-    AliasRef = monitor(process, WorkerName, [{alias, reply_demonitor}]),
-    #?rlog_sync{reply_to = AliasRef, shard = Shard}.
-
-maybe_retry_waiting(PrevCoreRes, CoreRes, Shard, WorkerName, ReplyTo, ReplTimeout) ->
-    case maybe_wait_for_replication(CoreRes, ReplyTo, ReplTimeout) of
+maybe_retry_waiting(PrevCoreRes, CoreRes, Shard, WorkerName, Ref, ReplTimeout) ->
+    StartT = maybe_time(ReplTimeout),
+    case maybe_wait_for_replication(CoreRes, Ref, ReplTimeout) of
         ok -> PrevCoreRes;
         timeout -> {timeout, PrevCoreRes};
         error ->
+            WaitReplT = maybe_time(ReplTimeout),
             %% DOWN message can be received if the process crashed/stopped,
             %% restarted and bootstrapped faster the transaction committed.
             %% In this case, we can't be sure whether we should wait for
@@ -682,10 +701,11 @@ maybe_retry_waiting(PrevCoreRes, CoreRes, Shard, WorkerName, ReplyTo, ReplTimeou
             %% Thus, we initiate a dummy (empty) transaction and expect
             %% a new reply which is guaranteed to be received after
             %% the original transaction is replicated.
-            sync_replicant_trans_wait_retry(Shard, PrevCoreRes, WorkerName, ReplTimeout)
+            ReplTimeout1 = rem_time(ReplTimeout, StartT, WaitReplT),
+            sync_replicant_trans_wait_retry(Shard, PrevCoreRes, WorkerName, ReplTimeout1)
     end.
 
-maybe_wait_for_replication({atomic, _} = _CoreRes, #?rlog_sync{reply_to = Ref}, ReplTimeout) ->
+maybe_wait_for_replication({atomic, _} = _CoreRes, Ref, ReplTimeout) ->
     receive
         {done, Ref} ->
             ?tp(mria_replicant_sync_trans_done, #{reply_to => Ref}),
@@ -701,7 +721,19 @@ maybe_wait_for_replication({atomic, _} = _CoreRes, #?rlog_sync{reply_to = Ref}, 
             end
     end;
 %% Aborted transaction can't be replicated and mustn't be awaited
-maybe_wait_for_replication(_CoreRes, #?rlog_sync{reply_to = Ref}, _ReplTimeout) ->
+maybe_wait_for_replication(_CoreRes, Ref, _ReplTimeout) ->
     ?tp(mria_replicant_sync_trans_aborted, #{reply_to => Ref}),
     demonitor(Ref, [flush]),
     ok.
+
+maybe_time(Timeout) ->
+    case Timeout of
+        infinity -> infinity;
+        T when is_integer(T) -> erlang:monotonic_time(millisecond)
+    end.
+
+rem_time(Timeout, T0, T1) ->
+    if is_integer(Timeout) andalso is_integer(T0) andalso is_integer(T1) ->
+            max(0, Timeout - (T1 - T0));
+       true -> infinity
+    end.

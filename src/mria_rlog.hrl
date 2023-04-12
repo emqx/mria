@@ -3,7 +3,7 @@
 
 -define(mria_meta_shard, '$mria_meta_shard').
 -define(schema, mria_schema).
--define(rlog_sync, mria_rlog_sync).
+-define(rlog_sync, '$mria_rlog_sync').
 
 %% Note to self: don't forget to update all the match specs in
 %% `mria_schema' module when changing fields in this record

@@ -426,9 +426,9 @@ t_sync_transaction_on_replicant(_) ->
                      ?of_node(N2, Trace)
                     )
                  ),
-               ?assertMatch([_|[]], ?of_kind(mria_replicant_sync_trans_timeout, ?of_node(N2, Trace))),
-               ?assertMatch([_|[]], ?of_kind(mria_replicant_sync_trans_down, ?of_node(N2, Trace))),
-               ?assertMatch([_|[]], ?of_kind(mria_replicant_sync_trans_aborted, ?of_node(N2, Trace))),
+               ?assertMatch([_], ?of_kind(mria_replicant_sync_trans_timeout, ?of_node(N2, Trace))),
+               ?assertMatch([_], ?of_kind(mria_replicant_sync_trans_down, ?of_node(N2, Trace))),
+               ?assertMatch([_], ?of_kind(mria_replicant_sync_trans_aborted, ?of_node(N2, Trace))),
                %% check that no replies were attempted to be send from another replicant node,
                %% that didn't initiated any sync transactions
                ?assertEqual([], ?of_kind(importer_worker_sync_trans_recv, ?of_node(N3, Trace)))

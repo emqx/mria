@@ -330,8 +330,7 @@ boostrap() ->
     %% Create (or copy) the mnesia table and wait for it:
     ok = create_table(MetaSpec),
     ok = mria_mnesia:copy_table(?schema, Storage),
-    RlogSyncOpts = [{type, set},
-                    {record_name, ?rlog_sync},
+    RlogSyncOpts = [{record_name, ?rlog_sync},
                     {attributes, record_info(fields, ?rlog_sync)}
                    ],
     RlogSyncSpec = #?schema{ mnesia_table = ?rlog_sync
@@ -340,7 +339,6 @@ boostrap() ->
                            , config = RlogSyncOpts
                            },
     ok = create_table(RlogSyncSpec),
-    %% TODO: is it needed?
     ok = mria_mnesia:copy_table(?rlog_sync, Storage),
     mria_mnesia:wait_for_tables([?schema, ?rlog_sync]),
     %% Seed the table with the metadata:

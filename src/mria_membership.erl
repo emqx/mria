@@ -213,7 +213,7 @@ is_all_alive() ->
 
 -spec(is_running() -> boolean()).
 is_running() ->
-     is_pid(whereis(?MODULE)).
+    is_pid(whereis(?MODULE)).
 
 -spec(monitor(event_type(), pid() | function(), boolean()) -> ok).
 monitor(Type, PidOrFun, OnOff) ->
@@ -372,7 +372,7 @@ handle_cast({pong, Member}, State) ->
     ?tp(mria_membership_pong, #{member => Member}),
     {Member1, State1} = monitor_if_replicant(Member, State),
     insert(Member1),
-   {noreply, State1};
+    {noreply, State1};
 
 handle_cast({leaving, Node}, State) ->
     ?LOG(info, "Node ~s leaving", [Node]),
