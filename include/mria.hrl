@@ -16,3 +16,5 @@
          }).
 
 -type(member() :: #member{}).
+
+-define(JOIN_LOCK_ID, {mria_sync_join, node()}).
