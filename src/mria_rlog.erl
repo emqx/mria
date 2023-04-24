@@ -45,6 +45,7 @@
              , seqno/0
              , entry/0
              , transport/0
+             , sync_reply_to/0
              ]).
 
 -include("mria_rlog.hrl").
@@ -62,7 +63,6 @@
 
 -type shard_config() :: #{ tables := [mria:table()]
                          }.
-
 -type change_type() :: write | delete | delete_object | clear_table.
 
 -type op() :: {write, mria:table(), mria_mnesia:record()}
@@ -79,6 +79,8 @@
 -type seqno() :: non_neg_integer().
 
 -type transport() :: gen_rpc | distr.
+
+-type sync_reply_to() :: #?rlog_sync{reply_to :: reference(), shard :: shard()}.
 
 %%================================================================================
 %% API
@@ -198,9 +200,14 @@ detect_shard(#{disc_copies := [Op | _]}) ->
 detect_shard(#{disc_only_copies := [Op | _]}) ->
     do_detect_shard(Op);
 detect_shard(#{ext := [{ext_copies, [{_, Op}]} | _]}) ->
-    do_detect_shard(Op);
+    do_detect_ext_shard(Op);
 detect_shard(_) ->
     undefined.
+
+do_detect_ext_shard({{?rlog_sync, _Key}, #?rlog_sync{shard = Shard}, _Operation}) ->
+    Shard;
+do_detect_ext_shard(Op) ->
+    do_detect_shard(Op).
 
 do_detect_shard({{Tab, _Key}, _Value, _Operation}) ->
     mria_config:shard_rlookup(Tab).

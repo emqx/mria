@@ -26,11 +26,14 @@
 %% API:
 %% Internal exports
 -export([ transactional_wrapper/3
+        , sync_dummy_wrapper/2
         , dirty_wrapper/4
         , dirty_write_sync/2
         ]).
 
 -export_type([]).
+
+-include("mria_rlog.hrl").
 
 %%================================================================================
 %% Type declarations
@@ -51,6 +54,23 @@ transactional_wrapper(Shard, Fun, Args) ->
                                ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid),
                                Res
                        end).
+
+%% @doc Write a special ReplyTo record to rlog_sync (null_copies table) only
+%% to trigger its replication. Used by mria:sync_transaction/2,3,4 as a 'retry'
+%% mechanism during failures: if the original sync_transaction reply might
+%% have been lost because of failure - make RPC with this dummy function to wait
+%% for its replication and, thus, ensure that the original transaction has been
+%% also already replicated.
+-spec sync_dummy_wrapper(mria_rlog:shard(), mria_rlog:sync_reply_to()) -> mria:t_result(term()).
+sync_dummy_wrapper(Shard, ReplyTo) ->
+    mria_rlog:wait_for_shards([Shard], infinity),
+    %% mimic mnesia transaction return values
+    try
+        ok = mnesia:dirty_write(ReplyTo),
+        {atomic, ok}
+    catch Err : Reason ->
+            {aborted, {Err, Reason}}
+    end.
 
 %% @doc Perform syncronous dirty operation
 -spec dirty_write_sync(mria:table(), tuple()) -> ok.
@@ -87,7 +107,8 @@ ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid) ->
 
 do_ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid) ->
     Tables = ets:match(TxStore, {{'$1', '_'}, '_', '_'}),
-    lists:foreach( fun([Table]) ->
+    lists:foreach( fun([?rlog_sync]) -> ok;
+                      ([Table]) ->
                            case mria_config:shard_rlookup(Table) =:= Shard of
                                true  -> ok;
                                false -> case whereis(Shard) of

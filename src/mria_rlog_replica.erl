@@ -315,6 +315,11 @@ handle_importer_ack(State, Ack, Data) ->
 -spec initiate_reconnect(data()) -> fsm_result().
 initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Ref}) ->
     mria_status:notify_shard_down(Shard),
+    %% IMPORTANT: mria:sync_transaction/4,3,2 relies on the fact that
+    %% importer_worker is restarted whenever something goes wrong,
+    %% e.g, when an agent on a core node is down and mria_rlog_replica reconnects.
+    %% If this behavior is ever changed, mria:sync_transaction/4,3,2 implementation
+    %% needs to be updated accordingly (this is also covered by a test case).
     mria_replicant_shard_sup:stop_importer_worker(SupPid),
     flush_importer_acks(Ref),
     D1 = close_replayq(D0),

@@ -359,6 +359,81 @@ t_transaction_on_replicant(_) ->
                mria_rlog_props:no_unexpected_events(Trace)
        end).
 
+t_sync_transaction_on_replicant(_) ->
+    Cluster = mria_ct:cluster([core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       try
+           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           [?assertEqual({atomic,[]},
+                         rpc:call(N, mnesia, transaction, [fun() -> mnesia:all_keys(test_tab) end]))
+            || N <- Nodes],
+           K1 = V1 = <<"sync1">>,
+           ExpectedR1 = {test_tab, K1, V1},
+           K2 = V2 = <<"sync2">>,
+           ExpectedR2 = {test_tab, K2, V2},
+           K3 = V3 = <<"sync3">>,
+           ExpectedR3 = {test_tab, K3, V3},
+           K4 = V4 = <<"sync4">>,
+           ExpectedR4 = {test_tab, K4, V4},
+           %% Happy path scenario
+           ?ON(N2,
+               begin
+                   ?assertEqual({atomic, ok},
+                                mria:sync_transaction(test_shard, fun() -> mnesia:write(ExpectedR1) end)),
+                   ?assertEqual({atomic, [ExpectedR1]},
+                                mnesia:transaction(fun() -> mnesia:read(test_tab, K1) end))
+               end),
+           %% Aborted transaction
+           ?assertMatch({aborted, _},
+                        rpc:call(N2, mria, sync_transaction,
+                                 [test_shard, fun() -> mnesia:write(ExpectedR1), mnesia:abort(test) end])),
+           %% Failure during transaction
+           SlowTransFun = fun() -> timer:sleep(7000), mnesia:write(ExpectedR2), mnesia:read(test_tab, K2) end,
+           {ok, AgentPid} = rpc:call(N2, mria_status, upstream, [test_shard]),
+           ReqKey = rpc:async_call(N2, mria, sync_transaction, [test_shard, SlowTransFun]),
+           true = rpc:call(N1, erlang, exit, [AgentPid, kill]),
+           SlowTransRes = rpc:yield(ReqKey),
+           SlowTransResRepl = rpc:call(N2, mnesia, transaction, [fun() -> mnesia:read(test_tab, K2) end]),
+           ?assertEqual({atomic, [ExpectedR2]}, SlowTransRes),
+           ?assertEqual({atomic, [ExpectedR2]}, SlowTransResRepl),
+           %% Timeout happy path
+           ?ON(N2,
+               begin
+                   ?assertEqual({atomic, ok},
+                                mria:sync_transaction(test_shard,
+                                                      fun() -> mnesia:write(ExpectedR3) end, [], 5000)),
+                   ?assertEqual({atomic, [ExpectedR3]},
+                                mnesia:transaction(fun() -> mnesia:read(test_tab, K3) end))
+               end),
+           %% Timeout
+           ?force_ordering(#{?snk_kind := mria_replicant_sync_trans_timeout, reply_to := _Alias1},
+                           #{?snk_kind := importer_worker_sync_trans_recv, reply_to := _Alias2},
+                           _Alias1 =:= _Alias2),
+           TimeoutFun = fun() -> mnesia:write(ExpectedR4), mnesia:read(test_tab, K4) end,
+           TimeoutRpc = rpc:call(N2, mria, sync_transaction, [test_shard, TimeoutFun, [], 10]),
+           ?assertEqual({timeout, {atomic, [ExpectedR4]}}, TimeoutRpc),
+           Nodes
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       fun([_N1, N2, N3], Trace) ->
+               ?assert(
+                  ?causality(
+                     #{?snk_kind := importer_worker_sync_trans_recv, reply_to := _AliasRecv},
+                     #{?snk_kind := mria_replicant_sync_trans_done, reply_to := _AliasDone},
+                     _AliasRecv =:= _AliasDone,
+                     ?of_node(N2, Trace)
+                    )
+                 ),
+               ?assertMatch([_], ?of_kind(mria_replicant_sync_trans_timeout, ?of_node(N2, Trace))),
+               ?assertMatch([_], ?of_kind(mria_replicant_sync_trans_down, ?of_node(N2, Trace))),
+               ?assertMatch([_], ?of_kind(mria_replicant_sync_trans_aborted, ?of_node(N2, Trace))),
+               %% check that no replies were attempted to be send from another replicant node,
+               %% that didn't initiated any sync transactions
+               ?assertEqual([], ?of_kind(importer_worker_sync_trans_recv, ?of_node(N3, Trace)))
+       end).
+
 %% Check that behavior on error and exception is the same for both backends
 t_abort(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
