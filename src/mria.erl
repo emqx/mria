@@ -231,31 +231,11 @@ join(Node) ->
 join(Node, _) when Node =:= node() ->
     ignore;
 join(Node, Reason) when is_atom(Node) ->
-    %% When `Reason =:= heal' the node should rejoin regardless of
-    %% what mnesia thinks:
-    IsInCluster = is_node_in_cluster(Node) andalso Reason =/= heal,
-    case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
-        {false, true, core} ->
-            %% FIXME: reading role via `mria_config' may be unsafe
-            %% when the app is not running, since it defaults to core.
-            %% Replicant may try to join the cluster as a core and wreak
-            %% havok
-            Role = application:get_env(mria, node_role, core),
-            do_join(Role, Node, Reason);
-        {_, false, _} ->
-            {error, {node_down, Node}};
-        {true, _, _} ->
-            {error, {already_in_cluster, Node}};
-        {_, _, replicant} ->
-            {error, {cannot_join_to_replicant, Node}};
-        {_, IsRunning, Role} ->
-            {error, #{ reason => illegal_target
-                     , target_node => Node
-                     , in_cluster => IsInCluster
-                     , is_running => IsRunning
-                     , target_role => Role
-                     }}
-    end.
+    %% If two nodes are trying to join each other simultaneously,
+    %% one of them must be blocked waiting for a lock.
+    %% Once lock is released, it is expected to be already in the
+    %% cluster (if the other node joined it successfully).
+    global:trans(?JOIN_LOCK_ID, fun() -> join1(Node, Reason) end, [node(), Node]).
 
 %% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.
@@ -566,6 +546,33 @@ find_upstream_node(Shard) ->
                  {ok, Node} = mria_status:get_core_node(Shard, infinity),
                  Node
              end).
+
+join1(Node, Reason) when is_atom(Node) ->
+    %% When `Reason =:= heal' the node should rejoin regardless of
+    %% what mnesia thinks:
+    IsInCluster = is_node_in_cluster(Node) andalso Reason =/= heal,
+    case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
+        {false, true, core} ->
+            %% FIXME: reading role via `mria_config' may be unsafe
+            %% when the app is not running, since it defaults to core.
+            %% Replicant may try to join the cluster as a core and wreak
+            %% havok
+            Role = application:get_env(mria, node_role, core),
+            do_join(Role, Node, Reason);
+        {_, false, _} ->
+            {error, {node_down, Node}};
+        {true, _, _} ->
+            {error, {already_in_cluster, Node}};
+        {_, _, replicant} ->
+            {error, {cannot_join_to_replicant, Node}};
+        {_, IsRunning, Role} ->
+            {error, #{ reason => illegal_target
+                     , target_node => Node
+                     , in_cluster => IsInCluster
+                     , is_running => IsRunning
+                     , target_role => Role
+                     }}
+    end.
 
 -spec do_join(mria_rlog:role(), node(), join_reason()) -> ok.
 do_join(Role, Node, Reason) ->

@@ -1131,6 +1131,39 @@ t_cluster_nodes(_) ->
        end,
        []).
 
+t_join_each_other_simultaneously(_) ->
+    Cluster = [maps:remove(join_to, Spec)
+               || Spec <- mria_ct:cluster([core, core], mria_mnesia_test_util:common_env())],
+    ?check_trace(
+       try
+           [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           Key1 = rpc:async_call(N1, mria, join, [N2]),
+           Key2 = rpc:async_call(N2, mria, join, [N1]),
+           ?assertMatch([ok, {error, {already_in_cluster, _}}],
+                        lists:sort([rpc:yield(Key1), rpc:yield(Key2)]))
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+      []).
+
+t_join_another_node_simultaneously(_) ->
+    Cluster = [maps:remove(join_to, Spec)
+               || Spec <- mria_ct:cluster([core, core, core, core], mria_mnesia_test_util:common_env())],
+    ?check_trace(
+       try
+           [N1, N2, N3, N4] = Nodes = mria_ct:start_cluster(mria, Cluster),
+           ok = rpc:call(N2, mria, join, [N1]),
+           Key1 = rpc:async_call(N3, mria, join, [N1]),
+           Key2 = rpc:async_call(N4, mria, join, [N1]),
+           ?assertMatch(ok, rpc:yield(Key1)),
+           ?assertMatch(ok, rpc:yield(Key2)),
+           timer:sleep(3000),
+           ?assertEqual({[true, true, true, true], []}, rpc:multicall(Nodes, mria_sup, is_running, []))
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+      []).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10
