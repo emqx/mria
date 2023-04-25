@@ -654,7 +654,10 @@ db_nodes_maybe_rpc() ->
 -define(reply_to(Shard_, WorkerName_),
         begin
             AliasRef_ = monitor(process, WorkerName_, [{alias, reply_demonitor}]),
-            #?rlog_sync{reply_to = AliasRef_, shard = Shard_}
+            #?rlog_sync{ reply_to = AliasRef_
+                       , shard = Shard_
+                       , extra = #{wait => [node()]} %% TODO: Currently unused
+                       }
         end).
 
 sync_replicant_trans(Shard, Fun, Args, ReplTimeout) ->
