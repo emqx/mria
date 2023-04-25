@@ -14,7 +14,7 @@
         , config
         }).
 
--record(?rlog_sync, {reply_to, shard}).
+-record(?rlog_sync, {reply_to, shard, extra = #{}}).
 
 -define(LOCAL_CONTENT_SHARD, undefined).
 
