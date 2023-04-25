@@ -107,6 +107,25 @@ t_local_member(_) ->
     #member{node = Node} = mria_membership:local_member(),
     ?assertEqual(node(), Node).
 
+t_node_role_error(_) ->
+    ?check_trace(
+       begin
+           Node = 'badnode@badhost',
+           ?wait_async_action(
+              gen_server:cast(mria_membership, {joining, Node}),
+              #{ ?snk_kind := mria_membership_insert
+               , member := #member{node = Node}
+               }),
+           ?assertMatch([#member{role = undefined}], ets:lookup(membership, Node)),
+           ?assertEqual(false, mria_membership:is_member(Node)),
+           ?assertEqual(false, mria_membership:lookup_member(Node)),
+           ?assert(not lists:member(Node, mria_membership:nodelist())),
+           ?assert(not lists:member(Node, mria_membership:replicant_nodelist()))
+       end,
+       fun(Trace) ->
+               ?assertMatch([_], ?of_kind(mria_membership_role_error, Trace))
+       end).
+
 t_leave(_) ->
     Cluster = mria_ct:cluster([core, core, core], []),
     try
