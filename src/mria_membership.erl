@@ -91,9 +91,9 @@
 -define(TAB, membership).
 -define(LOG(Level, Format, Args),
         logger:Level("Mria(Membership): " ++ Format, Args)).
--define(lookup_member(N, R),
-        case ets:lookup(?TAB, N) of
-            [#member{role = R} = M] -> M;
+-define(lookup_member(N_, R_),
+        case ets:lookup(?TAB, N_) of
+            [#member{role = R_ = ROLE_} = M_] when ROLE_ /= undefined -> M_;
             _ -> false
         end).
 
@@ -323,7 +323,7 @@ handle_cast({node_up, Node}, State) ->
         true ->
             Member = case lookup(Node) of
                        [M] -> M#member{status = up};
-                       []  -> #member{node = Node, status = up, role = mria_rlog:role(Node)}
+                       []  -> #member{node = Node, status = up, role = role(Node)}
                      end,
             insert(Member#member{mnesia = mnesia_cluster_status(Node)});
         false -> ignore
@@ -347,7 +347,7 @@ handle_cast({joining, Node}, State) ->
     ?LOG(info, "Node ~s joining", [Node]),
     insert(case lookup(Node) of
                [Member] -> Member#member{status = joining};
-               []       -> #member{node = Node, status = joining, role = mria_rlog:role(Node)}
+               []       -> #member{node = Node, status = joining, role = role(Node)}
            end),
     notify({node, joining, Node}, State),
     {noreply, State};
@@ -392,7 +392,7 @@ handle_cast({mnesia_up, Node}, State) ->
                [Member] ->
                    Member#member{status = up, mnesia = running};
                [] ->
-                   #member{node = Node, status = up, mnesia = running, role = mria_rlog:role(Node)}
+                   #member{node = Node, status = up, mnesia = running, role = role(Node)}
            end),
     spawn(?MODULE, pong, [Node, local_member()]),
     notify({mnesia, up, Node}, State),
@@ -559,4 +559,14 @@ monitor_if_replicant(Member = #member{node = Node, role = Role}, State) ->
             {Member, add_monitor({membership, {?MODULE, Node}}, State)};
         false ->
             {Member#member{mnesia = mnesia_cluster_status(Node)}, State}
+    end.
+
+role(Node) ->
+    try
+        mria_rlog:role(Node)
+    catch
+        _:Err ->
+            ?LOG(error, "Failed to get role, node: ~p, error: ~p", [Node, Err]),
+            ?tp(mria_membership_role_error, #{node => node}),
+            undefined
     end.
