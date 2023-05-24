@@ -18,7 +18,7 @@
 
 -behaviour(application).
 
--export([start/2, stop/1]).
+-export([start/2, prep_stop/1, stop/1]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
 
@@ -37,8 +37,12 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting shards", #{}),
     mria_sup:start_link().
 
-stop(_State) ->
+prep_stop(State) ->
+    ?tp(debug, "Mria is preparing to stop", #{}),
     mria_rlog:cleanup(),
+    State.
+
+stop(_State) ->
     mria_config:erase_all_config(),
     ?tp(notice, "Mria is stopped", #{}).
 
