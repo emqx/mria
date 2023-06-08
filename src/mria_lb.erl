@@ -106,16 +106,19 @@ leave_cluster() ->
 init(_) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
-    start_timer(),
+    start_timer(0),
     mria_membership:monitor(membership, self(), true),
     State = #s{ core_protocol_versions = #{}
               , core_nodes = []
               },
     {ok, State}.
 
-handle_info(?update, St) ->
-    start_timer(),
-    {noreply, do_update(St)};
+handle_info(?update, St0) ->
+    T0 = erlang:system_time(millisecond),
+    St = do_update(St0),
+    T1 = erlang:system_time(millisecond),
+    start_timer(T1 - T0),
+    {noreply, St};
 handle_info({membership, Event}, St) ->
     case Event of
         {mnesia, down, _Node} -> %% Trigger update immediately when core node goes down
@@ -248,8 +251,8 @@ shard_badness(NodeInfo) ->
       #{},
       NodeInfo).
 
-start_timer() ->
-    Interval = mria_config:lb_poll_interval(),
+start_timer(LastUpdateTime) ->
+    Interval = max(100, mria_config:lb_poll_interval() - LastUpdateTime),
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
 -spec find_best_cluster([node()], [[node()]]) -> {_Changed :: boolean(), [node()]}.
