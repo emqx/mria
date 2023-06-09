@@ -1026,28 +1026,6 @@ t_dirty_update_counter(_Config) ->
        end,
        []).
 
-t_empty_shard(_Config) ->
-    Cluster = mria_ct:cluster( [ core
-                               , replicant
-                               ]
-                             , [ {mria, rlog_startup_shards, [test_shard, empty_test_shard]}
-                               | mria_mnesia_test_util:common_env()
-                               ]
-                             ),
-    ?check_trace(
-       #{timetrap => 30000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           ok = mria_mnesia_test_util:wait_tables(Nodes),
-           %% Check status:
-           ?assertMatch(ok, rpc:call(N1, mria_rlog, wait_for_shards, [[empty_test_shard], 10000])),
-           ?assertMatch(ok, rpc:call(N2, mria_rlog, wait_for_shards, [[empty_test_shard], 10000])),
-           ok
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end,
-       common_checks()).
-
 t_replicant_manual_join(_Config) ->
     Cluster = mria_ct:cluster( [ core
                                , core

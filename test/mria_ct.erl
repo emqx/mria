@@ -194,6 +194,7 @@ wait_running(Node, Timeout) ->
 stop_slave(Node) ->
     ok = cover:stop([Node]),
     rpc(Node, mria, stop, []),
+    rpc(Node, application, stop, [gen_rpc]), %% Avoid "connection refused" errors
     mnesia:delete_schema([Node]),
     slave:stop(Node).
 
