@@ -137,12 +137,8 @@ do_start_slave(Name, BeamArgs) ->
 teardown_cluster(Specs) ->
     ?tp(notice, teardown_cluster, #{}),
     %% Shut down replicants first, otherwise they will make noise about core nodes going down:
-    SortFun = fun(#{role := core}, #{role := replicant}) -> false;
-                 (_, _)                                  -> true
-              end,
-    Nodes = lists:sort(SortFun, [I || #{node := I} <- Specs]),
-    %rpc:multicall(Nodes, mria, stop, [], 10_000),
-    [ok = stop_slave(I) || I <- Nodes],
+    [ok = stop_slave(I) || #{role := replicant, node := I} <- Specs],
+    [ok = stop_slave(I) || #{role := core, node := I} <- Specs],
     ok.
 
 start_mria(#{node := Node} = Spec) ->

@@ -253,6 +253,8 @@ shard_badness(NodeInfo) ->
       NodeInfo).
 
 start_timer(LastUpdateTime) ->
+    %% Leave at least 100 ms between updates to leave some time to
+    %% process other events:
     Interval = max(100, mria_config:lb_poll_interval() - LastUpdateTime),
     erlang:send_after(Interval + rand:uniform(Interval), self(), ?update).
 
