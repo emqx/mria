@@ -165,6 +165,7 @@ code_change(_OldVsn, St, _Extra) ->
     {ok, St}.
 
 terminate(_Reason, St) ->
+    lists:foreach(fun mria_status:notify_core_node_down/1, mria_schema:shards()),
     {ok, St}.
 
 %%================================================================================
