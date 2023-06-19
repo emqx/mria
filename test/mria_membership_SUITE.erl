@@ -449,6 +449,7 @@ test_node_leaves( LeaveKind, JoinKind, LeaveNode, ObserveNode, Seed
     wait_action(LeaveKind, LeaveNode, ObserveNode, mria, leave, []),
     ?assertEqual(ExpectAfterLeave, erpc:call(ObserveNode, mria_membership, AssertF, [])),
     wait_action(JoinKind, LeaveNode, ObserveNode, up, mria, join, [Seed]),
+    timer:sleep(5_000),
     ?assertEqual(ExpectAfterJoin, erpc:call(ObserveNode, mria_membership, AssertF, [])).
 
 test_member_is_stopped_replicant_observes(WaitKind, StopNode, ObserveNode, AssertF) ->

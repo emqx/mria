@@ -375,7 +375,13 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
                 }
               | {error, term()}.
 try_connect(Shard, Checkpoint) ->
-    try_connect(mria_lib:shuffle(mria_rlog:core_nodes()), Shard, Checkpoint).
+    Timeout = 4_000, % Don't block FSM forever, allow it to process other messages.
+    %% Get the best node according to the LB
+    Nodes = case mria_status:get_core_node(Shard, Timeout) of
+                {ok, N} -> [N];
+                timeout -> []
+            end,
+    try_connect(Nodes, Shard, Checkpoint).
 
 -spec try_connect([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
                 { ok
