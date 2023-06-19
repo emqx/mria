@@ -78,7 +78,11 @@ start_link(Parent, Shard) ->
 %% server is lost or delayed due to network congestion.
 -spec probe(node(), mria_rlog:shard()) -> boolean().
 probe(Node, Shard) ->
-    mria_lb:probe(Node, Shard).
+    Vsn = mria_rlog:get_protocol_version(),
+    case mria_lib:rpc_call_nothrow({Node, Shard}, ?MODULE, do_probe, [Shard]) of
+        {true, Vsn} -> true;
+        _           -> false
+    end.
 
 -spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint()) ->
           { ok
@@ -292,4 +296,4 @@ do_bootstrap(Shard, Subscriber) ->
 
 -spec do_probe(mria_rlog:shard()) -> {true, integer()}.
 do_probe(Shard) ->
-    {gen_server:call(Shard, probe, 1000), mria_rlog:get_protocol_version()}.
+    {gen_server:call(Shard, probe, infinity), mria_rlog:get_protocol_version()}.

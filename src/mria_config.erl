@@ -137,7 +137,7 @@ set_replay_batch_size(N) ->
 
 -spec lb_timeout() -> timeout().
 lb_timeout() ->
-    application:get_env(mria, rlog_lb_update_timeout, 300).
+    application:get_env(mria, rlog_lb_update_timeout, 3000).
 
 -spec lb_poll_interval() -> non_neg_integer().
 lb_poll_interval() ->
