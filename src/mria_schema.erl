@@ -339,7 +339,7 @@ boostrap() ->
                            , config = RlogSyncOpts
                            },
     ok = create_table(RlogSyncSpec),
-    ok = mria_mnesia:copy_table(?rlog_sync, Storage),
+    ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
     mria_mnesia:wait_for_tables([?schema, ?rlog_sync]),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
