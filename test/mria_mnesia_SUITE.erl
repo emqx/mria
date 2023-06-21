@@ -128,7 +128,14 @@ t_diagnosis_tab(_)->
            %% Start N1, N1 mnesia doesn't know N2 is down
            ?tp(notice, ?FUNCTION_NAME, #{step => start_n1}),
            N1 = mria_ct:start_slave(node, NS1),
-           ok = rpc:call(N1, mria, start, []),
+           %% `mria:start/0` will be (most likely) blocked in `mria_schema:bootstrap/0`,
+           %% waiting for `?rlog_sync` table until N2 is up again.
+           %% It's a known issue, not directly related to this test, and should be handled separately.
+           ?wait_async_action(
+              rpc:async_call(N1, mria, start, []),
+              #{ ?snk_kind := rlog_schema_init
+               , ?snk_meta := #{node := N1}
+               }),
            ?assertEqual([N2], lists:sort(rpc:call(N1, mria_mnesia, cluster_nodes, [stopped]))),
            %% N1 is waiting for N2 since N1 knows N2 has the latest copy of data
            ?assertEqual( {timeout,[test_tab_1]}
