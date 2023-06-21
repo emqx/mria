@@ -183,7 +183,7 @@ start_link() ->
 init([]) ->
     logger:set_process_metadata(#{domain => [mria, rlog, schema]}),
     ?tp(debug, rlog_schema_init, #{}),
-    State0 = boostrap(),
+    State0 = bootstrap(),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),
     %% Recreate all the known tables:
     ?tp(info, "Converging schema", #{}),
@@ -316,7 +316,7 @@ converge_schema(Entries, InitialState) ->
 %% @private Create schema of the schema table and the meta shard. This
 %% is needed so we can replicate schema updates just like regular
 %% transactions.
-boostrap() ->
+bootstrap() ->
     Storage = ram_copies,
     Opts = [{type, ordered_set},
             {record_name, ?schema},
@@ -339,7 +339,7 @@ boostrap() ->
                            , config = RlogSyncOpts
                            },
     ok = create_table(RlogSyncSpec),
-    ok = mria_mnesia:copy_table(?rlog_sync, Storage),
+    ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
     mria_mnesia:wait_for_tables([?schema, ?rlog_sync]),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
