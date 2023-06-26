@@ -340,7 +340,7 @@ discover_nodes() ->
 -spec discover_replicants([node()]) -> [node()].
 discover_replicants(CoreNodes) ->
     {Replicants0, _BadNodes} = rpc:multicall( CoreNodes
-                                            , mria_membership, replicant_nodelist, []
+                                            , mria_membership, running_replicant_nodelist, []
                                             ),
     lists:usort([Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes]).
 
