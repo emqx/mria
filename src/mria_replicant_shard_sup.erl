@@ -30,6 +30,8 @@
 %% Supervisor callbacks:
 -export([init/1]).
 
+-define(shutdown, 5000).
+
 %%================================================================================
 %% API funcions
 %%================================================================================
@@ -46,7 +48,7 @@ start_importer_worker(SupPid, Shard, SeqNo) ->
             , restart     => permanent
             , significant => false
             , type        => worker
-            , shutdown    => 1000
+            , shutdown    => ?shutdown
             },
     start_worker(SupPid, Id, Spec).
 
@@ -61,7 +63,7 @@ start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
             , start    => {mria_bootstrapper, start_link_client, [Shard, RemoteNode, ReplicaPid]}
             , restart  => transient
             , type     => worker
-            , shutdown => 1000
+            , shutdown => ?shutdown
             },
     start_worker(SupPid, Id, Spec).
 
@@ -79,7 +81,7 @@ init(Shard) ->
                   , start       => {mria_rlog_replica, start_link, [self(), Shard]}
                   , restart     => transient
                   , significant => true
-                  , shutdown    => 1000
+                  , shutdown    => ?shutdown
                   , type        => worker
                   }
                ],
