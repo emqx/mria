@@ -133,6 +133,7 @@ t_bootstrap(_) ->
             ok = mria_ct:teardown_cluster(Cluster)
         end,
        [ fun mria_rlog_props:no_unexpected_events/1
+       , fun mria_rlog_props:graceful_stop/1
        ]).
 
 t_rocksdb_table(_) ->

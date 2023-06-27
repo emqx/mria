@@ -156,6 +156,7 @@ code_change(_OldVsn, St, _Extra) ->
     {ok, St}.
 
 terminate(_Reason, St = #server{iterator = I}) ->
+    ?terminate_tp,
     I =/= undefined andalso iter_end(I),
     {ok, St};
 terminate(_Reason, St = #client{}) ->

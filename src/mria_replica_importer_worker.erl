@@ -107,6 +107,7 @@ handle_cast(Cast, St) ->
     {noreply, St}.
 
 terminate(_Reason, #s{shard = _Shard, seqno = _SeqNo}) ->
+    ?terminate_tp,
     ?tp(mria_replica_importer_worker_stop, #{ shard => _Shard
                                             , seqno => _SeqNo
                                             , reason => _Reason

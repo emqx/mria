@@ -26,6 +26,7 @@
         , all_batches_received/1
         , counter_import_check/3
         , no_tlog_gaps/1
+        , graceful_stop/1
         ]).
 
 -include_lib("snabbkaffe/include/test_macros.hrl").
@@ -37,6 +38,15 @@
 %%================================================================================
 %% Checks
 %%================================================================================
+
+%% Check that worker processes are terminated gracefully (terminate
+%% callback has been executed):
+graceful_stop(Trace) ->
+    ?projection_complete(process, ?of_kind(mria_worker_terminate, Trace),
+                         [mria_lb, mria_bootstrapper, mria_rlog_server,
+                          mria_rlog_replica, mria_rlog_agent,
+                          mria_replica_importer_worker, mria_membership,
+                          mria_status]).
 
 %% Check that there were no unexpected events
 no_unexpected_events(Trace0) ->
