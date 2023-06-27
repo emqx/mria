@@ -354,11 +354,12 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
                ) ->
     case lists:keyfind(Table, #?schema.mnesia_table, OldEntries) of
         false -> % new entry
+            create_table(Entry), %% Idempotent
             Ret = case mria_config:role() of
                       core ->
                           mria_lib:ensure_ok(mria_mnesia:copy_table(Table, Storage));
                       replicant ->
-                          create_table(Entry)
+                          ok
                   end,
             ok = Ret, %% TODO: print an error message under some conditions?
             Tables = tables_of_shard(Shard),
