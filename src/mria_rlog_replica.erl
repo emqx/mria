@@ -138,6 +138,7 @@ code_change(_OldVsn, State, Data, _Extra) ->
     {ok, State, Data}.
 
 terminate(_Reason, _State, Data) ->
+    ?terminate_tp,
     close_replayq(Data),
     ?tp(stopping_rlog_shard, #{shard => Data#d.shard, reason => _Reason}),
     ok.

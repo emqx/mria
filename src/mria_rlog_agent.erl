@@ -119,6 +119,7 @@ code_change(_OldVsn, State, Data, _Extra) ->
     {ok, State, Data}.
 
 terminate(Reason, _State, Data) ->
+    ?terminate_tp,
     ?tp(debug, rlog_agent_terminating,
         #{ subscriber => Data#d.subscriber
          , shard      => Data#d.shard

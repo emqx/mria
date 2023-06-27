@@ -325,6 +325,7 @@ init(_) ->
     {ok, []}.
 
 terminate(_Reason, _State) ->
+    ?terminate_tp,
     [optvar:unset(K) || ?optvar(K) <- optvar:list()],
     {exit, normal}.
 

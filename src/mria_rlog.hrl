@@ -29,6 +29,9 @@
                    , callback => ?FUNCTION_NAME
                    })).
 
+-define(terminate_tp,
+        ?tp(debug, mria_worker_terminate, #{process => ?MODULE, callback => terminate})).
+
 %% Messages
 
 -record(entry,

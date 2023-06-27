@@ -197,6 +197,7 @@ handle_call(Call, From, St) ->
     {reply, {error, unknown_call}, St}.
 
 terminate(_Reason, St) ->
+    ?terminate_tp,
     {ok, St}.
 
 %%================================================================================

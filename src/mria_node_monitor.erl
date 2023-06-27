@@ -19,6 +19,7 @@
 -behaviour(gen_server).
 
 -include("mria.hrl").
+-include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %% API
@@ -215,6 +216,7 @@ handle_info(Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
+    ?terminate_tp,
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
