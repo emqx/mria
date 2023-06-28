@@ -35,6 +35,8 @@
         , shutdown_process/1
         , exec_callback/1
         , exec_callback_async/1
+        , exec_callback/2
+        , exec_callback_async/2
 
         , sup_child_pid/2
 
@@ -205,11 +207,20 @@ shutdown_process(Pid) when is_pid(Pid) ->
 
 -spec exec_callback(mria_config:callback()) -> term().
 exec_callback(Name) ->
+    exec_callback(Name, undefined).
+
+-spec exec_callback(mria_config:callback(), term()) -> term().
+exec_callback(Name, Arg) ->
     ?tp(mria_exec_callback, #{type => Name}),
     case mria_config:callback(Name) of
         {ok, Fun} ->
             try
-                Fun()
+                case erlang:fun_info(Fun, arity) of
+                    {arity, 0} ->
+                        Fun();
+                    {arity, 1} ->
+                        Fun(Arg)
+                end
             catch
                 EC:Err:Stack ->
                     ?tp(error, "Mria callback crashed",
@@ -224,7 +235,11 @@ exec_callback(Name) ->
 
 -spec exec_callback_async(mria_config:callback()) -> ok.
 exec_callback_async(Name) ->
-    proc_lib:spawn(?MODULE, exec_callback, [Name]),
+    exec_callback_async(Name, undefined).
+
+-spec exec_callback_async(mria_config:callback(), term()) -> ok.
+exec_callback_async(Name, Arg) ->
+    proc_lib:spawn(?MODULE, exec_callback, [Name, Arg]),
     ok.
 
 %%================================================================================
