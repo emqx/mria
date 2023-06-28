@@ -135,7 +135,7 @@ stop(Reason) ->
         mria_membership:announce(Reason),
     %% We cannot run stop callback in `mria_app', since we don't want
     %% to block application controller:
-    mria_lib:exec_callback(stop),
+    mria_lib:exec_callback(stop, Reason),
     application:stop(mria),
     mria_mnesia:ensure_stopped().
 
@@ -273,7 +273,7 @@ force_leave(Node) ->
 %% Register callback
 %%--------------------------------------------------------------------
 
--spec register_callback(mria_config:callback(), function()) -> ok.
+-spec register_callback(mria_config:callback(), mria_config:callback_function()) -> ok.
 register_callback(Name, Fun) ->
     mria_config:register_callback(Name, Fun).
 

@@ -65,7 +65,10 @@
                   | {start | stop, mria_rlog:shard()}
                   | core_node_discovery.
 
--export_type([callback/0]).
+-type callback_function() :: fun(() -> term()) |
+                             fun((term()) -> term()).
+
+-export_type([callback/0, callback_function/0]).
 
 %%================================================================================
 %% Persistent term keys
@@ -200,7 +203,7 @@ core_node_discovery_callback() ->
             fun() -> application:get_env(mria, core_nodes, []) end
     end.
 
--spec register_callback(mria_config:callback(), fun(() -> term())) -> ok.
+-spec register_callback(mria_config:callback(), mria_config:callback_function()) -> ok.
 register_callback(Name, Fun) ->
     apply(application, set_env, [mria, {callback, Name}, Fun]).
 
@@ -208,7 +211,7 @@ register_callback(Name, Fun) ->
 unregister_callback(Name) ->
     apply(application, unset_env, [mria, {callback, Name}]).
 
--spec callback(mria_config:callback()) -> {ok, fun(() -> term())} | undefined.
+-spec callback(mria_config:callback()) -> {ok, mria_config:callback_function()} | undefined.
 callback(Name) ->
     apply(application, get_env, [mria, {callback, Name}]).
 
