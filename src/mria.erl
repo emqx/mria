@@ -240,7 +240,12 @@ join(Node, Reason) when is_atom(Node) ->
 %% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.
 leave() ->
-    case running_nodes() -- [node()] of
+    %% Note: we don't care about replicants here.
+    RunningCoreNodes = case mria_rlog:role() of
+                           core -> mria_mnesia:running_nodes();
+                           replicant -> mria_membership:running_core_nodelist()
+                       end,
+    case RunningCoreNodes -- [node()] of
         [_|_] ->
             prep_restart(leave),
             ok = case mria_config:whoami() of
