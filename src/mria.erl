@@ -132,7 +132,7 @@ stop() ->
 stop(Reason) ->
     ?tp(warning, "Stopping mria", #{reason => Reason}),
     Reason =:= heal orelse Reason =:= leave andalso
-        mria_membership:announce(Reason),
+        catch mria_membership:announce(Reason),
     %% We cannot run stop callback in `mria_app', since we don't want
     %% to block application controller:
     mria_lib:exec_callback(stop, Reason),
@@ -577,7 +577,7 @@ join1(Node, Reason) when is_atom(Node) ->
 -spec do_join(mria_rlog:role(), node(), join_reason()) -> ok.
 do_join(Role, Node, Reason) ->
     ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    [mria_membership:announce(Reason) || Role =:= core],
+    [catch mria_membership:announce(Reason) || Role =:= core],
     prep_restart(Reason),
     case Role of
         core      -> mria_mnesia:join_cluster(Node);
