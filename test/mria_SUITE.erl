@@ -619,6 +619,65 @@ t_rlog_sync_dirty_operations(_) ->
        end,
        common_checks()).
 
+t_rlog_dirty_activity(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           K1 = rpc:async_call(N1, mria, async_dirty, [test_shard, fun() ->
+                mnesia:write({test_tab, 1, 1}),
+                ok = timer:sleep(rand:uniform(5)),
+                mnesia:write({test_tab, 2, 42}),
+                ok = timer:sleep(rand:uniform(5)),
+                mnesia:write({test_tab, 3, 456}),
+                exit(boom)
+              end]),
+           K2 = rpc:async_call(N2, mria, async_dirty, [test_shard, fun() ->
+                mnesia:write({test_tab, 1, 2}),
+                ok = timer:sleep(rand:uniform(5)),
+                mnesia:write({test_tab, 2, 43}),
+                ok = timer:sleep(rand:uniform(5)),
+                mnesia:write({test_tab, 3, 457})
+              end]),
+           K3 = rpc:async_call(N3, mria, sync_dirty, [test_shard, fun() ->
+                mnesia:write({test_tab, 1, 3}),
+                ok = timer:sleep(rand:uniform(5)),
+                mnesia:write({test_tab, 2, 44}),
+                ok = timer:sleep(rand:uniform(5)),
+                mnesia:write({test_tab, 3, 458})
+              end]),
+           {badrpc, {'EXIT', boom}} = rpc:yield(K1),
+           ok = rpc:yield(K2),
+           ok = rpc:yield(K3),
+           mria_mnesia_test_util:stabilize(1000),
+           Records = lists:flatmap(
+            fun(K) -> rpc:call(N1, mnesia, dirty_read, [test_tab, K]) end,
+            [1, 2, 3]),
+           ct:pal("Records @ N1: ~p", [Records]),
+           ?assertMatch(
+              % In fact, every permutation is possible in dirty activities
+              [ {test_tab, 1, R1}
+              , {test_tab, 2, R2}
+              , {test_tab, 3, R3}]
+              when (R1 >= 1 andalso R1 =< 3)
+              andalso (R2 >= 42 andalso R2 =< 44)
+              andalso (R3 >= 456 andalso R3 =< 458)
+              , Records),
+           try mria_mnesia_test_util:compare_table_contents(test_tab, Nodes) of
+             _ -> ok
+           catch error:Assertion ->
+             ct:pal("Inconsistency: ~p", [Assertion]),
+             ct:comment(
+               "Table contents are inconsistent, "
+               "this is expected in concurrent dirty activity contexts")
+           end
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       common_checks()).
+
 t_local_content(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
