@@ -48,6 +48,10 @@
         , sync_transaction/4
         , sync_transaction/3
         , sync_transaction/2
+        , async_dirty/3
+        , async_dirty/2
+        , sync_dirty/3
+        , sync_dirty/2
         , clear_table/1
 
         , dirty_write/2
@@ -70,8 +74,6 @@
         , create_table/2
         , wait_for_tables/1
         ]).
-
--define(IS_MON_TYPE(T), T == membership orelse T == partition).
 
 -type info_key() :: members | running_nodes | stopped_nodes | partitions | rlog.
 
@@ -100,7 +102,6 @@
 
 -include("mria.hrl").
 -include("mria_rlog.hrl").
--include_lib("kernel/include/logger.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %%--------------------------------------------------------------------
@@ -403,6 +404,22 @@ transaction(Shard, Function, Args) ->
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
     transaction(Shard, Fun, []).
+
+-spec async_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A | no_return().
+async_dirty(Shard, Fun, Args) ->
+    call_backend_rw(Shard, mnesia, async_dirty, [Fun, Args]).
+
+-spec async_dirty(mria_rlog:shard(), fun(() -> A)) -> A | no_return().
+async_dirty(Shard, Fun) ->
+    async_dirty(Shard, Fun, []).
+
+-spec sync_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A | no_return().
+sync_dirty(Shard, Fun, Args) ->
+    call_backend_rw(Shard, mnesia, sync_dirty, [Fun, Args]).
+
+-spec sync_dirty(mria_rlog:shard(), fun(() -> A)) -> A | no_return().
+sync_dirty(Shard, Fun) ->
+    sync_dirty(Shard, Fun, []).
 
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
