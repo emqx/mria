@@ -341,6 +341,7 @@ handle_cast({node_down, Node}, State) ->
             insert(Member#member{status = down});
         [] -> ignore
     end,
+    mria_lb:notify_core_node_down(Node),
     notify({node, down, Node}, State),
     {noreply, State};
 
@@ -384,6 +385,7 @@ handle_cast({leaving, Node}, State) ->
             insert(Member#member{status = leaving});
         [] -> ignore
     end,
+    mria_lb:notify_core_node_down(Node),
     notify({node, leaving, Node}, State),
     {noreply, State};
 
@@ -409,6 +411,7 @@ handle_cast({mnesia_down, Node}, State) ->
         [] -> ignore
     end,
     ?tp(mria_membership_mnesia_down, #{node => Node}),
+    mria_lb:notify_core_node_down(Node),
     notify({mnesia, down, Node}, State),
     {noreply, State};
 
