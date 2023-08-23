@@ -12,12 +12,12 @@ jobs:
             os:
               - ubuntu22.04
             otp:
-              - 25.3.2-1
+              - 25.3.2-2
             elixir:
               - 1.14.5
             arch:
               - amd64
-        container: ghcr.io/emqx/emqx-builder/5.1-3:${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.os }}
+        container: ghcr.io/emqx/emqx-builder/5.1-4:${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.os }}
 
         steps:
         - uses: actions/checkout@v1
