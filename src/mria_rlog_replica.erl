@@ -436,10 +436,10 @@ enter_normal(D = #d{shard = Shard, agent = Agent}) ->
 -spec handle_unknown(term(), term(), state(), data()) -> fsm_result().
 handle_unknown(EventType, Event, State, Data) ->
     ?unexpected_event_tp(#{ event_type => EventType
-                       , event => Event
-                       , state => State
-                       , data => format_data(Data)
-                       }),
+                          , event => Event
+                          , state => State
+                          , data => format_data(Data)
+                          }),
     keep_state_and_data.
 
 handle_state_trans(OldState, State, #d{shard = Shard}) ->
