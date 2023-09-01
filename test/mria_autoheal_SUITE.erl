@@ -28,7 +28,7 @@ t_autoheal(Config) when is_list(Config) ->
     ?check_trace(
        #{timetrap => 25000},
        try
-           [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
            %% Simulate netsplit
            true = rpc:cast(N4, erlang, disconnect_node, [N3]),
            ok = timer:sleep(1000),
@@ -40,12 +40,12 @@ t_autoheal(Config) when is_list(Config) ->
            %% Wait for autoheal, it should happen automatically:
            ?retry(1000, 20,
                   begin
-                      ?assertMatch({[N1, N2, N3, N4], []}, view(N1)),
-                      ?assertMatch({[N1, N2, N3, N4], []}, view(N2)),
-                      ?assertMatch({[N1, N2, N3, N4], []}, view(N3)),
-                      ?assertMatch({[N1, N2, N3, N4], []}, view(N4))
+                      ?assertMatch({Nodes, []}, view(N1)),
+                      ?assertMatch({Nodes, []}, view(N2)),
+                      ?assertMatch({Nodes, []}, view(N3)),
+                      ?assertMatch({Nodes, []}, view(N4))
                   end),
-           [N1, N2, N3, N4]
+           Nodes
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
@@ -81,7 +81,7 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
                       Nodes = rpc:call(N5, mria, info, [running_nodes]),
                       ok
                   end),
-           [N1, N2, N3]
+           Nodes
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
@@ -175,12 +175,17 @@ prop_callbacks(Trace0) ->
     {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
     {_, [HealEvent|AfterHeal]} = ?split_trace_at(#{?snk_kind := "Rebooting minority"}, Trace),
     #{nodes := Minority} = HealEvent,
+    %% Check that all minority nodes have been restarted:
     [?assert(
         ?strict_causality( #{?snk_kind := mria_exec_callback, type := stop, ?snk_meta := #{node := N}}
                          , #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N}}
                          , AfterHeal
                          ))
      || N <- Minority],
+    %% Check that ONLY the minority nodes have been restarted:
+    Restarted = lists:usort([Node || #{?snk_kind := mria_exec_callback, ?snk_meta := #{node := Node}} <- AfterHeal]),
+    ?assertEqual(lists:sort(Minority),
+                 Restarted),
     true.
 
 init_per_suite(Config) ->
