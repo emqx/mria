@@ -63,6 +63,7 @@ handle_msg({report_partition, _Node}, Autoheal = #autoheal{proc = Proc})
     Autoheal;
 
 handle_msg({report_partition, Node}, Autoheal = #autoheal{delay = Delay, timer = TRef}) ->
+    ?tp(info, mria_autoheal_report_partition, #{node => Node}),
     case mria_membership:leader() =:= node() of
         true ->
             ensure_cancel_timer(TRef),
@@ -79,13 +80,21 @@ handle_msg(Msg = {create_splitview, Node}, Autoheal = #autoheal{delay = Delay, t
     case mria_membership:is_all_alive() of
         true ->
             Nodes = mria_mnesia:db_nodes(),
-            case rpc:multicall(Nodes, mria_mnesia, cluster_view, []) of
-                {Views, []} ->
-                    SplitView = lists:sort(fun compare_view/2, lists:usort(Views)),
-                    mria_node_monitor:cast(coordinator(SplitView), {heal_partition, SplitView});
-                {_Views, BadNodes} ->
-                    ?LOG(critical, "Bad nodes found when autoheal: ~p", [BadNodes])
-            end,
+            RPCResult = erpc:multicall(Nodes, mria_mnesia, running_nodes, []),
+            SplitView = lists:foldl(fun({N, Result}, Acc) ->
+                                            case Result of
+                                                {ok, Peers} ->
+                                                    Acc #{N => Peers};
+                                                _ ->
+                                                    %% Ignore unreachable nodes:
+                                                    Acc
+                                            end
+                                    end,
+                                    #{},
+                                    lists:zip(Nodes, RPCResult)),
+            Cliques = lists:sort(fun compare_cliques/2,
+                                 mria_lib:find_clusters(SplitView)),
+            mria_node_monitor:cast(coordinator(Cliques), {heal_partition, Cliques}),
             Autoheal#autoheal{timer = undefined};
         false ->
             Autoheal#autoheal{timer = mria_node_monitor:run_after(Delay, {autoheal, Msg})}
@@ -95,15 +104,16 @@ handle_msg(Msg = {create_splitview, _Node}, Autoheal) ->
     ?LOG(critical, "I am not leader, but received : ~p", [Msg]),
     Autoheal;
 
-handle_msg({heal_partition, SplitView}, Autoheal = #autoheal{proc = undefined}) ->
+handle_msg({heal_partition, Cliques}, Autoheal = #autoheal{proc = undefined}) ->
+    ?tp(info, mria_autoheal_partition, #{cliques => Cliques}),
     Proc = spawn_link(fun() ->
-                          ?LOG(info, "Healing partition: ~p", [SplitView]),
-                          _ = heal_partition(SplitView)
+                          ?LOG(info, "Healing partition: ~p", [Cliques]),
+                          heal_partition(Cliques)
                       end),
     Autoheal#autoheal{role = coordinator, proc = Proc};
 
-handle_msg({heal_partition, SplitView}, Autoheal= #autoheal{proc = _Proc}) ->
-    ?LOG(critical, "Unexpected heal_partition msg: ~p", [SplitView]),
+handle_msg({heal_partition, Cliques}, Autoheal= #autoheal{proc = _Proc}) ->
+    ?LOG(critical, "Unexpected heal_partition msg: ~p", [Cliques]),
     Autoheal;
 
 handle_msg({'EXIT', Pid, normal}, Autoheal = #autoheal{proc = Pid}) ->
@@ -116,7 +126,7 @@ handle_msg(Msg, Autoheal) ->
     ?LOG(critical, "Unexpected msg: ~p", [Msg, Autoheal]),
     Autoheal.
 
-compare_view({Running1, _} , {Running2, _}) ->
+compare_cliques(Running1, Running2) ->
     Len1 = length(Running1), Len2 = length(Running2),
     if
         Len1 > Len2  -> true;
@@ -124,28 +134,20 @@ compare_view({Running1, _} , {Running2, _}) ->
         true -> false
     end.
 
-coordinator([{Nodes, _} | _]) ->
-    mria_membership:coordinator(Nodes).
+-spec coordinator([[node()]]) -> node().
+coordinator([Majority | _]) ->
+    mria_membership:coordinator(Majority).
 
--spec heal_partition(list()) -> list(node()).
-heal_partition([]) ->
-    [];
-%% All nodes connected.
-heal_partition([{_, []}]) ->
-    [];
-%% Partial partitions happened.
-heal_partition([{Nodes, []} | _]) ->
-    reboot_minority(Nodes -- [node()]);
-heal_partition([{Majority, Minority}, {Minority, Majority}]) ->
-    reboot_minority(Minority);
-heal_partition(SplitView) ->
-    ?tp(critical, "Cannot heal the partition", #{split_view => SplitView}),
-    error({unknown_splitview, SplitView}).
+-spec heal_partition([[node()]]) -> ok.
+heal_partition([[_Majority]]) ->
+    %% There are no partitions:
+    ok;
+heal_partition([_Majority|Minorities]) ->
+    reboot_minority(lists:append(Minorities)).
 
 reboot_minority(Minority) ->
     ?tp(info, "Rebooting minority", #{nodes => Minority}),
-    lists:foreach(fun rejoin/1, Minority),
-    Minority.
+    lists:foreach(fun rejoin/1, Minority).
 
 rejoin(Node) ->
     Ret = rpc:call(Node, mria, join, [node(), heal]),
