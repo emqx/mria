@@ -183,25 +183,10 @@ do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
 %% Find fully connected clusters (i.e. cliques of nodes)
 -spec find_clusters(#{node() => node_info()}) -> [[node()]].
 find_clusters(NodeInfo) ->
-    find_clusters(maps:keys(NodeInfo), NodeInfo, []).
-
-find_clusters([], _NodeInfo, Acc) ->
-    Acc;
-find_clusters([Node|Rest], NodeInfo, Acc) ->
-    #{Node := #{db_nodes := Emanent}} = NodeInfo,
-    MutualConnections =
-        lists:filter(
-          fun(Peer) ->
-                  case NodeInfo of
-                      #{Peer := #{db_nodes := Incident}} ->
-                          lists:member(Node, Incident);
-                      _ ->
-                          false
-                  end
-          end,
-          Emanent),
-    Cluster = lists:usort([Node|MutualConnections]),
-    find_clusters(Rest -- MutualConnections, NodeInfo, [Cluster|Acc]).
+    mria_lib:find_clusters(maps:map(fun(_Node, #{db_nodes := Peers}) ->
+                                            Peers
+                                    end,
+                                    NodeInfo)).
 
 %% Find the preferred core node for each shard:
 -spec shard_badness(#{node() => node_info()}) -> #{mria_rlog:shard() => {node(), Badness}}

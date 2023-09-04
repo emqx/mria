@@ -42,6 +42,8 @@
 
         , wrap_exception/3
         , unwrap_exception/1
+
+        , find_clusters/1
         ]).
 
 -export_type([ subscriber/0
@@ -61,6 +63,8 @@
 -type subscriber() :: {node(), pid()}.
 
 -type rpc_destination() :: node() | {node(), _SerializationKey}.
+
+-type cluster_view() :: #{node() => [node()]}.
 
 %%================================================================================
 %% RLOG key creation
@@ -143,6 +147,15 @@ rpc_cast(Destination, Module, Function, Args) ->
         gen_rpc ->
             gen_rpc:cast(Destination, Module, Function, Args)
     end.
+
+%%================================================================================
+%% Cluster partition
+%%================================================================================
+
+%% Find fully connected clusters (i.e. cliques of nodes)
+-spec find_clusters(cluster_view()) -> [[node()]].
+find_clusters(ClusterView) ->
+    find_clusters(maps:keys(ClusterView), ClusterView, []).
 
 %%================================================================================
 %% Misc functions
@@ -251,3 +264,53 @@ node_from_destination({Node, _SerializationKey}) ->
     Node;
 node_from_destination(Node) ->
     Node.
+
+find_clusters([], _NodeInfo, Acc) ->
+    Acc;
+find_clusters([Node|Rest], NodeInfo, Acc) ->
+    #{Node := Emanent} = NodeInfo,
+    MutualConnections =
+        lists:filter(
+          fun(Peer) ->
+                  case NodeInfo of
+                      #{Peer := Incident} ->
+                          lists:member(Node, Incident);
+                      _ ->
+                          false
+                  end
+          end,
+          Emanent),
+    Cluster = lists:usort([Node|MutualConnections]),
+    find_clusters(Rest -- MutualConnections, NodeInfo, [Cluster|Acc]).
+
+%%================================================================================
+%% Unit tests
+%%================================================================================
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+find_clusters_test_() ->
+    [ ?_assertMatch( [[1, 2, 3]]
+                   , lists:sort(find_clusters(#{ 1 => [1, 2, 3]
+                                               , 2 => [2, 1, 3]
+                                               , 3 => [2, 3, 1]
+                                               }))
+                   )
+    , ?_assertMatch( [[1], [2, 3]]
+                   , lists:sort(find_clusters(#{ 1 => [1, 2, 3]
+                                               , 2 => [2, 3]
+                                               , 3 => [3, 2]
+                                               }))
+                   )
+    , ?_assertMatch( [[1, 2, 3], [4, 5], [6]]
+                   , lists:sort(find_clusters(#{ 1 => [1, 2, 3]
+                                               , 2 => [1, 2, 3]
+                                               , 3 => [3, 2, 1]
+                                               , 4 => [4, 5]
+                                               , 5 => [4, 5]
+                                               , 6 => [6, 4, 5]
+                                               }))
+                   )
+    ].
+-endif. %% TEST
