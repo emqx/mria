@@ -124,10 +124,14 @@ t_bootstrap(_) ->
             mria_mnesia_test_util:wait_full_replication(Cluster),
             %% Restart the replicant so it bootstraps again:
             ?tp(warning, "Restarting replicant!", #{}),
-            ok = rpc:call(Replicant, application, stop, [mria]),
-            ok = rpc:call(Replicant, application, start, [mria]),
-            {ok, _} = ?block_until(#{?snk_kind := "Shard fully up", node := Replicant, shard := test_shard}),
+            ?wait_async_action(
+               begin
+                   ok = rpc:call(Replicant, application, stop, [mria]),
+                   ok = rpc:call(Replicant, application, start, [mria])
+               end,
+               #{?snk_kind := "Shard fully up", node := Replicant, shard := test_shard}),
             %% Compare contents of all tables
+            ?tp(notice, "Compare contents", #{}),
             [mria_mnesia_test_util:compare_table_contents(Tab, Nodes) || Tab <- Tables]
         after
             ok = mria_ct:teardown_cluster(Cluster)
