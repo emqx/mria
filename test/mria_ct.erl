@@ -117,6 +117,9 @@ start_slave(node, #{name := Name, env := Env, code_paths := CodePaths, cover := 
                        , single_line => false
                        },
     rpc(Node, logger, set_formatter_config, [default, FormatterConfig]),
+    LogLevel = list_to_atom(os:getenv("LOG_LEVEL", "notice")),
+    rpc(Node, logger, update_primary_config, [#{level => LogLevel}]),
+    rpc(Node, logger, update_handler_config, [default, #{level => LogLevel}]),
     [{ok, _} = cover:start([Node]) || Cover],
     %% Disable gen_rpc listener by default:
     Env1 = [{gen_rpc, tcp_server_port, false}|Env],
@@ -187,8 +190,8 @@ wait_running(Node, Timeout) ->
     end.
 
 stop_slave(Node) ->
-    ok = cover:stop([Node]),
     rpc(Node, mria, stop, []),
+    ok = cover:stop([Node]),
     rpc(Node, application, stop, [gen_rpc]), %% Avoid "connection refused" errors
     mnesia:delete_schema([Node]),
     slave:stop(Node).

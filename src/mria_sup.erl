@@ -51,8 +51,7 @@ init(mnesia) ->
            },
           [child(mria_status, worker),
            child(mria_schema, worker),
-           child(mria_membership, worker),
-           child(mria_node_monitor, worker),
+           child(mria_membership_sup, supervisor),
            post_init_child()
           ]}};
 init(rlog) ->
@@ -62,8 +61,7 @@ init(rlog) ->
            },
           [child(mria_status, worker),
            child(mria_schema, worker),
-           child(mria_membership, worker),
-           child(mria_node_monitor, worker),
+           child(mria_membership_sup, supervisor),
            child(mria_rlog_sup, supervisor),
            post_init_child()
           ]}}.
