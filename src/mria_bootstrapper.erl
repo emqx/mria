@@ -193,7 +193,7 @@ server_loop(St = #server{tables = [], subscriber = Subscriber, iterator = undefi
 server_loop(St0 = #server{tables = [Table|Rest], subscriber = Subscriber, iterator = It0, shard = Shard}) ->
     {It, Records} = case It0 of
                         undefined ->
-                            BatchSize = 500, % TODO: make it configurable per shard
+                            BatchSize = mria_config:shard_bootstrap_batch_size(Shard),
                             ?tp(info, start_shard_table_bootstrap,
                                 #{ shard => Shard
                                  , table => Table
