@@ -298,17 +298,29 @@ diagnosis(BadTables) ->
                %% Nodes that suppose to be UP.
              , { down_nodes, [], fun() -> DBNodes -- RunningNodes end }
              ],
+    ExtraChecks = mria_config:get_extra_mnesia_diagnostic_checks(),
 
-    GeneralInfo = lists:filtermap(fun({Item, Expected, Fun}) ->
-                                        Res = Fun(),
-                                        case  Res =:= Expected of
-                                            true ->
-                                                false;
-                                            false ->
-                                                {true, io_lib:format("Check ~p should get ~p but got ~p~n ",
-                                                                     [Item, Expected, Res])}
-                                        end
-                                  end, Checks),
+    GeneralInfo = lists:filtermap(
+       fun({Item, Expected, Fun}) ->
+             try
+                 Res = Fun(),
+                 case  Res =:= Expected of
+                     true ->
+                         false;
+                     false ->
+                         {true, io_lib:format("Check ~p should get ~p but got ~p~n ",
+                                              [Item, Expected, Res])}
+                 end
+             catch
+                 Kind:Reason:Stacktrace ->
+                     {true, io_lib:format("Exception during check ~p : ~p~n ",
+                                          [Item, #{kind => Kind, reason => Reason,
+                                                   stacktrace => Stacktrace}])}
+             end;
+          (Check) ->
+             {true, io_lib:format("Bad check specification: ~p~n ",
+                                  [Check])}
+       end, Checks ++ ExtraChecks),
     PerTabInfo = lists:map(fun diagnosis_tab/1, BadTables),
     logger:warning(GeneralInfo ++ PerTabInfo),
     ok.

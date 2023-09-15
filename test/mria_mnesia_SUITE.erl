@@ -166,3 +166,42 @@ t_diagnosis_tab(_)->
            mria_ct:teardown_cluster(Cluster)
        end,
        []).
+
+t_extra_diagnostic_checks(_)->
+    TestTab = test_tab_1,
+    Cluster = mria_ct:cluster([core, core], []),
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           ok = rpc:call(N2, mria, create_table,
+                         [TestTab, [{rlog_shard, my_shard},
+                                    {storage, disc_copies}
+                                   ]
+                         ]),
+           %% Ensure table is ready
+           ?assertEqual(ok, rpc:call(N1, mria, wait_for_tables, [[TestTab]])),
+
+           TestPid = self(),
+           ?assertEqual(ok, rpc:call(N1, mria_mnesia, diagnosis, [[TestTab]])),
+           ?assertEqual(
+              [],
+              rpc:call(N1, mria_config, get_extra_mnesia_diagnostic_checks, [])),
+
+           CheckFun = fun() -> TestPid ! called, false end,
+           ?assertEqual(
+              ok,
+              rpc:call(N1, mria_config, set_extra_mnesia_diagnostic_checks,
+                       [[{my_custom_check, true, CheckFun}]])),
+           ?assertEqual(ok, rpc:call(N1, mria_mnesia, diagnosis, [[TestTab]])),
+           receive
+               called -> ok
+           after
+               5_000 -> ct:fail("custom check function not called ")
+           end,
+
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
