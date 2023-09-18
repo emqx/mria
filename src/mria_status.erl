@@ -179,12 +179,13 @@ get_shard_lag(Shard) ->
         {replicant, disconnected} ->
             disconnected;
         {replicant, {ok, Upstream}} ->
-            case erpc:call(Upstream, ?MODULE, get_stat, [Shard, ?core_intercept], 1000) of
-                undefined ->
-                    0;
-                RemoteSeqNo ->
-                    MySeqNo = get_stat(Shard, ?replicant_import),
-                    RemoteSeqNo - MySeqNo
+            RemoteSeqNo = erpc:call(Upstream, ?MODULE, get_stat, [Shard, ?core_intercept], 1000),
+            MySeqNo = get_stat(Shard, ?replicant_import),
+            case is_number(RemoteSeqNo) andalso is_number(MySeqNo) of
+                true ->
+                    RemoteSeqNo - MySeqNo;
+                false ->
+                    0
             end
     end.
 
