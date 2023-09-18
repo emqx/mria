@@ -47,6 +47,9 @@
         , set_shard_bootstrap_batch_size/2
         , shard_bootstrap_batch_size/1
 
+        , set_extra_mnesia_diagnostic_checks/1
+        , get_extra_mnesia_diagnostic_checks/0
+
           %% Callbacks
         , register_callback/2
         , unregister_callback/1
@@ -161,6 +164,7 @@ load_config() ->
     copy_from_env(shard_transport),
     copy_from_env(max_mql),
     copy_from_env(bootstrap_batch_size),
+    copy_from_env(extra_mnesia_diagnostic_checks),
     consistency_check().
 
 -spec set_dirty_shard(mria_rlog:shard(), boolean()) -> ok.
@@ -234,6 +238,14 @@ callback(Name) ->
 rocksdb_backend_available() ->
     ?MRIA_HAS_ROCKSDB.
 
+-spec set_extra_mnesia_diagnostic_checks([{_Name, Value, fun(() -> Value)}]) -> ok.
+set_extra_mnesia_diagnostic_checks(Checks) when is_list(Checks) ->
+    persistent_term:put(?mria(extra_mnesia_diagnostic_checks), Checks).
+
+-spec get_extra_mnesia_diagnostic_checks() -> [{_Name, Value, fun(() -> Value)}].
+get_extra_mnesia_diagnostic_checks() ->
+    persistent_term:get(?mria(extra_mnesia_diagnostic_checks), []).
+
 %%================================================================================
 %% Internal
 %%================================================================================
@@ -258,6 +270,21 @@ consistency_check() ->
                            "backend with this version of Erlang/OTP", []),
             error(unsupported_otp_version);
          _ ->
+            ok
+    end,
+    ExtraMnesiaDiagnosticChecks = get_extra_mnesia_diagnostic_checks(),
+    AllValidChecks =
+        lists:all(fun({_Name, CheckFn}) when is_function(CheckFn, 0) -> true;
+                     (_) -> false
+                  end,
+                  ExtraMnesiaDiagnosticChecks),
+    case AllValidChecks of
+        true ->
+            ok;
+        false ->
+            ?LOG(critical, "Configuration error: extra mnesia diagnostic "
+                           "checks must be of type [{any(), any(), fun(() -> any())}]; "
+                           "double-check `extra_mnesia_diagnostic_checks'", []),
             ok
     end.
 
