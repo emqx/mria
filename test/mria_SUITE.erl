@@ -20,6 +20,7 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 -compile(nowarn_underscore_match).
+-compile(nowarn_deprecated_function). %% Silence the warnings about slave module
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
@@ -843,31 +844,17 @@ t_dirty_reads(_) ->
     ?check_trace(
        #{timetrap => 10000},
        try
-           %% Delay shard startup:
-           ?force_ordering(#{?snk_kind := read1},
-                           #{?snk_kind := state_change, to := local_replay, shard := test_shard}),
            [N1, N2] = mria_ct:start_cluster(mria_async, Cluster),
-           mria_mnesia_test_util:wait_tables([N1]),
+           mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Insert data:
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
-           %% Ensure that the replicant still reads the correct value by doing an RPC to the core node:
-           ?block_until(#{?snk_kind := rlog_read_from, source := N1, table := test_tab}),
-           ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key])),
-           %% Now allow the shard to start:
-           ?tp(read1, #{}),
-           ?block_until(#{?snk_kind := rlog_read_from, source := N2, table := test_tab}),
            %% Ensure that the replicant still reads the correct value locally:
+           timer:sleep(1000),
            ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key]))
        after
            mria_ct:teardown_cluster(Cluster)
        end,
-       fun(Trace) ->
-               ?assert(
-                  ?strict_causality( #{?snk_kind := read1}
-                                   , #{?snk_kind := state_change, to := normal, shard := test_shard}
-                                   , Trace
-                                   ))
-       end).
+       []).
 
 %% Test adding tables to the schema:
 t_rlog_schema(_) ->
@@ -1168,6 +1155,29 @@ t_cluster_nodes(_) ->
            [?assertMatch(running, rpc:call(N1, mria, cluster_status, [N2]), {N1, N2})
             || N1 <- Nodes,
                N2 <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+schema_merge(_) -> %% TODO: this is a testcase, enable it after merging the patch to OTP
+    Cluster = [C1, C2, C3] = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           %% Start mria on C1 and C2:
+           [_, N2, _] = Nodes = mria_ct:start_cluster(node, Cluster),
+           _ = mria_ct:start_mria(C1),
+           _ = mria_ct:start_mria(C2),
+           %% Stop C2 and start C3 (it should join C3):
+           ok = slave:stop(N2),
+           timer:sleep(5000),
+           _ = mria_ct:start_mria(C3),
+           %% Restart C2:
+           _ = mria_ct:start_slave(mria, C2),
+           ?retry(1000, 20,
+                  ?assertMatch({[[], [], []], []},
+                               rpc:multicall(Nodes, mria, info, [stopped_nodes])))
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,

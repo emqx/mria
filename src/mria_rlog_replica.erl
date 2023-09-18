@@ -466,6 +466,7 @@ format_data(D) ->
     maps:from_list([{Field, Val} || {Field, Val} <- lists:zip(FieldNames, Fields),
                                     Field =/= replayq]).
 
+%% TODO: Remove me in the next major release
 -spec set_where_to_read(mria_rlog:shard(), node()) -> ok.
 set_where_to_read(Shard, Node) ->
     [mria_mnesia:set_where_to_read(Node, Tab) || Tab <- mria_schema:tables_of_shard(Shard)],
