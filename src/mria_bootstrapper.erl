@@ -178,9 +178,8 @@ push_batch({Node, Pid}, Batch = {_, _, _}) ->
 complete({Node, Pid}, Server, Checkpoint) ->
     mria_lib:rpc_call_nothrow(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
-handle_batch(Server, Table, ?clear_table) ->
+handle_batch(_Server, Table, ?clear_table) ->
     mria_schema:ensure_local_table(Table),
-    mria_mnesia:set_where_to_read(node(Server), Table),
     {atomic, ok} = mnesia:clear_table(Table),
     ok;
 handle_batch(_Server, Table, Records) ->
