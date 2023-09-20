@@ -274,7 +274,7 @@ consistency_check() ->
     end,
     ExtraMnesiaDiagnosticChecks = get_extra_mnesia_diagnostic_checks(),
     AllValidChecks =
-        lists:all(fun({_Name, CheckFn}) when is_function(CheckFn, 0) -> true;
+        lists:all(fun({_Name, _Expected, CheckFn}) when is_function(CheckFn, 0) -> true;
                      (_) -> false
                   end,
                   ExtraMnesiaDiagnosticChecks),

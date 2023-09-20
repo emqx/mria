@@ -189,16 +189,22 @@ t_extra_diagnostic_checks(_)->
               rpc:call(N1, mria_config, get_extra_mnesia_diagnostic_checks, [])),
 
            CheckFun = fun() -> TestPid ! called, false end,
+           ExtraChecks = [{my_custom_check, true, CheckFun}],
            ?assertEqual(
               ok,
               rpc:call(N1, mria_config, set_extra_mnesia_diagnostic_checks,
-                       [[{my_custom_check, true, CheckFun}]])),
+                       [ExtraChecks])),
            ?assertEqual(ok, rpc:call(N1, mria_mnesia, diagnosis, [[TestTab]])),
            receive
                called -> ok
            after
                5_000 -> ct:fail("custom check function not called ")
            end,
+
+           %% trigger consistency check
+           ?assertEqual(ok, rpc:call(N1, application, set_env,
+                                     [mria, extra_mnesia_diagnostic_checks, ExtraChecks])),
+           ?assertEqual(ok, rpc:call(N1, mria_config, load_config, [])),
 
            ok
        after
