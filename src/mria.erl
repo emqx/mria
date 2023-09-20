@@ -553,6 +553,8 @@ should_retry_rpc({badtcp, _}) ->
     true;
 should_retry_rpc({aborted, {retry, _}}) ->
     true;
+should_retry_rpc({aborted, {node_not_running, _}}) ->
+    true;
 should_retry_rpc(_) ->
     false.
 
