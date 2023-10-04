@@ -199,6 +199,61 @@ t_replicant_init(_) ->
        end,
        [fun ?MODULE:assert_replicants_inserted/1]).
 
+t_replicant_join_later(_) ->
+    %% note: important to have a single core in the cluster to trigger the original issue.
+    Cluster = [NSpec1, NSpec2, NSpec3] =
+        mria_ct:cluster([core, replicant, replicant],
+                        mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       try
+           Nodes1 = [N1, N2] = mria_ct:start_cluster(mria, [NSpec1, NSpec2]),
+           ok = mria_mnesia_test_util:wait_tables(Nodes1),
+           Replicants1 = [N2],
+           wait_for_membership_up(Nodes1),
+           [begin
+                ?assertMatch([_, _], erpc:call(N, fun() -> mria_membership:members()
+                                                               ++ mria_membership:replicants() end),
+                             #{node => N}),
+                ?assertEqual( Replicants1
+                            , lists:sort(erpc:call( N, mria_membership
+                                                  , running_replicant_nodelist, []))
+                            ),
+                ?assertEqual( Replicants1
+                            , lists:sort(erpc:call( N, mria_membership
+                                                  , replicant_nodelist, []))
+                            ),
+                ok
+            end
+            || N <- Nodes1],
+
+           %% now, we start the second replicant
+           [N3] = mria_ct:start_cluster(mria, [NSpec3]),
+           ok = mria_mnesia_test_util:wait_tables([N3]),
+           Replicants2 = [N2, N3],
+           Nodes2 = [N1, N2, N3],
+           wait_for_membership_up(Nodes2),
+           [begin
+                ?assertMatch([_, _, _], erpc:call(N, fun() -> mria_membership:members()
+                                                               ++ mria_membership:replicants() end),
+                             #{node => N}),
+                ?assertEqual( Replicants2
+                            , lists:sort(erpc:call( N, mria_membership
+                                                  , running_replicant_nodelist, []))
+                            ),
+                ?assertEqual( Replicants2
+                            , lists:sort(erpc:call( N, mria_membership
+                                                  , replicant_nodelist, []))
+                            ),
+                ok
+            end
+            || N <- Nodes2],
+
+           ok
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [fun ?MODULE:assert_replicants_inserted/1]).
+
 t_core_member_leaves_core_observes(_) ->
     Cluster = mria_ct:cluster([core, core, replicant, replicant],
                               mria_mnesia_test_util:common_env()),
@@ -528,6 +583,13 @@ wait_for_replicants_membership(AllNodes, Replicants) ->
                    , ?snk_meta := #{node := R}
                    })
      || R <- Replicants, N <- AllNodes, R =/= N].
+
+wait_for_membership_up(AllNodes) ->
+    [?block_until(#{ ?snk_kind := mria_membership_insert
+                   , member := #member{node = N}
+                   , ?snk_meta := #{node := M}
+                   })
+     || N <- AllNodes, M <- AllNodes, M =/= N].
 
 wait_action(Kind, ActionNode, ObserveNode, M, F, A) ->
     ?wait_async_action(

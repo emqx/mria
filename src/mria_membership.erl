@@ -318,17 +318,11 @@ handle_call(Req, _From, State) ->
 
 handle_cast({node_up, Node}, State) ->
     ?LOG(info, "Node ~s up", [Node]),
-    %% Replicants do not get added to the list in practice because
-    %% they don't start in the cluster.
-    case mria_mnesia:is_node_in_cluster(Node) of
-        true ->
-            Member = case lookup(Node) of
-                       [M] -> M#member{status = up};
-                       []  -> #member{node = Node, status = up, role = role(Node)}
-                     end,
-            insert(Member#member{mnesia = mnesia_cluster_status(Node)});
-        false -> ignore
-    end,
+    Member = case lookup(Node) of
+                 [M] -> M#member{status = up};
+                 []  -> #member{node = Node, status = up, role = role(Node)}
+             end,
+    insert(Member#member{mnesia = mnesia_cluster_status(Node)}),
     notify({node, up, Node}, State),
     {noreply, State};
 
