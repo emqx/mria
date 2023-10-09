@@ -282,9 +282,9 @@ consistency_check() ->
         true ->
             ok;
         false ->
-            ?LOG(critical, "Configuration error: extra mnesia diagnostic "
-                           "checks must be of type [{any(), any(), fun(() -> any())}]; "
-                           "double-check `extra_mnesia_diagnostic_checks'", []),
+            ?LOG(warning, "Configuration error: extra mnesia diagnostic "
+                          "checks must be of type [{any(), any(), fun(() -> any())}]; "
+                          "double-check `extra_mnesia_diagnostic_checks'", []),
             ok
     end.
 
