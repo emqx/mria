@@ -50,8 +50,8 @@
              , rpc_destination/0
              ]).
 
--include_lib("snabbkaffe/include/trace.hrl").
 -include("mria_rlog.hrl").
+-include_lib("snabbkaffe/include/trace.hrl").
 -include_lib("mnesia/src/mnesia.hrl").
 
 -compile({inline, [node_from_destination/1]}).
@@ -99,10 +99,10 @@ make_key(undefined) ->
 -spec rpc_call(rpc_destination(), module(), atom(), list()) -> term().
 rpc_call(Destination, Module, Function, Args) ->
     Result = case mria_config:rpc_module() of
-                 rpc ->
+                 ?ERL_RPC ->
                      rpc:call(node_from_destination(Destination),
                               ?MODULE, wrap_exception, [Module, Function, Args]);
-                 gen_rpc ->
+                 ?GEN_RPC ->
                      gen_rpc:call(Destination,
                                   ?MODULE, wrap_exception, [Module, Function, Args])
              end,
@@ -111,10 +111,10 @@ rpc_call(Destination, Module, Function, Args) ->
 -spec rpc_call_nothrow(rpc_destination(), module(), atom(), list()) -> term().
 rpc_call_nothrow(Destination, Module, Function, Args) ->
     case mria_config:rpc_module() of
-        rpc ->
+        ?ERL_RPC ->
             rpc:call(node_from_destination(Destination),
                      Module, Function, Args);
-        gen_rpc ->
+        ?GEN_RPC ->
             gen_rpc:call(Destination,
                          Module, Function, Args)
     end.
@@ -142,9 +142,9 @@ wrap_exception(Mod, Fun, Args) ->
 -spec rpc_cast(rpc_destination(), module(), atom(), list()) -> term().
 rpc_cast(Destination, Module, Function, Args) ->
     case mria_config:rpc_module() of
-        rpc ->
+        ?ERL_RPC ->
             rpc:cast(node_from_destination(Destination), Module, Function, Args);
-        gen_rpc ->
+        ?GEN_RPC ->
             gen_rpc:cast(Destination, Module, Function, Args)
     end.
 

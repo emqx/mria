@@ -78,7 +78,7 @@
 %% cluster!
 -type seqno() :: non_neg_integer().
 
--type transport() :: gen_rpc | distr.
+-type transport() :: ?TRANSPORT_GEN_RPC | ?TRANSPORT_ERL_DISTR.
 
 -type sync_reply_to() :: #?rlog_sync{reply_to :: reference(), shard :: shard()}.
 
