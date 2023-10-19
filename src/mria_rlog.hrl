@@ -49,4 +49,12 @@
         , checkpoint
         }).
 
+-define(ERL_RPC, rpc).
+-define(GEN_RPC, gen_rpc).
+-define(DEFAULT_RPC_MODULE, ?ERL_RPC).
+
+-define(TRANSPORT_ERL_DISTR, distr).
+-define(TRANSPORT_GEN_RPC, gen_rpc).
+-define(DEFAULT_SHARD_TRANSPORT, ?TRANSPORT_ERL_DISTR).
+
 -endif.

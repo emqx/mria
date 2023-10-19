@@ -57,6 +57,7 @@
         , rocksdb_backend_available/0
         ]).
 
+-include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include_lib("kernel/include/logger.hrl").
 
@@ -119,9 +120,9 @@ whoami() ->
             role()
     end.
 
--spec rpc_module() -> gen_rpc | rpc.
+-spec rpc_module() -> ?GEN_RPC | ?ERL_RPC.
 rpc_module() ->
-    persistent_term:get(?mria(rlog_rpc_module), gen_rpc).
+    persistent_term:get(?mria(rlog_rpc_module), ?DEFAULT_RPC_MODULE).
 
 -spec core_rpc_retries() -> integer().
 core_rpc_retries() ->
@@ -179,15 +180,15 @@ dirty_shard(Shard) ->
     persistent_term:get(?is_dirty(Shard), false).
 
 -spec set_shard_transport(mria_rlog:shard(), mria_rlog:transport()) -> ok.
-set_shard_transport(Shard, Transport) when Transport =:= gen_rpc;
-                                           Transport =:= distr ->
+set_shard_transport(Shard, Transport) when Transport =:= ?TRANSPORT_GEN_RPC;
+                                           Transport =:= ?TRANSPORT_ERL_DISTR->
     ok = persistent_term:put(?shard_transport(Shard), Transport);
 set_shard_transport(Shard, Transport) ->
     error({badarg, Shard, Transport}).
 
 -spec shard_transport(mria_rlog:shard()) -> mria_rlog:transport().
 shard_transport(Shard) ->
-    Default = persistent_term:get(?mria(shard_transport), gen_rpc),
+    Default = persistent_term:get(?mria(shard_transport), ?DEFAULT_SHARD_TRANSPORT),
     persistent_term:get(?shard_transport(Shard), Default).
 
 -spec set_shard_bootstrap_batch_size(mria_rlog:shard(), non_neg_integer()) -> ok.
@@ -253,12 +254,12 @@ get_extra_mnesia_diagnostic_checks() ->
 -spec consistency_check() -> ok.
 consistency_check() ->
     case rpc_module() of
-        gen_rpc -> ok;
-        rpc     -> ok
+        ?GEN_RPC -> ok;
+        ?ERL_RPC -> ok
     end,
-    case persistent_term:get(?mria(shard_transport), gen_rpc) of
-        distr   -> ok;
-        gen_rpc -> ok
+    case persistent_term:get(?mria(shard_transport), ?DEFAULT_SHARD_TRANSPORT) of
+        ?TRANSPORT_ERL_DISTR -> ok;
+        ?TRANSPORT_GEN_RPC -> ok
     end,
     case {backend(), role(), otp_is_compatible()} of
         {mnesia, replicant, _} ->

@@ -159,10 +159,10 @@ format_status(Status) ->
 
 %% This function is called by the remote core node.
 -spec push_tlog_entry(mria_rlog:transport(), mria_rlog:shard(), mria_lib:subscriber(), mria_rlog:entry()) -> ok.
-push_tlog_entry(distr, _Shard, {_Node, Pid}, TLOGEntry) ->
+push_tlog_entry(?TRANSPORT_ERL_DISTR, _Shard, {_Node, Pid}, TLOGEntry) ->
     do_push_tlog_entry(Pid, TLOGEntry), %% Note: here Pid is remote
     ok;
-push_tlog_entry(gen_rpc, Shard, {Node, Pid}, TLOGEntry) ->
+push_tlog_entry(?TRANSPORT_GEN_RPC, Shard, {Node, Pid}, TLOGEntry) ->
     gen_rpc:ordered_cast({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, TLOGEntry]),
     ok.
 
