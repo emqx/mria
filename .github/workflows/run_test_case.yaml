@@ -7,17 +7,7 @@ jobs:
     run_test_case:
         runs-on: ubuntu-latest
 
-        strategy:
-          matrix:
-            os:
-              - ubuntu22.04
-            otp:
-              - 25.3.2-2
-            elixir:
-              - 1.14.5
-            arch:
-              - amd64
-        container: ghcr.io/emqx/emqx-builder/5.1-4:${{ matrix.elixir }}-${{ matrix.otp }}-${{ matrix.os }}
+        container: ghcr.io/emqx/emqx-builder/5.2-7:1.15.7-26.1.2-1-ubuntu22.04
 
         steps:
         - uses: actions/checkout@v1
@@ -27,21 +17,9 @@ jobs:
             apt update
             apt install -y cmake
 
-        - name: Get deps git refs for cache
-          id: deps-refs
-          run: |
-            scripts/get-dep-refs.sh
-
         - name: Configure git
           run: |
             git config --global --add safe.directory "*"
-
-        - name: load rocksdb cache
-          uses: actions/cache@v2
-          with:
-            path: |
-              _build/default/lib/rocksdb/
-            key: ${{ matrix.os }}-${{ matrix.otp }}-${{ matrix.arch }}-${{ steps.deps-refs.outputs.DEP_ROCKSDB_REF }}
 
         - name: Compile
           run: |
