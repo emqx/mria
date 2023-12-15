@@ -196,6 +196,9 @@ import_op(Op, Acc) ->
             Acc;
         {clear_table, Tab} ->
             mria_mnesia:clear_table_int(Tab),
+            Acc;
+        {clear_table, Tab, Pattern} ->
+            mria_mnesia:clear_table_int(Tab, Pattern),
             Acc
     end.
 
@@ -218,6 +221,9 @@ import_op_dirty(Op, Acc) ->
             Acc;
         {clear_table, Tab} ->
             mnesia:clear_table(Tab),
+            Acc;
+        {clear_table, Tab, Pattern} ->
+            mnesia:match_delete(Tab, Pattern),
             Acc
     end.
 

@@ -182,7 +182,9 @@ get_protocol_version() ->
     %%
     %% 0 -> 1: Add clear_table message to the batch message of the
     %% boostrapper.
-    1.
+    %% 1 -> 2: Add `{clear_table, Tab, Pattern}` op to support
+    %% `mnesia:match_delete/2` API extension.
+    2.
 
 intercept_trans(Tid, Commit) ->
     ?tp(mria_rlog_intercept_trans, Commit#{tid => Tid}),

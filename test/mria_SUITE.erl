@@ -546,6 +546,45 @@ t_rlog_clear_table(_) ->
        end,
        common_checks()).
 
+t_rlog_match_delete(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           rpc:call(N1, mria_transaction_gen, create_data, []),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           {atomic, Recs} = rpc:call(N1, mria_transaction_gen, ro_read_all_keys, []),
+
+           Pattern = {test_tab, {<<"match_delete">>, '_'}, '_'},
+           do_match_delete_test(N1, Nodes, Recs, Pattern),
+           Pattern1 = {test_tab, '_', <<"match_delete">>},
+           do_match_delete_test(N2, Nodes, Recs, Pattern1)
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       common_checks()).
+
+do_match_delete_test(Node, Nodes, Recs, Pattern) ->
+    WriteFun = fun() ->
+                       lists:foreach(
+                         fun(Seq) ->
+                                 mnesia:write({test_tab, {<<"match_delete">>, Seq}, <<"match_delete">>})
+                         end,
+                         lists:seq(0, 4))
+               end,
+    {atomic, ok} = rpc:call(Node, mria, transaction, [test_shard, WriteFun]),
+    mria_mnesia_test_util:stabilize(1000),
+    {atomic, Recs1} = rpc:call(Node, mria_transaction_gen, ro_read_all_keys, []),
+    ?assertNotEqual(lists:sort(Recs), lists:sort(Recs1)),
+    ?assertMatch({atomic, ok}, rpc:call(Node, mria, match_delete, [test_tab, Pattern])),
+    mria_mnesia_test_util:stabilize(1000),
+    mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+    {atomic, Recs2} = rpc:call(Node, mria_transaction_gen, ro_read_all_keys, []),
+    ?assertEqual(lists:sort(Recs), lists:sort(Recs2)).
+
 %% Compare behaviour of failing dirty operations on core and replicant:
 t_rlog_dirty_ops_fail(_) ->
     Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
