@@ -285,7 +285,10 @@ transform_op({{Tab, Key}, {_, _Incr}, update_counter}) ->
             {delete, Tab, Key}
     end;
 transform_op({{Tab, '_'}, '_', clear_table}) ->
-    {clear_table, Tab}.
+    %% Keep it for backward compatibility
+    {clear_table, Tab};
+transform_op({{Tab, '_'}, Pattern, clear_table}) ->
+    {clear_table, Tab, Pattern}.
 
 %%================================================================================
 %% Internal exports (gen_rpc)

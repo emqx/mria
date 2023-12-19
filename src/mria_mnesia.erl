@@ -64,6 +64,7 @@
 %% Hacks for manipulating Mnesia internal structures
 -export([ set_where_to_read/2
         , clear_table_int/1
+        , clear_table_int/2
         , get_internals/0
         ]).
 
@@ -383,14 +384,17 @@ set_where_to_read(Node, Table) ->
             false
     end.
 
-%% @doc Clear table without creating a new transaction.
--spec clear_table_int(mria:table()) -> ok.
 clear_table_int(Tab) ->
+    clear_table_int(Tab, '_').
+
+%% @doc Clear table without creating a new transaction.
+-spec clear_table_int(mria:table(), ets:match_pattern()) -> ok.
+clear_table_int(Tab, Pattern) ->
     case get(mnesia_activity_state) of
         {mnesia, Tid, Ts}  ->
-            mnesia:clear_table(Tid, Ts, Tab, '_');
+            mnesia:clear_table(Tid, Ts, Tab, Pattern);
         {Mod, Tid, Ts} ->
-            Mod:clear_table(Tid, Ts, Tab, '_');
+            Mod:clear_table(Tid, Ts, Tab, Pattern);
         _ ->
             error(no_transaction)
     end.

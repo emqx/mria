@@ -53,6 +53,7 @@
         , sync_dirty/3
         , sync_dirty/2
         , clear_table/1
+        , match_delete/2
 
         , dirty_write/2
         , dirty_write/1
@@ -421,15 +422,16 @@ sync_dirty(Shard, Fun, Args) ->
 sync_dirty(Shard, Fun) ->
     sync_dirty(Shard, Fun, []).
 
+%% `clear_table/1` and `match_delete/2` are implemented as transactions in Mnesia,
+%% using call_backend_rw_dirty/3 is fine:
+%% there is only one op, one table and one shard in these transactions
 -spec clear_table(mria:table()) -> t_result(ok).
 clear_table(Table) ->
-    Shard = mria_config:shard_rlookup(Table),
-    case is_upstream(Shard) of
-        true ->
-            maybe_middleman(mnesia, clear_table, [Table]);
-        false ->
-            rpc_to_core_node(Shard, mnesia, clear_table, [Table])
-    end.
+    call_backend_rw_dirty(?FUNCTION_NAME, Table, []).
+
+-spec match_delete(mria:table(), ets:match_pattern()) -> t_result(ok).
+match_delete(Table, Pattern) ->
+   call_backend_rw_dirty(?FUNCTION_NAME, Table, [Pattern]).
 
 -spec dirty_write(tuple()) -> ok.
 dirty_write(Record) ->
