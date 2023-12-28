@@ -223,6 +223,11 @@ import_op_dirty(Op, Acc) ->
             mnesia:clear_table(Tab),
             Acc;
         {clear_table, Tab, Pattern} ->
+            %% If this op is received, we assume that this node also has
+            %% `mnesia:match_delete/2.
+            %% As mria protocol has been bumped, during rolling updates
+            %% new replicants must connect only to new cores,
+            %% so that both should have this new function.
             mnesia:match_delete(Tab, Pattern),
             Acc
     end.
