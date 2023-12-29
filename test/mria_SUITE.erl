@@ -567,6 +567,38 @@ t_rlog_match_delete(_) ->
        end,
        common_checks()).
 
+t_rlog_match_delete_unsupported(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+           ok = mock_mnesia_match_delete(N1),
+           ok = mock_mnesia_match_delete(N2),
+           Pat = {dummy_pattern, '_', '_'},
+           Exp = {error, unsupported_otp_version},
+           ?assertEqual(Exp, rpc:call(N1, mria, match_delete, [dummy_tab, Pat])),
+           ?assertEqual(Exp, rpc:call(N2, mria, match_delete, [dummy_tab, Pat])),
+           unmock_mnesia_match_delete(N1),
+           unmock_mnesia_match_delete(N2)
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       common_checks()).
+
+mock_mnesia_match_delete(Node) ->
+    ?assert(rpc:call(Node, erlang, function_exported, [mnesia, match_delete, 2])),
+    ok = rpc:call(Node, meck, new, [mnesia, [no_link, no_history, unstick, passthrough]]),
+    ok = rpc:call(Node, meck, delete, [mnesia, match_delete, 2, true]),
+    ?assertNot(rpc:call(Node, erlang, function_exported, [mnesia, match_delete, 2])),
+    ok.
+
+unmock_mnesia_match_delete(Node) ->
+    ok = rpc:call(Node, meck, unload, [mnesia]),
+    _ = rpc:call(Node, mnesia, module_info, []),
+    ?assert(rpc:call(Node, erlang, function_exported, [mnesia, match_delete, 2])),
+    ok.
+
 do_match_delete_test(Node, Nodes, Recs, Pattern) ->
     WriteFun = fun() ->
                        lists:foreach(

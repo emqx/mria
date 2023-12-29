@@ -429,9 +429,19 @@ sync_dirty(Shard, Fun) ->
 clear_table(Table) ->
     call_backend_rw_dirty(?FUNCTION_NAME, Table, []).
 
--spec match_delete(mria:table(), ets:match_pattern()) -> t_result(ok).
+-spec match_delete(mria:table(), ets:match_pattern()) ->
+          t_result(ok) | {error, unsupported_otp_version}.
 match_delete(Table, Pattern) ->
-   call_backend_rw_dirty(?FUNCTION_NAME, Table, [Pattern]).
+    %% Assuming that all nodes run the same OTP/Mnesia release.
+    %% Rolling updates are already handled gracefully,
+    %% due to the fact that mnesia_tm on remote nodes can process
+    %% match_delete op even if mnesia:match_delete/2 is not implemented.
+    case erlang:function_exported(mnesia, match_delete, 2) of
+        true ->
+            call_backend_rw_dirty(?FUNCTION_NAME, Table, [Pattern]);
+        false ->
+            {error, unsupported_otp_version}
+    end.
 
 -spec dirty_write(tuple()) -> ok.
 dirty_write(Record) ->
