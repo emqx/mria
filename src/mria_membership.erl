@@ -424,7 +424,7 @@ handle_cast(Msg, State) ->
     ?LOG(error, "Unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
-handle_info({'DOWN', _MRef, process, DownPid, _Reason},
+handle_info({'DOWN', _MRef, process, DownPid, Reason},
             State = #state{monitors = Monitors}) ->
     Left = [M || M = {{_, Pid}, _} <- Monitors, Pid =/= DownPid],
     case DownPid of
@@ -433,11 +433,15 @@ handle_info({'DOWN', _MRef, process, DownPid, _Reason},
                 [#member{status = leaving}] ->
                     ets:delete(?TAB, Node);
                 [Member] ->
+                    %% Even if the reason is not shutdown, mark the node as stopped,
+                    %% so that mria_lb will ping it soon as a new node, and,
+                    %% as a result replicant node will be added as a member on both nodes.
                     insert(Member#member{mnesia = stopped});
                 [] -> ignore
             end,
+            maybe_notify_mria_down(Reason, Node, State),
             ?tp(mria_membership_proc_down,
-                #{registered_name => ?MODULE, node => Node});
+                #{registered_name => ?MODULE, node => Node, reason => Reason});
         _ -> ignore
     end,
     {noreply, State#state{monitors = Left}};
@@ -446,7 +450,8 @@ handle_info(Info, State) ->
     ?LOG(error, "Unexpected info: ~p", [Info]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, State) ->
+    maybe_notify_mria_down(Reason, node(), State),
     ?terminate_tp,
     ok.
 
@@ -456,6 +461,17 @@ code_change(_OldVsn, State, _Extra) ->
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
+
+maybe_notify_mria_down(shutdown, Node, State) ->
+    _ = notify({mria, down, Node}, State),
+    ok;
+%% If an occasional crash occurs and mria_membership will be soon restarted,
+%% it's probably not worth notifying all the monitors about it.
+%% If the reason is noconnection, we expect `{node, down, Node}` to be sent out soon,
+%% since mria_node_monitor tracks all connected nodes (replicants are covered),
+%% so we can also skip it.
+maybe_notify_mria_down(_Reason, _Node, _State) ->
+    ok.
 
 make_new_local_member() ->
     IsMnesiaRunning = case lists:member(node(), mria_mnesia:running_nodes()) of

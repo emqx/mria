@@ -262,7 +262,7 @@ t_core_member_is_stopped_core_observes(_) ->
        try
            {[N0, N1] = Cores, Replicants} = start_core_replicant_cluster(Cluster),
            assert_membership(Cores, Replicants),
-           test_member_is_stopped_replicant_observes(mria_membership_mnesia_down, N1, N0, members)
+           test_member_is_stopped_node_observes(mria_membership_mnesia_down, N1, N0, members)
        after
            mria_ct:teardown_cluster(Cluster)
        end,
@@ -338,12 +338,18 @@ t_member_node_down(_) ->
        try
            {Cores, [N2, _N3] = Replicants} = start_core_replicant_cluster(Cluster),
            assert_membership(Cores, Replicants),
+           ok = erpc:call(N, mria_membership, monitor, [membership, self(), true]),
            ?wait_async_action(
               mria_ct:teardown_cluster([NodeSpec]),
               #{ ?snk_kind := mria_membership_insert
                , member := #member{node = N, status = down}
                , ?snk_meta := #{node := N2}
                }),
+           receive
+               {membership, {mria, down, N}} -> ok
+           after 5000 ->
+                   ct:fail("expected_membership_event_not_received")
+           end,
            ?assertEqual(1, length(erpc:call(N2, mria_membership, running_core_nodelist, [])))
        after
            mria_ct:teardown_cluster(Cluster1)
@@ -453,6 +459,15 @@ test_node_leaves( LeaveKind, JoinKind, LeaveNode, ObserveNode, Seed
     ?assertEqual(ExpectAfterJoin, erpc:call(ObserveNode, mria_membership, AssertF, [])).
 
 test_member_is_stopped_replicant_observes(WaitKind, StopNode, ObserveNode, AssertF) ->
+    ok = erpc:call(ObserveNode, mria_membership, monitor, [membership, self(), true]),
+    test_member_is_stopped_node_observes(WaitKind, StopNode, ObserveNode, AssertF),
+    receive
+        {membership, {mria, down, StopNode}} -> ok
+    after 5000 ->
+            ct:fail("expected_membership_event_not_received")
+    end.
+
+test_member_is_stopped_node_observes(WaitKind, StopNode, ObserveNode, AssertF) ->
     wait_action(WaitKind, StopNode, ObserveNode, mria, stop, []),
     %% No leave announce, StopNode must not be deleted from membership table
     ?assertEqual( [stopped]
