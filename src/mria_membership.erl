@@ -183,6 +183,10 @@ oldest(Members) ->
     hd(lists:sort(fun compare/2, Members)).
 
 %% @private
+compare(#member{guid = undefined}, #member{guid = _}) ->
+    false;
+compare(#member{guid = _}, #member{guid = undefined}) ->
+    true;
 compare(M1, M2) ->
     M1#member.guid < M2#member.guid.
 
