@@ -25,6 +25,7 @@
         , core_nodes/0
         , join_cluster/1
         , leave_cluster/0
+        , notify_core_node_down/1
         ]).
 
 %% gen_server callbacks
@@ -90,6 +91,28 @@ leave_cluster() ->
             ok;
         {error, Err} ->
             error(Err)
+    end.
+
+%% Immediately unset shard core nodes matching the down node to reduce the risk of
+%% trying to communicate with the failed node, for example delegating
+%% a write operation (RPC) to that failed core node
+%% TODO: race conditions with mria_lb gen_server, which can be the first to update
+%% a core node per shard
+-spec notify_core_node_down(node()) -> ok.
+notify_core_node_down(DownNode) ->
+    case mria_config:role() of
+        replicant ->
+            lists:foreach(
+              fun(Shard) ->
+                      case mria_status:get_core_node(Shard, 0) of
+                          {ok, DownNode} ->
+                              mria_status:notify_core_node_down(Shard);
+                          _ -> ok
+                      end
+              end,
+              mria_schema:shards());
+        _ ->
+            ok
     end.
 
 %%================================================================================
