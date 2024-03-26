@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2021, 2023-2024 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include("mria_rlog.hrl").
 
 all() ->
     mria_ct:all(?MODULE).
@@ -232,6 +233,29 @@ t_core_node_leave(_Config) ->
        after
            mria_ct:teardown_cluster(Cluster)
        end, []).
+
+t_custom_compat_check(_Config) ->
+    Env = [ {mria, {callback, lb_custom_info_check}, fun(Val) -> Val =:= chosen_one end}
+          | mria_mnesia_test_util:common_env()],
+    Cluster = mria_ct:cluster([ core
+                              , core
+                              , {core, [{mria, {callback, lb_custom_info},
+                                         fun() -> chosen_one end}]}
+                              , replicant
+                              ], Env),
+    ?check_trace(
+       #{timetrap => 15000},
+       try
+           [_C1, _C2, C3, R1] = mria_ct:start_cluster(mria, Cluster),
+           ?assertEqual({ok, C3},
+                        erpc:call( R1
+                                 , mria_status, get_core_node, [?mria_meta_shard, infinity]
+                                 , infinity
+                                 ))
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
 
 clear_core_node_list(Replicant) ->
     MaybeOldCallback = erpc:call(Replicant, mria_config, callback, [core_node_discovery]),

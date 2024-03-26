@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2024 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -70,7 +70,9 @@
 -type callback() :: start
                   | stop
                   | {start | stop, mria_rlog:shard()}
-                  | core_node_discovery.
+                  | core_node_discovery
+                  | lb_custom_info
+                  | lb_custom_info_check.
 
 -type callback_function() :: fun(() -> term()) |
                              fun((term()) -> term()).
