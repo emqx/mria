@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2024 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -60,6 +60,7 @@
          , protocol_version := non_neg_integer()
          , db_nodes => [node()]
          , shard_badness => [{mria_rlog:shard(), float()}]
+         , custom_info => _
          }.
 
 -define(update, update).
@@ -192,28 +193,54 @@ find_clusters(NodeInfo) ->
 -spec shard_badness(#{node() => node_info()}) -> #{mria_rlog:shard() => {node(), Badness}}
               when Badness :: float().
 shard_badness(NodeInfo) ->
-    MyProtoVersion = mria_rlog:get_protocol_version(),
     maps:fold(
-      fun(Node, #{shard_badness := Shards, protocol_version := ProtoVsn}, Acc)
-            when ProtoVsn =:= MyProtoVersion ->
-              lists:foldl(
-                fun({Shard, Badness}, Acc1) ->
-                        maps:update_with(Shard,
-                                         fun({_OldNode, OldBadness}) when OldBadness > Badness ->
-                                                 {Node, Badness};
-                                            (Old) ->
-                                                 Old
-                                         end,
-                                         {Node, Badness},
-                                         Acc1)
-                end,
-                Acc,
-                Shards);
-         (_Node, _NodeInfo, Acc) ->
-              Acc
+      fun(Node, LbInfo = #{shard_badness := Shards}, Acc) ->
+           case verify_node_compatibility(LbInfo) of
+               true ->
+                   lists:foldl(
+                     fun({Shard, Badness}, Acc1) ->
+                             maps:update_with(Shard,
+                                              fun({_OldNode, OldBadness}) when OldBadness > Badness ->
+                                                      {Node, Badness};
+                                                 (Old) ->
+                                                      Old
+                                              end,
+                                              {Node, Badness},
+                                              Acc1)
+                     end,
+                     Acc,
+                     Shards);
+               false ->
+                   Acc
+           end
       end,
       #{},
       NodeInfo).
+
+verify_node_compatibility(LbInfo = #{protocol_version := ProtoVsn}) ->
+    case mria_config:callback(lb_custom_info_check) of
+        {ok, CustomCheckFun} ->
+            ok;
+        undefined ->
+            CustomCheckFun = fun(_) -> true end
+    end,
+    CustomInfo = maps:get(custom_info, LbInfo, undefined),
+    MyProtoVersion = mria_rlog:get_protocol_version(),
+    %% Actual check:
+    IsCustomCompat = try
+                         Result = CustomCheckFun(CustomInfo),
+                         is_boolean(Result) orelse
+                             error({non_boolean_result, Result}),
+                         Result
+                     catch
+                         %% TODO: this can get spammy:
+                         EC:Err:Stack ->
+                             ?tp(error, mria_failed_to_check_upstream_compatibility,
+                                 #{lb_info => LbInfo, EC => Err, stacktrace => Stack}),
+                             false
+                     end,
+    ProtoVsn =:= MyProtoVersion andalso
+        IsCustomCompat.
 
 start_timer(LastUpdateTime) ->
     %% Leave at least 100 ms between updates to leave some time to
@@ -287,11 +314,16 @@ lb_callback() ->
                   {ok, Vsn} -> Vsn;
                   undefined -> undefined
               end,
+    CustomInfo = case mria_config:callback(lb_custom_info) of
+                     {ok, CB}  -> CB();
+                     undefined -> undefined
+                 end,
     BasicInfo =
         #{ running => IsRunning
          , version => Version
          , whoami => Whoami
          , protocol_version => mria_rlog:get_protocol_version()
+         , custom_info => CustomInfo
          },
     MoreInfo =
         case Whoami of
