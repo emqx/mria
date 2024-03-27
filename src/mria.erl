@@ -35,6 +35,8 @@
         , cluster_nodes/1
         , cluster_status/1
         , is_node_in_cluster/1
+        , enable_core_node_discovery/0
+        , disable_core_node_discovery/0
         ]).
 
 %% Register callback
@@ -270,6 +272,14 @@ force_leave(Node) ->
         {false, _} ->
             {error, node_not_in_cluster}
     end.
+
+-spec enable_core_node_discovery() -> ok.
+enable_core_node_discovery() ->
+    mria_config:set_core_node_discovery(true).
+
+-spec disable_core_node_discovery() -> ok.
+disable_core_node_discovery() ->
+    mria_config:set_core_node_discovery(false).
 
 %%--------------------------------------------------------------------
 %% Register callback

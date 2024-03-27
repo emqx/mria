@@ -314,11 +314,16 @@ lb_callback() ->
 
 -spec discover_nodes() -> [node()].
 discover_nodes() ->
-    DiscoveryFun = mria_config:core_node_discovery_callback(),
     case manual_seed() of
         [] ->
-            %% Run the discovery algorithm
-            DiscoveryFun();
+            case mria_config:is_core_node_discovery_enabled() of
+                true ->
+                    %% Run the discovery algorithm
+                    DiscoveryFun = mria_config:core_node_discovery_callback(),
+                    DiscoveryFun();
+                false ->
+                    []
+            end;
         [Seed] ->
             discover_manually(Seed)
     end.
