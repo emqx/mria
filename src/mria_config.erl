@@ -32,6 +32,9 @@
         , load_config/0
         , erase_all_config/0
 
+        , set_core_node_discovery/1
+        , is_core_node_discovery_enabled/0
+
           %% Shard config:
         , set_dirty_shard/2
         , dirty_shard/1
@@ -248,6 +251,22 @@ set_extra_mnesia_diagnostic_checks(Checks) when is_list(Checks) ->
 -spec get_extra_mnesia_diagnostic_checks() -> [{_Name, Value, fun(() -> Value)}].
 get_extra_mnesia_diagnostic_checks() ->
     persistent_term:get(?mria(extra_mnesia_diagnostic_checks), []).
+
+-spec set_core_node_discovery(boolean()) -> ok.
+set_core_node_discovery(What) when What =:= true; What =:= false ->
+    case role() of
+        core ->
+            ok;
+        replicant ->
+            ok = application:set_env(mria, core_node_discovery, What)
+    end.
+
+-spec is_core_node_discovery_enabled() -> boolean().
+is_core_node_discovery_enabled() ->
+    case role() of
+        core -> false;
+        replicant -> application:get_env(mria, core_node_discovery, true)
+    end.
 
 %%================================================================================
 %% Internal
