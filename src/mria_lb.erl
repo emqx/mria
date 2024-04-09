@@ -61,6 +61,9 @@
          , db_nodes => [node()]
          , shard_badness => [{mria_rlog:shard(), float()}]
          , custom_info => _
+         %% We can't prevent core node discovery if the node is still up and reachable.
+         %% Thus, a replicant can discover a core but must ignore it if discovery is disabled.
+         , discovery_enabled => boolean()
          }.
 
 -define(update, update).
@@ -153,7 +156,13 @@ do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
                                           , ?MODULE, lb_callback, []
                                           , mria_config:lb_timeout()
                                           ),
-    NodeInfo1 = [I || I = {_, #{whoami := core, running := true}} <- NodeInfo0],
+    NodeInfo1 = lists:filter(fun({_, #{whoami := Who, running := IsRunning} = I}) ->
+                                     %% Backward compatibility
+                                     IsDiscoverable = maps:get(discovery_enabled, I, true),
+                                     IsRunning andalso IsDiscoverable andalso Who =:= core
+                             end,
+                             NodeInfo0),
+
     NodeInfo = maps:from_list(NodeInfo1),
     maybe_report_changes(OldNodeInfo, NodeInfo),
     %% Find partitions of the core cluster, and if the core cluster is
@@ -324,6 +333,7 @@ lb_callback() ->
          , whoami => Whoami
          , protocol_version => mria_rlog:get_protocol_version()
          , custom_info => CustomInfo
+         , discovery_enabled => mria_config:is_core_node_discovery_enabled()
          },
     MoreInfo =
         case Whoami of
