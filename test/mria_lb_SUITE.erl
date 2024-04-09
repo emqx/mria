@@ -234,6 +234,40 @@ t_core_node_leave(_Config) ->
            mria_ct:teardown_cluster(Cluster)
        end, []).
 
+%% Check that removing a node from the cluster and disabling its rediscovery is handled correctly by the LB.
+t_node_leave_disable_discovery(_Config) ->
+    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 60000},
+       try
+           {[C1, C2, R1], {ok, _}} =
+               ?wait_async_action(
+                  begin
+                      Nodes = [_, _, R1] = mria_ct:start_cluster(mria, Cluster),
+                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+                      {R1, mria_lb} ! update,
+                      Nodes
+                  end,
+                  #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                   , returned_cores := [_, _]
+                   }, 10000),
+           %% Disable discovery and kick C2 from the cluster:
+           ?wait_async_action(
+                  begin
+                      erpc:call(C2, fun() -> ok = mria_config:set_core_node_discovery(false),
+                                             mria:leave()
+                                    end)
+                  end,
+                  #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+                   , node := _
+                   , previous_cores := [_, _]
+                   , returned_cores := [_]
+                   }, 10000),
+           ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end, []).
+
 t_custom_compat_check(_Config) ->
     Env = [ {mria, {callback, lb_custom_info_check}, fun(Val) -> Val =:= chosen_one end}
           | mria_mnesia_test_util:common_env()],

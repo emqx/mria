@@ -252,21 +252,17 @@ set_extra_mnesia_diagnostic_checks(Checks) when is_list(Checks) ->
 get_extra_mnesia_diagnostic_checks() ->
     persistent_term:get(?mria(extra_mnesia_diagnostic_checks), []).
 
+%% When `core_node_discovery = false` on a replicant node,
+%% the replicant will stop discovering core nodes.
+%% When it is `false` on a core node, other replicants will not connect to that core node.
+%% See mria_lb for more details.
 -spec set_core_node_discovery(boolean()) -> ok.
 set_core_node_discovery(What) when What =:= true; What =:= false ->
-    case role() of
-        core ->
-            ok;
-        replicant ->
-            ok = application:set_env(mria, core_node_discovery, What)
-    end.
+    ok = application:set_env(mria, core_node_discovery, What).
 
 -spec is_core_node_discovery_enabled() -> boolean().
 is_core_node_discovery_enabled() ->
-    case role() of
-        core -> false;
-        replicant -> application:get_env(mria, core_node_discovery, true)
-    end.
+    application:get_env(mria, core_node_discovery, true).
 
 %%================================================================================
 %% Internal
