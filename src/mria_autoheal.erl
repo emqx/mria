@@ -77,7 +77,7 @@ handle_msg({report_partition, Node}, Autoheal = #autoheal{delay = Delay, timer =
 handle_msg(Msg = {create_splitview, Node}, Autoheal = #autoheal{delay = Delay, timer = TRef})
   when Node =:= node() ->
     ensure_cancel_timer(TRef),
-    case mria_membership:is_all_alive() of
+    case is_majority_alive() of
         true ->
             Nodes = mria_mnesia:db_nodes(),
             RPCResult = erpc:multicall(Nodes, mria_mnesia, running_nodes, []),
@@ -160,3 +160,8 @@ ensure_cancel_timer(undefined) ->
     ok;
 ensure_cancel_timer(TRef) ->
     catch erlang:cancel_timer(TRef).
+
+is_majority_alive() ->
+    All = mria_mnesia:cluster_nodes(all),
+    NotAliveLen = length(All -- [node() | nodes()]),
+    NotAliveLen < (length(All) div 2).

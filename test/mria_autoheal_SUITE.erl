@@ -87,6 +87,32 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
        end,
        [fun ?MODULE:prop_callbacks/1]).
 
+t_autoheal_majority_reachable(Config) when is_list(Config) ->
+    Cluster = mria_ct:cluster([core, core, core, core, core], [{mria, cluster_autoheal, 200}]),
+    ?check_trace(
+       #{timetrap => 25000},
+       try
+           Nodes = [N1, N2, N3, N4, N5] = mria_ct:start_cluster(mria, Cluster),
+           %% Simulate netsplit
+           true = rpc:cast(N4, erlang, disconnect_node, [N1]),
+           true = rpc:cast(N5, erlang, disconnect_node, [N1]),
+           ok = mria_ct:stop_slave(N5),
+           ok = timer:sleep(1000),
+           AliveMajorityNodes = [N1, N2, N3, N4],
+           %% Wait for autoheal, it should happen automatically:
+           ?retry(1000, 20,
+                  begin
+                      ?assertMatch({AliveMajorityNodes, [N5]}, view(N1)),
+                      ?assertMatch({AliveMajorityNodes, [N5]}, view(N2)),
+                      ?assertMatch({AliveMajorityNodes, [N5]}, view(N3)),
+                      ?assertMatch({AliveMajorityNodes, [N5]}, view(N4))
+                  end),
+           Nodes
+       after
+           ok = mria_ct:teardown_cluster(lists:sublist(Cluster, 4))
+       end,
+       [fun ?MODULE:prop_callbacks/1]).
+
 todo_t_reboot_rejoin(Config) when is_list(Config) -> %% FIXME: Flaky and somewhat broken, disable for now
     CommonEnv = [ {mria, cluster_autoheal, 200}
                 , {mria, db_backend, rlog}
