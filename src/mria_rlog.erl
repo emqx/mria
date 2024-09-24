@@ -170,7 +170,7 @@ subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
             Args = [Shard, {MyNode, Subscriber}, Checkpoint],
             mria_lib:rpc_call_nothrow({RemoteNode, Shard}, mria_rlog_server, subscribe, Args);
         false ->
-            {badrpc, probe_failed}
+            {badrpc, {probe_failed, Shard}}
     end.
 
 %% @doc Get version of Mria protocol running on the node
