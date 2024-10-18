@@ -317,19 +317,20 @@ converge_schema(Entries, InitialState) ->
 %% is needed so we can replicate schema updates just like regular
 %% transactions.
 bootstrap() ->
-    Storage = ram_copies,
     Opts = [{type, ordered_set},
             {record_name, ?schema},
             {attributes, record_info(fields, ?schema)}
            ],
     MetaSpec = #?schema{ mnesia_table = ?schema
                        , shard = ?mria_meta_shard
-                       , storage = Storage
+                       , storage = ram_copies
                        , config = Opts
                        },
     %% Create (or copy) the mnesia table and wait for it:
     ok = create_table(MetaSpec),
-    ok = mria_mnesia:copy_table(?schema, Storage),
+    %% Ensure replicas are available before starting copy:
+    ok = mria_mnesia:wait_for_tables([?schema]),
+    ok = mria_mnesia:copy_table(?schema, ram_copies),
     RlogSyncOpts = [{record_name, ?rlog_sync},
                     {attributes, record_info(fields, ?rlog_sync)}
                    ],
@@ -339,6 +340,10 @@ bootstrap() ->
                            , config = RlogSyncOpts
                            },
     ok = create_table(RlogSyncSpec),
+    %% Ensure replicas are available before starting copy:
+    %% If we've managed to sync only mnesia schema up to this point, `copy_table/2` may
+    %% fail if other nodes suddenly become unavailable.
+    ok = mria_mnesia:wait_for_tables([?rlog_sync]),
     ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
     mria_mnesia:wait_for_tables([?schema, ?rlog_sync]),
     %% Seed the table with the metadata:
