@@ -25,9 +25,9 @@
 -define(unexpected_event_kind, "Mria worker received unexpected event").
 -define(unexpected_event_tp(Params),
         ?tp(warning, ?unexpected_event_kind,
-            Params#{ process => ?MODULE
-                   , callback => ?FUNCTION_NAME
-                   })).
+            (begin Params end)#{ process => ?MODULE
+                               , callback => ?FUNCTION_NAME
+                               })).
 
 -define(terminate_tp,
         ?tp(debug, mria_worker_terminate, #{process => ?MODULE, callback => terminate})).
