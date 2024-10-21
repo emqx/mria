@@ -99,6 +99,53 @@ t_join_after_node_down(_) ->
        end,
        []).
 
+%% Start a cluster of two nodes, then join the third, and simulate two nodes went down
+%% right after the third one joined. Restore them and verify the third one is healthy.
+t_cluster_down_after_join(_) ->
+    ClusterEnv = mria_mnesia_test_util:common_env(),
+    Cluster = [C1, C2, C3] = mria_ct:cluster([core, core, core], ClusterEnv),
+    ?check_trace(
+       #{timetrap => 10_000},
+       try
+           %% Prepare cluster with 3 nodes:
+           Ns = [N1, N2, N3] = mria_ct:start_cluster(node, Cluster),
+           ?assertEqual([{ok, ok} || _ <- Ns], erpc:multicall(Ns, mria, start, [])),
+           %% Join together first 2 nodes:
+           ?assertEqual(ok, erpc:call(N1, mria, join, [N2])),
+           ?assertEqual([N1, N2], lists:sort(erpc:call(N1, mria_mnesia, running_nodes, []))),
+           ?assertEqual(ok, erpc:call(N1, mria_transaction_gen, init, [])),
+           %% Tell N3 to join but simulate it goes down after joining but before bootstrap:
+           ?assertEqual(ok, erpc:call(N3, meck, new, [mria_app, [no_link, passthrough]])),
+           ?assertEqual(ok, erpc:call(N3, meck, expect, [mria_app, start, fun ?MODULE:suicide/2])),
+           %% Node N3 expectedly dies:
+           ?assertError({erpc, _}, erpc:call(N3, mria, join, [N1])),
+           ?assertError({erpc, _}, erpc:call(N3, mria_mnesia, running_nodes, [])),
+           %% Tell N1 and N2 to stop:
+           ?assertEqual(ok, erpc:call(N1, mria, stop, [])),
+           ?assertEqual(ok, erpc:call(N2, mria, stop, [])),
+           ?assertEqual([ok, ok], [slave:stop(N) || N <- [N1, N2]]),
+           %% Restart N3 and tell mria to start:
+           N3 = mria_ct:start_slave(node, C3),
+           %% This will hang waiting for N1 or N2 to go online, thus `cast/4`:
+           ?assertEqual(ok, erpc:cast(N3, mria, start, [])),
+           %% Tell N1 and N2 to get back up:
+           [N1, N2] = [mria_ct:start_slave(node, C) || C <- [C1, C2]],
+           %% Again, use `cast/4` to avoid hanging waiting for another node:
+           ?assertEqual(ok, erpc:cast(N1, mria, start, [])),
+           ?assertEqual(ok, erpc:cast(N2, mria, start, [])),
+           ?assertEqual(ok, erpc:call(N3, mria, start, [])),
+           %% Verify that bootstrap process has finished and the node is alive:
+           _ = erpc:call(N3, sys, get_state, [mria_schema]),
+           ?assertEqual([N1, N2, N3], lists:sort(erpc:call(N3, mria_mnesia, running_nodes, []))),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+suicide(_Type, _Args) ->
+    erlang:halt().
+
 t_diagnosis_tab(_)->
     TestTab = test_tab_1,
     Cluster = [NS1, NS2] = mria_ct:cluster([core, core], []),
