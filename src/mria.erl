@@ -235,11 +235,22 @@ join(Node) ->
 join(Node, _) when Node =:= node() ->
     ignore;
 join(Node, Reason) when is_atom(Node) ->
+    %% NOTE
+    %%
     %% If two nodes are trying to join each other simultaneously,
     %% one of them must be blocked waiting for a lock.
     %% Once lock is released, it is expected to be already in the
     %% cluster (if the other node joined it successfully).
-    global:trans(?JOIN_LOCK_ID, fun() -> join1(Node, Reason) end, [node(), Node]).
+    %%
+    %% Additionally, avoid conducting concurrent join operations
+    %% by specifying current process PID as the lock requester.
+    %% Otherwise, concurrent joins can ruin each other's lives and
+    %% make any further cluster operations impossible.
+    %% This can happen, for example, when a concurrent join stops the
+    %% entire `mnesia` system while another join is running schema
+    %% transactions.
+    LockId = ?JOIN_LOCK_ID(self()),
+    global:trans(LockId, fun() -> join1(Node, Reason) end, [node(), Node]).
 
 %% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.

@@ -1317,6 +1317,43 @@ t_join_another_node_simultaneously(_) ->
        end,
       []).
 
+t_join_many_nodes_simultaneously(_) ->
+    % Self = self(),
+    CommonEnv = mria_mnesia_test_util:common_env(),
+    Cluster = [maps:remove(join_to, Spec)
+               || Spec <- mria_ct:cluster([core, core, core, core], CommonEnv)],
+    ?check_trace(
+       #{timetrap => 15_000},
+       try
+           %% Spin the cluster up.
+           [N1, N2, N3, N4] = Nodes = mria_ct:start_cluster(mria, Cluster),
+           %% Connect only N2, N3, N4 together.
+           ok = rpc:call(N2, mria, join, [N4]),
+           ok = rpc:call(N3, mria, join, [N4]),
+           %% Subscribe to an event emitted right before schema transactions take place.
+           {ok, SRef} = snabbkaffe:subscribe(?match_event(#{?snk_kind := mria_mnesia_connect})),
+           %% Ask N1 to join the cluster (using N2 as a seed).
+           K1 = rpc:async_call(N1, mria, join, [N2]),
+           %% Wait for the event, and ask (concurrently) N1 to join the cluster (using
+           %% other 2 nodes as seeds).
+           {ok, _} = snabbkaffe:receive_events(SRef),
+           K2 = rpc:async_call(N1, mria, join, [N3]),
+           K3 = rpc:async_call(N1, mria, join, [N4]),
+           ?assertMatch([ok,
+                         {error, {already_in_cluster, _}},
+                         {error, {already_in_cluster, _}}],
+                        lists:sort([rpc:yield(K) || K <- [K1, K2, K3]])),
+           timer:sleep(3000),
+           ?assertEqual({[true, true, true, true], []},
+                        rpc:multicall(Nodes, mria_sup, is_running, [])),
+           {Results, []} = rpc:multicall(Nodes, mria_mnesia, running_nodes, []),
+           ?assertEqual([Nodes, Nodes, Nodes, Nodes],
+                        lists:map(fun lists:sort/1, Results))
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+      []).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10

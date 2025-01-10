@@ -130,6 +130,7 @@ ensure_stopped() ->
 %% @doc Cluster with node.
 -spec(connect(node()) -> ok | {error, any()}).
 connect(Node) ->
+    ?tp(mria_mnesia_connect, #{to => Node}),
     case mnesia:change_config(extra_db_nodes, [Node]) of
         {ok, [Node]} -> ok;
         {ok, []}     -> {error, {failed_to_connect_node, Node}};
@@ -237,6 +238,7 @@ is_node_in_cluster(Node) ->
 
 %% @doc Copy schema.
 copy_schema(Node) ->
+    ?tp(mria_mnesia_copy_schema, #{}),
     case mnesia:change_table_copy_type(schema, Node, disc_copies) of
         {atomic, ok} -> ok;
         {aborted, {already_exists, schema, Node, disc_copies}} ->
