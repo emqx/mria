@@ -595,7 +595,7 @@ should_retry_rpc(_) ->
 find_upstream_node(Shard) ->
     ?tp_span(find_upstream_node, #{shard => Shard},
              begin
-                 {ok, Node} = mria_status:get_core_node(Shard, infinity),
+                 {ok, Node} = mria_status:upstream(Shard),
                  Node
              end).
 
