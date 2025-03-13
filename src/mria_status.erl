@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
          notify_core_node_up/2, notify_core_node_down/1, get_core_node/2,
          notify_core_intercept_trans/2,
 
-         upstream/1, upstream_node/2,
+         upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
          get_shard_stats/1, agents/0, agents/1, replicants/0, get_shard_lag/1,
 
@@ -81,12 +81,15 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Return name of the core node that is _currently serving_ the
-%% downstream shard. If shard is currently down, wait until started
-%% for at most `Timeout' millisecond. Note the difference in behavior
-%% as compared with `get_core_node'.
--spec upstream_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
-upstream_node(Shard, Timeout) ->
-    optvar:read(?optvar({?core_node, Shard}), Timeout).
+%% downstream shard. Note the difference in behavior as compared with
+%% `get_core_node'. Returns `disconnected' if the local replica of the
+%% shard is down.
+-spec upstream_node(mria_rlog:shard()) -> {ok, node()} | disconnected.
+upstream_node(Shard) ->
+    case upstream(Shard) of
+        {ok, Pid}    -> {ok, node(Pid)};
+        disconnected -> disconnected
+    end.
 
 %% @doc Return pid of the core node agent that serves us.
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
@@ -96,9 +99,8 @@ upstream(Shard) ->
         undefined -> disconnected
     end.
 
-%% @deprecated Return a core node that _might_ be able to serve the
-%% specified shard. WARNING: use of this function leads to unbalanced
-%% load of the core nodes.
+%% @doc Return a core node that _might_ be able to serve the specified
+%% shard.
 -spec get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
 get_core_node(Shard, Timeout) ->
     optvar:read(?optvar({?core_node, Shard}), Timeout).
@@ -171,10 +173,10 @@ replicants() ->
 
 -spec get_shard_lag(mria_rlog:shard()) -> non_neg_integer() | disconnected.
 get_shard_lag(Shard) ->
-    case {mria_config:role(), upstream_node(Shard, 0)} of
+    case {mria_config:role(), upstream_node(Shard)} of
         {core, _} ->
             0;
-        {replicant, timeout} ->
+        {replicant, disconnected} ->
             disconnected;
         {replicant, {ok, Upstream}} ->
             RemoteSeqNo = erpc:call(Upstream, ?MODULE, get_stat, [Shard, ?core_intercept], 1000),
@@ -242,7 +244,7 @@ get_shard_stats(Shard) ->
              , server_mql             => get_mql(Shard)
              };
         replicant ->
-            case upstream_node(Shard, 0) of
+            case upstream_node(Shard) of
                 {ok, Upstream} -> ok;
                 _ -> Upstream = undefined
             end,
