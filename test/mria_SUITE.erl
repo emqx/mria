@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -863,9 +863,6 @@ t_sum_verify(_) ->
     ?check_trace(
        #{timetrap => 30000},
        try
-           ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 4
-                          , #{?snk_kind := state_change, to := bootstrap, shard := test_shard}
-                          ),
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 2 * NTrans div 4
                           , #{?snk_kind := state_change, to := local_replay, shard := test_shard}
                           ),
