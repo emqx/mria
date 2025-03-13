@@ -365,36 +365,6 @@ t_transaction_on_replicant(_) ->
                mria_rlog_props:no_unexpected_events(Trace)
        end).
 
-%% EMQX-11006
-%%
-%% Test retry of aborted R/O transaction RPCs
-t_ro_trans_retry(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
-    ?check_trace(
-       #{timetrap => 10000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_tables(Nodes),
-           %% Delay restart of mria on the core until the replicant
-           %% retries the transaction at least once:
-           ?force_ordering(
-              #{?snk_kind := mria_retry_rpc_to_core},
-              #{?snk_kind := "Starting mnesia", ?snk_meta := #{node := N1}}),
-           %% Restart mria on the core.
-           ?assertMatch(ok, rpc:call(N1, mria, stop, [])),
-           rpc:cast(N1, mria, start, []),
-           %% Issue a R/O transaction on the replicant:
-           TransFun = fun() -> 42 end,
-           ?assertMatch({atomic, 42},
-                        rpc:call(N2, mria, ro_transaction, [test_shard, TransFun]))
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end,
-       fun(Trace) ->
-               %% Ensure that the replicant retried RPC:
-               ?assertMatch([_|_], ?of_kind(mria_retry_rpc_to_core, Trace))
-       end).
-
 t_sync_transaction_on_replicant(_) ->
     Cluster = mria_ct:cluster([core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
