@@ -1321,6 +1321,70 @@ t_join_many_nodes_simultaneously(_) ->
        end,
       []).
 
+%% Verify replicant rebalance feature:
+t_rebalance(_) ->
+    Cluster = [_C1, C2|_] = mria_ct:cluster([core, core, replicant, replicant],
+                                            mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           %% 1. Stop one of the core nodes to create the imbalance:
+           mria_ct:stop_slave(N2),
+           timer:sleep(1000),
+           %% 2. Verify output of `mria_rebalance:collect' function:
+           ?retry(1000, 5,
+                  begin
+                      #{test_shard := Status1} = ?ON(N1, mria_rebalance:collect()),
+                      %% Make sure both agents are served by N1:
+                      ?assertMatch(
+                         [_, _],
+                         proplists:get_value(N1, Status1))
+                  end),
+           %% 3. Restart the core:
+           N2 = mria_ct:start_slave(mria, C2),
+           mria_ct:start_mria(C2),
+           %% 3.1. Make sure both replicants discover the new node and
+           %% recognize it as the most desirable upstream for
+           %% `test_shard':
+           ?retry(1000, 10,
+                  ?assertMatch({ok, N2},
+                               get_preferred_core_node(test_shard, N3))),
+           ?retry(1000, 10,
+                  ?assertMatch({ok, N2},
+                               get_preferred_core_node(test_shard, N4))),
+           %% 4. Check that rebalance functions work fine while the
+           %% rebalance server is stopped:
+           ?assertMatch(not_started, ?ON(N1, mria_rebalance:status())),
+           ?assertMatch(not_started, ?ON(N1, mria_rebalance:abort())),
+           %% 5. Start the server and plan the rebalance:
+           ?ON(N1, mria_rebalance:start()),
+           ?assertMatch({wait_confirmation, [_|_]},
+                        ?ON(N1, mria_rebalance:status())),
+           %% 6. Execute it and wait for completion:
+           ?ON(N1, mria_rebalance:confirm()),
+           ?retry(100, 50,
+                  begin
+                      ?assertMatch({complete, []},
+                                   ?ON(N1, mria_rebalance:status()))
+                  end),
+           %% 7. Verify that the cluster is indeed balanced:
+           ?assertMatch(
+              [],
+              ?ON(N1, mria_rebalance:plan(mria_rebalance:collect())))
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+get_preferred_core_node(Shard, Replicant) ->
+    ?ON(Replicant,
+        begin
+            mria_lb ! update,
+            logger:debug("Replicant's internal status ~p", [sys:get_state(mria_lb)]),
+            mria_status:replica_get_core_node(Shard, 0)
+        end).
+
 cluster_benchmark(_) ->
     NReplicas = 6,
     Config = #{ trans_size => 10

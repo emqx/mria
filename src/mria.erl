@@ -80,11 +80,12 @@
 
 -type info_key() :: members | running_nodes | stopped_nodes | partitions | rlog.
 
--type infos() :: #{members       := list(member()),
-                   running_nodes := list(node()),
-                   stopped_nodes := list(node()),
-                   partitions    := list(node()),
-                   rlog          := map()
+-type infos() :: #{members          := list(member()),
+                   running_nodes    := list(node()),
+                   stopped_nodes    := list(node()),
+                   partitions       := list(node()),
+                   rlog             := map(),
+                   rebalance_status := _
                   }.
 
 -type storage() :: ram_copies | disc_copies | disc_only_copies | null_copies | atom().
@@ -153,11 +154,12 @@ info(Key) ->
 
 -spec info() -> infos().
 info() ->
-    #{ running_nodes => cluster_nodes(running)
-     , stopped_nodes => cluster_nodes(stopped)
-     , members       => mria_membership:members()
-     , partitions    => mria_node_monitor:partitions()
-     , rlog          => mria_rlog:status()
+    #{ running_nodes    => cluster_nodes(running)
+     , stopped_nodes    => cluster_nodes(stopped)
+     , members          => mria_membership:members()
+     , partitions       => mria_node_monitor:partitions()
+     , rlog             => mria_rlog:status()
+     , rebalance_status => catch mria_rebalance:status()
      }.
 
 -spec rocksdb_backend_available() -> boolean().
