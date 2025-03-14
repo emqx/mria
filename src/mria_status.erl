@@ -24,11 +24,12 @@
 
 %% API:
 -export([start_link/0,
+         notify_rpc_target_up/2, notify_rpc_target_down/1, rpc_target/2,
          notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
-         notify_core_node_up/2, notify_core_node_down/1, get_core_node/2,
+         notify_core_node_up/2, notify_core_node_down/1, replica_get_core_node/2,
          notify_core_intercept_trans/2,
 
-         upstream/1, upstream_node/2,
+         upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
          get_shard_stats/1, agents/0, agents/1, replicants/0, get_shard_lag/1,
 
@@ -57,11 +58,13 @@
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
-%% Tables and table keys:
+%% Optvars:
 -define(optvar(KEY), {mria, KEY}).
 -define(upstream_pid, upstream_pid).
 -define(core_node, core_node).
+-define(rpc_target, rpc_target).
 
+%% Tables and table keys:
 -define(stats_tab, mria_rlog_stats_tab).
 -define(core_intercept, core_intercept).
 -define(replicant_state, replicant_state).
@@ -80,15 +83,40 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%% @doc Return name of the core node that is _currently serving_ the
-%% downstream shard. If shard is currently down, wait until started
-%% for at most `Timeout' millisecond. Note the difference in behavior
-%% as compared with `get_core_node'.
--spec upstream_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
-upstream_node(Shard, Timeout) ->
-    optvar:read(?optvar({?core_node, Shard}), Timeout).
+%% @doc Return name of the core node that can serve as the RPC target.
+%% It is the same node that serves the local replica, but this optvar
+%% is set before local replica goes up fully. WARNING: this `optvar'
+%% is set before local replica becomes consistent.
+-spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | disconnected.
+rpc_target(Shard, Timeout) ->
+    case optvar:read(?optvar({?rpc_target, Shard}), Timeout) of
+        OK = {ok, _} ->
+            OK;
+        timeout ->
+            disconnected
+    end.
 
-%% @doc Return pid of the core node agent that serves us.
+-spec notify_rpc_target_up(mria_rlog:shard(), node()) -> ok.
+notify_rpc_target_up(Shard, Upstream) ->
+    do_notify_up(?rpc_target, Shard, Upstream).
+
+-spec notify_rpc_target_down(mria_rlog:shard()) -> ok.
+notify_rpc_target_down(Shard) ->
+    do_notify_down(?rpc_target, Shard).
+
+%% @doc Return name of the core node that is currently serving the
+%% downstream shard. In contrast with `rpc_target', this optvar is set
+%% when the shard reaches `normal' state and local reads become
+%% consistent.
+-spec upstream_node(mria_rlog:shard()) -> {ok, node()} | disconnected.
+upstream_node(Shard) ->
+    case upstream(Shard) of
+        {ok, Pid}    -> {ok, node(Pid)};
+        disconnected -> disconnected
+    end.
+
+%% @doc Return pid of the core node agent that serves us (when shard
+%% is in `normal' state).
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
 upstream(Shard) ->
     case optvar:peek(?optvar({?upstream_pid, Shard})) of
@@ -96,12 +124,22 @@ upstream(Shard) ->
         undefined -> disconnected
     end.
 
-%% @deprecated Return a core node that _might_ be able to serve the
-%% specified shard. WARNING: use of this function leads to unbalanced
-%% load of the core nodes.
--spec get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
-get_core_node(Shard, Timeout) ->
+%% @doc WARNING: this optvar is used STRICTLY for interaction between
+%% `mria_lb' and `mria_replica' FSM. Its value is equal to core node
+%% that serves minimal number of replicants. As such, it must NOT be
+%% used for RPC targeting: all RPCs from the entire cluster will end
+%% up on a single node.
+-spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
+replica_get_core_node(Shard, Timeout) ->
     optvar:read(?optvar({?core_node, Shard}), Timeout).
+
+-spec notify_core_node_up(mria_rlog:shard(), node()) -> ok.
+notify_core_node_up(Shard, Node) ->
+    do_notify_up(?core_node, Shard, Node).
+
+-spec notify_core_node_down(mria_rlog:shard()) -> ok.
+notify_core_node_down(Shard) ->
+    do_notify_down(?core_node, Shard).
 
 -spec notify_shard_up(mria_rlog:shard(), _AgentPid :: pid()) -> ok.
 notify_shard_up(Shard, Upstream) ->
@@ -119,14 +157,6 @@ notify_shard_down(Shard) ->
                    ?replicant_bootstrap_complete,
                    ?replicant_bootstrap_import
                   ]).
-
--spec notify_core_node_up(mria_rlog:shard(), node()) -> ok.
-notify_core_node_up(Shard, Node) ->
-    do_notify_up(?core_node, Shard, Node).
-
--spec notify_core_node_down(mria_rlog:shard()) -> ok.
-notify_core_node_down(Shard) ->
-    do_notify_down(?core_node, Shard).
 
 -spec notify_core_intercept_trans(mria_rlog:shard(), mria_rlog:seqno()) -> ok.
 notify_core_intercept_trans(Shard, SeqNo) ->
@@ -171,10 +201,10 @@ replicants() ->
 
 -spec get_shard_lag(mria_rlog:shard()) -> non_neg_integer() | disconnected.
 get_shard_lag(Shard) ->
-    case {mria_config:role(), upstream_node(Shard, 0)} of
+    case {mria_config:role(), upstream_node(Shard)} of
         {core, _} ->
             0;
-        {replicant, timeout} ->
+        {replicant, disconnected} ->
             disconnected;
         {replicant, {ok, Upstream}} ->
             RemoteSeqNo = erpc:call(Upstream, ?MODULE, get_stat, [Shard, ?core_intercept], 1000),
@@ -242,7 +272,7 @@ get_shard_stats(Shard) ->
              , server_mql             => get_mql(Shard)
              };
         replicant ->
-            case upstream_node(Shard, 0) of
+            case upstream_node(Shard) of
                 {ok, Upstream} -> ok;
                 _ -> Upstream = undefined
             end,

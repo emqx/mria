@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -226,6 +226,7 @@ initiate_bootstrap(D) ->
       , remote_core_node = Remote
       , parent_sup       = ParentSup
       } = D,
+    mria_status:notify_rpc_target_up(Shard, Remote),
     _Pid = mria_replicant_shard_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
     ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
@@ -256,6 +257,7 @@ handle_agent_down(State, Reason, D) ->
         #{ reason => Reason
          , repl_state => State
          }),
+    mria_status:notify_rpc_target_down(D#d.shard),
     case State of
         ?normal ->
             {next_state, ?disconnected, D#d{agent = undefined}};
@@ -378,7 +380,7 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
 try_connect(Shard, Checkpoint) ->
     Timeout = 4_000, % Don't block FSM forever, allow it to process other messages.
     %% Get the best node according to the LB
-    Nodes = case mria_status:get_core_node(Shard, Timeout) of
+    Nodes = case mria_status:replica_get_core_node(Shard, Timeout) of
                 {ok, N} -> [N];
                 timeout -> []
             end,

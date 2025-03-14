@@ -595,7 +595,7 @@ should_retry_rpc(_) ->
 find_upstream_node(Shard) ->
     ?tp_span(find_upstream_node, #{shard => Shard},
              begin
-                 {ok, Node} = mria_status:upstream_node(Shard, infinity),
+                 {ok, Node} = mria_status:rpc_target(Shard, infinity),
                  Node
              end).
 
@@ -688,7 +688,7 @@ db_nodes_maybe_rpc() ->
         replicant ->
             case mria_status:shards_up() of
                 [Shard|_] ->
-                    {ok, CoreNode} = mria_status:upstream_node(Shard, 5_000),
+                    {ok, CoreNode} = mria_status:rpc_target(Shard, 5_000),
                     case mria_lib:rpc_call_nothrow(CoreNode, mnesia, system_info, [db_nodes]) of
                         {badrpc, _} -> [];
                         {badtcp, _} -> [];

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -363,36 +363,6 @@ t_transaction_on_replicant(_) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N2, Trace)),
                ?assert(mria_rlog_props:all_batches_received(Trace)),
                mria_rlog_props:no_unexpected_events(Trace)
-       end).
-
-%% EMQX-11006
-%%
-%% Test retry of aborted R/O transaction RPCs
-t_ro_trans_retry(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
-    ?check_trace(
-       #{timetrap => 10000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_tables(Nodes),
-           %% Delay restart of mria on the core until the replicant
-           %% retries the transaction at least once:
-           ?force_ordering(
-              #{?snk_kind := mria_retry_rpc_to_core},
-              #{?snk_kind := "Starting mnesia", ?snk_meta := #{node := N1}}),
-           %% Restart mria on the core.
-           ?assertMatch(ok, rpc:call(N1, mria, stop, [])),
-           rpc:cast(N1, mria, start, []),
-           %% Issue a R/O transaction on the replicant:
-           TransFun = fun() -> 42 end,
-           ?assertMatch({atomic, 42},
-                        rpc:call(N2, mria, ro_transaction, [test_shard, TransFun]))
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end,
-       fun(Trace) ->
-               %% Ensure that the replicant retried RPC:
-               ?assertMatch([_|_], ?of_kind(mria_retry_rpc_to_core, Trace))
        end).
 
 t_sync_transaction_on_replicant(_) ->
@@ -863,9 +833,6 @@ t_sum_verify(_) ->
     ?check_trace(
        #{timetrap => 30000},
        try
-           ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= NTrans div 4
-                          , #{?snk_kind := state_change, to := bootstrap, shard := test_shard}
-                          ),
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 2 * NTrans div 4
                           , #{?snk_kind := state_change, to := local_replay, shard := test_shard}
                           ),

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021, 2023-2024 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -283,7 +283,7 @@ t_custom_compat_check(_Config) ->
            [_C1, _C2, C3, R1] = mria_ct:start_cluster(mria, Cluster),
            ?assertEqual({ok, C3},
                         erpc:call( R1
-                                 , mria_status, get_core_node, [?mria_meta_shard, infinity]
+                                 , mria_status, replica_get_core_node, [?mria_meta_shard, infinity]
                                  , infinity
                                  ))
        after
