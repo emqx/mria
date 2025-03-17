@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -103,7 +103,8 @@ status() ->
                   , shard_stats    => maps:from_list(Stats)
                   };
         {rlog, core} ->
-            Info0 %% TODO
+            Info0#{ imbalance => mria_rebalance:plan(mria_rebalance:collect())
+                  }
     end.
 
 -spec role() -> mria_rlog:role().

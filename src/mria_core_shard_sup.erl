@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@
         , start_bootstrapper_sup/2
         , restart_agent_sup/1
         , restart_bootstrapper_sup/1
+
+        , list_agents/0
         ]).
 
 %% supervisor callbacks & external exports:
@@ -51,6 +53,17 @@ restart_agent_sup(SupPid) ->
 %% @doc Restart bootstrapper sup without modifying its child spec
 restart_bootstrapper_sup(SupPid) ->
     restart_sibling(SupPid, bootstrapper).
+
+%% @doc Return the list of agents for all shards
+-spec list_agents() -> [{mria_rlog:shard(), [pid()]}].
+list_agents() ->
+    lists:map(
+      fun({Shard, Pid, _, _}) ->
+              [AgentSupPid] = [P || {agent, P, supervisor, _} <- supervisor:which_children(Pid)],
+              Agents = [P || {_, P, _, _} <- supervisor:which_children(AgentSupPid)],
+              {Shard, Agents}
+      end,
+      supervisor:which_children(mria_shards_sup)).
 
 %%================================================================================
 %% Supervisor callbacks

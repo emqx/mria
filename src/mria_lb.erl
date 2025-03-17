@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2024 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -159,10 +159,11 @@ do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
     NodeInfo1 = lists:filter(fun({_, #{whoami := Who, running := IsRunning} = I}) ->
                                      %% Backward compatibility
                                      IsDiscoverable = maps:get(discovery_enabled, I, true),
-                                     IsRunning andalso IsDiscoverable andalso Who =:= core
+                                     IsRunning andalso IsDiscoverable andalso Who =:= core;
+                                (_) ->
+                                     false
                              end,
                              NodeInfo0),
-
     NodeInfo = maps:from_list(NodeInfo1),
     maybe_report_changes(OldNodeInfo, NodeInfo),
     %% Find partitions of the core cluster, and if the core cluster is
