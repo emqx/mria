@@ -129,7 +129,7 @@ unwrap_exception({EC, Err, Stack}) when EC =:= error;
     TopStack = try error(dummy) catch _:_:ST -> ST end,
     erlang:raise(EC, Err, Stack ++ TopStack);
 unwrap_exception(Other) ->
-    error(Other).
+    exit(Other).
 
 -spec wrap_exception(module(), atom(), list()) -> {ok, term()} | {error | exit | throw, _Reason, _Stack :: list()}.
 wrap_exception(Mod, Fun, Args) ->
