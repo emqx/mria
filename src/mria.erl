@@ -527,7 +527,7 @@ call_backend_rw(Shard, Module, Function, Args) ->
 
 -spec maybe_middleman(module(), atom(), list()) -> term().
 maybe_middleman(Mod, Fun, Args) ->
-    [{message_queue_len, MQL}] = process_info(self(), [message_queue_len]),
+    {message_queue_len, MQL} = process_info(self(), message_queue_len),
     MaxMQL = persistent_term:get({mria, max_mql}, 10),
     if MQL >= MaxMQL ->
             with_middleman(Mod, Fun, Args);
@@ -537,18 +537,17 @@ maybe_middleman(Mod, Fun, Args) ->
 
 -spec with_middleman(module(), atom(), list()) -> term().
 with_middleman(Mod, Fun, Args) ->
-    Ref = make_ref(),
-    Parent = self(),
-    spawn_link(fun() ->
-                       ?tp(mria_lib_with_middleman, #{ module => Mod
-                                                     , function => Fun
-                                                     , args => Args
-                                                     }),
-                       Result = mria_lib:wrap_exception(Mod, Fun, Args),
-                       Parent ! {Ref, Result}
-               end),
+    {_Pid, MRef} =
+        spawn_monitor(fun() ->
+                              ?tp(mria_lib_with_middleman, #{ module => Mod
+                                                            , function => Fun
+                                                            , args => Args
+                                                            }),
+                              Result = mria_lib:wrap_exception(Mod, Fun, Args),
+                              exit(Result)
+                      end),
     receive
-        {Ref, Result} ->
+        {'DOWN', MRef, process, _, Result} ->
             mria_lib:unwrap_exception(Result)
     end.
 
