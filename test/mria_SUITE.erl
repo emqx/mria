@@ -622,10 +622,13 @@ t_middleman(_) ->
            mria_mnesia_test_util:wait_tables(Nodes),
            ?ON(N1,
                begin
+                   _ = erlang:process_flag(trap_exit, true),
                    [self() ! message || _ <- lists:seq(1, 100)],
                    ?assertMatch(ok, mria:dirty_write({test_tab, 1, 1})),
                    ?assertMatch(ok, mria:dirty_delete(test_tab, 2)),
-                   ?assertExit(_, mria:dirty_write({nonexistent, 1, 1}))
+                   ?assertExit(_, mria:dirty_write({nonexistent, 1, 1})),
+                   %% No stray messages are expected even if `trap_exit` is `true`.
+                   ?assertEqual([], [M || M <- drain_message_queue(), M =/= message])
                end),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
@@ -639,6 +642,9 @@ t_middleman(_) ->
                   length(?of_kind(mria_lib_with_middleman, Trace)) > 0
           end}
        ]).
+
+drain_message_queue() ->
+    receive M -> [M | drain_message_queue()] after 1 -> [] end.
 
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
