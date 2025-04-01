@@ -280,6 +280,7 @@ force_leave(Node) ->
         {true, true} ->
             mria_lib:ensure_ok(rpc:call(Node, ?MODULE, leave, []));
         {true, false} ->
+            mria_membership:announce({force_leave, Node}),
             mnesia_lib:del(extra_db_nodes, Node),
             mria_lib:ensure_ok(mria_mnesia:del_schema_copy(Node));
         {false, _} ->
