@@ -142,12 +142,21 @@ t_force_leave(_) ->
     Cluster = mria_ct:cluster([core, core, core], []),
     try
         [N0, N1, N2] = mria_ct:start_cluster(mria, Cluster),
+        ok = rpc:call(N0, mria_membership, monitor, [membership, self(), true]),
         ?assertMatch(true, rpc:call(N0, mria_node, is_running, [N1])),
-        true = rpc:call(N0, mria_node, is_running, [N2]),
+        ?assertMatch(true, rpc:call(N0, mria_node, is_running, [N2])),
         ?assertMatch([N0, N1, N2], rpc:call(N0, mria, info, [running_nodes])),
         ?assertMatch(ok, rpc:call(N0, mria, force_leave, [N1])),
+        ok = rpc:call(N2, init, stop, []),
+        ok = timer:sleep(1000),
+        ?assertMatch(false, rpc:call(N0, mria_node, is_running, [N2])),
         ?assertMatch(ok, rpc:call(N0, mria, force_leave, [N2])),
-        ?assertMatch([N0], rpc:call(N0, mria, info, [running_nodes]))
+        ?assertMatch([N0], rpc:call(N0, mria, info, [running_nodes])),
+        ?assertMatch({error, _NotInCluster}, rpc:call(N0, mria, force_leave, [N2])),
+        ?assertMatch([ {node, leaving, N1}
+                     , {node, leaving, N2}
+                     ],
+                     [E || {membership, E = {node, leaving, _}} <- mria_ct:mailbox()])
     after
         mria_ct:teardown_cluster(Cluster)
     end.

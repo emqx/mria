@@ -309,3 +309,6 @@ shim(Mod, Fun, Args) ->
 
 rpc(Node, Mod, Fun, Args) ->
     rpc:call(Node, ?MODULE, shim, [Mod, Fun, Args]).
+
+mailbox() ->
+    receive M -> [M | mailbox()] after 0 -> [] end.
