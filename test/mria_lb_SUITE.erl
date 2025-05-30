@@ -159,7 +159,7 @@ t_core_node_discovery(_Config) ->
            ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, [])),
            %% 2. Emulate split brain
            ?tp(test_inject_split_brain, #{}),
-           InexistentNodes = ["inexistent@127.0.0.1"],
+           InexistentNodes = ['inexistent@127.0.0.1'],
            clear_core_node_list(R1),
            with_reported_cores(
              C1, InexistentNodes,
