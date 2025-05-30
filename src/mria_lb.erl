@@ -150,21 +150,32 @@ terminate(_Reason, St) ->
 %%================================================================================
 
 do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
+    %% Discover seed core nodes via callback:
     DiscoveredNodes = discover_nodes(),
     %% Get information about core nodes:
-    {NodeInfo0, _BadNodes} = rpc:multicall( DiscoveredNodes
-                                          , ?MODULE, lb_callback, []
-                                          , mria_config:lb_timeout()
-                                          ),
-    NodeInfo1 = lists:filter(fun({_, #{whoami := Who, running := IsRunning} = I}) ->
+    {NodeInfo0, _BadNodes1} = rpc:multicall( DiscoveredNodes
+                                           , ?MODULE, lb_callback, []
+                                           , mria_config:lb_timeout()
+                                           ),
+    %% Discovery callback doesn't necessarily return the full list of
+    %% core nodes. LB callback, however, has data about all core
+    %% peers. We use this data to build the full list of core nodes:
+    AdditionalCores = lists:usort([N || {_, #{db_nodes := DBNodes}} <- NodeInfo0, N <- DBNodes])
+                      -- DiscoveredNodes,
+    %% Gather missing data:
+    {NodeInfo1, _BadNodes2} = rpc:multicall( AdditionalCores
+                                           , ?MODULE, lb_callback, []
+                                           , mria_config:lb_timeout()
+                                           ),
+    NodeInfo2 = lists:filter(fun({_, #{whoami := Who, running := IsRunning} = I}) ->
                                      %% Backward compatibility
                                      IsDiscoverable = maps:get(discovery_enabled, I, true),
                                      IsRunning andalso IsDiscoverable andalso Who =:= core;
                                 (_) ->
                                      false
                              end,
-                             NodeInfo0),
-    NodeInfo = maps:from_list(NodeInfo1),
+                             NodeInfo0 ++ NodeInfo1),
+    NodeInfo = maps:from_list(NodeInfo2),
     maybe_report_changes(OldNodeInfo, NodeInfo),
     %% Find partitions of the core cluster, and if the core cluster is
     %% partitioned choose the best partition to connect to:

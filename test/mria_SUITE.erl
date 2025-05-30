@@ -1383,6 +1383,69 @@ t_rebalance(_) ->
        end,
        []).
 
+%% This testcase verifies that the replicants use all core nodes in
+%% the upstream cluster, rather than just the ones listed by the core
+%% node discovery callback:
+t_emqx14135(_) ->
+    %% We set up the cluster such that the core node discovery
+    %% callback returns only c1 and c2:
+    DiscoveredNodes = [mria_ct:node_id(c1), mria_ct:node_id(c2)],
+    Conf = [ {mria, core_node_discovery, true}
+           , {mria, {callback, core_node_discovery}, fun() -> DiscoveredNodes end}
+           | mria_mnesia_test_util:common_env()],
+    Cluster = [C1s, C2s, _C3s, R1s] = mria_ct:cluster([ #{role => core, name => c1}
+                                                      , #{role => core, name => c2}
+                                                      , #{role => core, name => c3}
+                                                      , #{role => replicant, name => r1}
+                                                      ],
+                                                      Conf),
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           [C1, C2, C3, R1] = mria_ct:start_cluster(node, Cluster),
+           %% 1. Start mria on C1, C2 and R1:
+           mria_ct:start_mria(C1s),
+           mria_ct:start_mria(C2s),
+           mria_ct:start_mria(R1s),
+           %% Verify that all nodes see each other:
+           [?ON(
+               Node,
+               ?assertMatch(
+                  #{ stopped_nodes := []
+                   , running_nodes := [_, _, _]
+                   },
+                   mria:info(),
+                   #{msg => "All nodes should see each other", node => Node}))
+            || Node <- [C1, C2, R1]],
+           %% 2. Now start C3
+           ?ON(C3,
+               begin
+                   mria:start(),
+                   mria:join(C1)
+               end),
+           %% Verify that all nodes see each other:
+           timer:sleep(5000),
+           [?ON(
+               Node,
+               ?defer_assert(
+                  ?assertMatch(
+                     #{ stopped_nodes := []
+                      , running_nodes := [_, _, _, _]
+                      },
+                      mria:info(),
+                      #{msg => "All nodes should see each other", node => Node})))
+            || Node <- [C1, C2, C3, R1]],
+           ?ON(
+              R1,
+              ?assertMatch(
+                 [_, _, _],
+                 mria_lb:core_nodes())),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
         begin
