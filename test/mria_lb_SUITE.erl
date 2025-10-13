@@ -269,12 +269,21 @@ t_node_leave_disable_discovery(_Config) ->
        end, []).
 
 t_custom_compat_check(_Config) ->
-    Env = [ {mria, {callback, lb_custom_info_check}, fun(Val) -> Val =:= chosen_one end}
+    custom_compat_check_test(fun(Val) -> Val =:= chosen_one end, chosen_one).
+
+t_custom_compat_check_with_reason(_Config) ->
+    Fun = fun(Val) ->
+                  Val =:= chosen_one orelse {false, "not a chosen one"}
+          end,
+    custom_compat_check_test(Fun, chosen_one).
+
+custom_compat_check_test(CheckFun, CheckFunArg) ->
+    Env = [ {mria, {callback, lb_custom_info_check}, CheckFun}
           | mria_mnesia_test_util:common_env()],
     Cluster = mria_ct:cluster([ core
                               , core
                               , {core, [{mria, {callback, lb_custom_info},
-                                         fun() -> chosen_one end}]}
+                                         fun() -> CheckFunArg end}]}
                               , replicant
                               ], Env),
     ?check_trace(
