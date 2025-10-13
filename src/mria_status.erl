@@ -355,7 +355,7 @@ init(_) ->
 
 terminate(_Reason, _State) ->
     ?terminate_tp,
-    [optvar:unset(K) || ?optvar(K) <- optvar:list()],
+    [optvar:unset(?optvar(K)) || ?optvar(K) <- optvar:list()],
     {exit, normal}.
 
 handle_call(_, _, State) ->
