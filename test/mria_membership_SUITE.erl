@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -378,14 +378,14 @@ init_membership(N) ->
 
 member(I) ->
     Node = list_to_atom("n" ++ integer_to_list(I) ++ "@127.0.0.1"),
-    #member{node   = Node,
-            addr   = {{127,0,0,1}, 5000 + I},
-            guid   = mria_guid:gen(),
-            hash   = 1000 * I,
-            status = up,
-            mnesia = running,
-            ltime  = erlang:timestamp(),
-            role   = core
+    #member{node        = Node,
+            addr        = {{127,0,0,1}, 5000 + I},
+            guid        = mria_guid:gen(),
+            hash        = 1000 * I,
+            status      = up,
+            mnesia      = running,
+            last_update = mria_membership:now_seconds(),
+            role        = core
            }.
 
 test_core_ping_pong(PingOrPong) ->

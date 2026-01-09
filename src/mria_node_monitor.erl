@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,8 +42,7 @@
 -record(state, {
           partitions :: list(node()),
           heartbeat  :: undefined | reference(),
-          autoheal   :: mria_autoheal:autoheal(),
-          autoclean  :: mria_autoclean:autoclean()
+          autoheal   :: mria_autoheal:autoheal()
          }).
 
 -define(SERVER, ?MODULE).
@@ -79,8 +78,7 @@ init([]) ->
     {ok, _} = mnesia:subscribe(system),
     lists:foreach(fun(N) -> self() ! {nodeup, N, []} end, nodes() -- [node()]),
     State = #state{partitions = [],
-                   autoheal   = mria_autoheal:init(),
-                   autoclean  = mria_autoclean:init()
+                   autoheal   = mria_autoheal:init()
                   },
     {ok, ensure_heartbeat(State)}.
 
@@ -199,6 +197,7 @@ handle_info(heartbeat, State) ->
                          true            -> ok
                       end
                   end, mria_mnesia:cluster_nodes(all)),
+    autoclean_cores(),
     {noreply, ensure_heartbeat(State#state{heartbeat = undefined})};
 
 handle_info(Msg = {'EXIT', Pid, _Reason}, State = #state{autoheal = Autoheal}) ->
@@ -206,10 +205,6 @@ handle_info(Msg = {'EXIT', Pid, _Reason}, State = #state{autoheal = Autoheal}) -
         Pid -> {noreply, autoheal_handle_msg(Msg, State)};
         _   -> {noreply, State}
     end;
-
-%% Autoclean Event.
-handle_info(autoclean, State = #state{autoclean = AutoClean}) ->
-    {noreply, State#state{autoclean = mria_autoclean:check(AutoClean)}};
 
 handle_info(Info, State) ->
     logger:error("Unexpected info: ~p", [Info]),
@@ -237,3 +232,30 @@ ensure_heartbeat(State) ->
 
 autoheal_handle_msg(Msg, State = #state{autoheal = Autoheal}) ->
     State#state{autoheal = mria_autoheal:handle_msg(Msg, Autoheal)}.
+
+%%--------------------------------------------------------------------
+%% Autoclean of stopped core nodes
+%%--------------------------------------------------------------------
+
+autoclean_cores() ->
+    maybe
+        {ok, Expiry} ?= application:get_env(mria, cluster_autoclean),
+        [maybe_clean(Member, Expiry) || Member <- mria_membership:members(down)]
+    end,
+    ok.
+
+maybe_clean(#member{node = Node, last_update = WentDownAt} = Member, MaxDownSecs) ->
+    Now = mria_membership:now_seconds(),
+    case Now - WentDownAt > MaxDownSecs of
+        true  ->
+            ?tp(notice, mria_autoclean_force_leave,
+                #{ node => Node
+                 , limit => MaxDownSecs
+                 , status => Member
+                 , last_update => WentDownAt
+                 , now => Now
+                 }),
+            mria:force_leave(Node);
+        false ->
+            ok
+    end.

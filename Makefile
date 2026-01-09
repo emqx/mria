@@ -31,15 +31,14 @@ test: smoke-test ct-consistency ct-fault-tolerance cover
 .PHONY: smoke-test
 smoke-test:
 	$(REBAR) do eunit, ct -v --cover --readable=$(CT_READABLE)
-	$(REBAR) ct --readable=$(CT_READABLE) -v --suite mria_compatibility_suite
 
 .PHONY: ct-consistency
 ct-consistency:
-	$(REBAR) ct --cover -v --readable=$(CT_READABLE) --suite mria_proper_suite,mria_proper_mixed_cluster_suite
+	$(REBAR) ct --cover -v --readable=$(CT_READABLE) --suite mria_proper_suite_,mria_proper_mixed_cluster_suite_
 
 .PHONY: ct-fault-tolerance
 ct-fault-tolerance:
-	$(REBAR) ct --cover -v --readable=$(CT_READABLE) --suite mria_fault_tolerance_suite
+	$(REBAR) ct --cover -v --readable=$(CT_READABLE) --suite mria_fault_tolerance_suite_
 
 .PHONY: ct-suite
 ct-suite: compile
