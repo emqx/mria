@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2023-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,7 +26,8 @@
 -include("mria_rlog.hrl").
 
 releases() ->
-    string:lexemes(os:cmd("git tag -l 0.3.*"), "\n").
+    [ "0.8.17"
+    ].
 
 matrix() ->
     Testcases = [t_core_core], %% TODO: add core_replicant test
@@ -124,13 +125,16 @@ code_paths(Config, Rel) ->
 prep_release(RootDir, Tag) ->
     TmpDir = filename:join([RootDir, "_build", "oldrel", Tag]),
     ok = filelib:ensure_dir(TmpDir),
-    0 = cmd( filename:join(RootDir, "scripts/build-old-rel")
-           , [ {env, [ {"tag", Tag}
-                     , {"tmp_dir", TmpDir}
-                     , {"root_dir", RootDir}
-                     ]}
-             ]
-           ),
+    ?assertMatch(
+       0,
+       cmd(filename:join(RootDir, "scripts/build-old-rel"),
+           [{env, [ {"tag", Tag}
+                  , {"tmp_dir", TmpDir}
+                  , {"root_dir", RootDir}
+                  ]}
+           ]),
+       #{tag => Tag, root_dir => RootDir}
+      ),
     TmpDir.
 
 cmd(Cmd, Opts) ->
