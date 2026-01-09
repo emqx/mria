@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,6 +19,9 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
+-include_lib("stdlib/include/assert.hrl").
+-include_lib("snabbkaffe/include/test_macros.hrl").
+
 all() ->
     [t_autoclean].
 
@@ -29,14 +32,53 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
+init_per_testcase(_, Config) ->
+    Config.
+
+end_per_testcase(_, Config) ->
+    snabbkaffe:stop(),
+    Config.
+
 t_autoclean(_) ->
-    Cluster = mria_ct:cluster([core, core], [{mria, cluster_autoclean, 1000}]),
-    try
-        [N0, N1] = mria_ct:start_cluster(mria, Cluster),
-        [N0, N1] = rpc:call(N0, mria, info, [running_nodes]),
-        mria_ct:stop_slave(N1),
-        ok = timer:sleep(2000),
-        [N0] = rpc:call(N0, mria, info, [running_nodes])
-    after
-        mria_ct:teardown_cluster(Cluster)
+    ?check_trace(
+       begin
+           MaxDownSecs = 10,
+           Cluster = mria_ct:cluster([core, core], []),
+           try
+               %% Prepare cluster:
+               [N0, N1] = mria_ct:start_cluster(mria, Cluster),
+               ?assertMatch(
+                   [N0, N1],
+                   erpc:call(N0, mria, info, [running_nodes])
+               ),
+               %% Shut down one node:
+               mria_ct:stop_slave(N1),
+               %% Reconfigure autoclean in the runtime to make sure autoclean
+               %% configuration is dynamic:
+               Conf = [{mria, [{cluster_autoclean, MaxDownSecs}]}],
+               erpc:call(N0, application, set_env, [Conf]),
+               %% The remaining node must eventually drop the peer:
+               ?assertMatch(
+                   {ok, T} when T >= MaxDownSecs,
+                   wait_down(N0, N1, MaxDownSecs * 2)
+               )
+           after
+               mria_ct:teardown_cluster(Cluster)
+           end
+       end, []).
+
+wait_down(NodeUp, NodeDown, MaxWaitSecs) ->
+    wait_down(NodeUp, NodeDown, MaxWaitSecs, 0).
+
+wait_down(NodeUp, NodeDown, MaxWaitSecs, WaitedSec) ->
+    Peers = erpc:call(NodeUp, mria, info, [stopped_nodes]),
+    ct:pal("wait_down; ~p peers: ~p", [NodeUp, Peers]),
+    case lists:member(NodeDown, Peers) of
+        true when WaitedSec > MaxWaitSecs ->
+            {still_up, WaitedSec};
+        true ->
+            ct:sleep(1000),
+            wait_down(NodeUp, NodeDown, MaxWaitSecs, WaitedSec + 1);
+        false ->
+            {ok, WaitedSec}
     end.

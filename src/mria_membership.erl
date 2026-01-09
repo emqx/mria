@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@
         , is_member/1
         , oldest/1
         , replicants/0
+        , now_seconds/0
         ]).
 
 -export([ leader/0
@@ -157,6 +158,9 @@ members(Status) ->
 -spec(replicants() -> [member()]).
 replicants() ->
     try select(replicant) catch error:badarg -> [] end.
+
+now_seconds() ->
+    erlang:monotonic_time(second).
 
 %% Legacy API, selects a leader only from core members for compatibility reasons
 %% Get leader node of the members
@@ -482,9 +486,10 @@ make_new_local_member() ->
                           true  -> running;
                           false -> stopped
                       end,
-    with_hash(#member{node = node(), guid = mria_guid:gen(),
+    with_hash(#member{node = node(),
+                      guid = mria_guid:gen(),
                       status = up, mnesia = IsMnesiaRunning,
-                      ltime = erlang:timestamp(),
+                      last_update = now_seconds(),
                       role = mria_config:role()
                      }).
 
@@ -510,7 +515,7 @@ lookup(Node) ->
     ets:lookup(?TAB, Node).
 
 insert(Member0) ->
-    Member = Member0#member{ltime = erlang:timestamp()},
+    Member = Member0#member{last_update = now_seconds()},
     ?tp(mria_membership_insert, #{member => Member}),
     ets:insert(?TAB, Member).
 
