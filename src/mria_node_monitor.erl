@@ -238,11 +238,13 @@ autoheal_handle_msg(Msg, State = #state{autoheal = Autoheal}) ->
 %%--------------------------------------------------------------------
 
 autoclean_cores() ->
-    maybe
-        {ok, Expiry} ?= application:get_env(mria, cluster_autoclean),
-        [maybe_clean(Member, Expiry) || Member <- mria_membership:members(down)]
-    end,
-    ok.
+    case application:get_env(mria, cluster_autoclean) of
+        {ok, Expiry} ->
+            [maybe_clean(Member, Expiry) || Member <- mria_membership:members(down)],
+            ok;
+        _ ->
+            ok
+    end.
 
 maybe_clean(#member{node = Node, last_update = WentDownAt} = Member, MaxDownSecs) ->
     Now = mria_membership:now_seconds(),
