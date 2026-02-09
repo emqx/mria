@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -264,7 +264,7 @@ copy_table(Name, Storage) ->
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
 wait_for_tables(Tables) ->
     ?tp(mria_wait_for_tables, #{tables => Tables}),
-    case mnesia:wait_for_tables(Tables, 30000) of
+    case mnesia:wait_for_tables(Tables, 5_000) of
         ok ->
             ?tp(mria_wait_for_tables_done, #{result => ok}),
             ok;

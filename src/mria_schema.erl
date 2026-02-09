@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -343,9 +343,9 @@ bootstrap() ->
     %% Ensure replicas are available before starting copy:
     %% If we've managed to sync only mnesia schema up to this point, `copy_table/2` may
     %% fail if other nodes suddenly become unavailable.
-    ok = mria_mnesia:wait_for_tables([?rlog_sync]),
     ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
-    mria_mnesia:wait_for_tables([?schema, ?rlog_sync]),
+    %% Contents of this table are irrelevant, so force load:
+    force_load(?rlog_sync),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, RlogSyncSpec, write], infinity),
@@ -386,3 +386,12 @@ notify_change(Shard, Entry, Subscribers) ->
 -spec create_table(entry()) -> ok | _.
 create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config}) ->
     mria_lib:ensure_tab(mnesia:create_table(Table, [{Storage, [node()]} | Config])).
+
+%% @doc Force load a table. Note: mnesia waits for table implicitly.
+force_load(Table) ->
+    case mnesia:force_load_table(Table) of
+        yes ->
+            ok;
+        Other ->
+            logger:error("Failed to force loading table ~p: ~p", [Table, Other])
+    end.

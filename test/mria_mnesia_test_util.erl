@@ -70,6 +70,5 @@ common_env() ->
     [ {mria, db_backend, rlog}
     , {mria, rlog_startup_shards, [test_shard]}
     , {mria, strict_mode, true}
-    , {mria, rpc_module, gen_rpc}
     , {mria, lb_poll_interval, 100}
     ].
