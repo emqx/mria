@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -1234,7 +1234,49 @@ t_cluster_nodes(_) ->
        end,
        []).
 
-schema_merge(_) -> %% TODO: this is a testcase, enable it after merging the patch to OTP
+%% This testcase verifies that nodes don't get stuck waiting for each
+%% other during a full cluster restart. To make things realistic, this
+%% testcase creates a wait chain of tables, where creation of one
+%% table depends on waiting for another.
+t_full_cluster_restart(_) ->
+    Cluster = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           OK = [{ok, ok}, {ok, ok}, {ok, ok}],
+           OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
+           %% Write some data:
+           ok = ?ON(N1, mria:dirty_write(tab1, {tab1, foo, bar})),
+           ok = ?ON(N2, mria:dirty_write(tab2, {tab2, foo, bar})),
+           ok = ?ON(N3, mria:dirty_write(tab3, {tab3, foo, bar})),
+           %% Restart nodes simulataneously:
+           ?tp(notice, test_restart_nodes, #{}),
+           [ok = slave:stop(N) || N <- Nodes],
+           [mria_ct:start_slave(mria, CN) || CN <- Cluster],
+           %% Restart the chain:
+           OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This function creates an an inter-dependent table load order that
+%% simulates startup sequence of a release containing multiple OTP
+%% applications with complex dependencies:
+full_restart_load_chain() ->
+    ok = mria:create_table(tab1, [{storage, disc_copies}, {rlog_shard, shard1}]),
+    ok = mria:wait_for_tables([tab1]),
+    ?tp(notice, test_tab1_loaded, #{node => node()}),
+    ok = mria:create_table(tab2, [{storage, disc_copies}, {rlog_shard, shard2}]),
+    ok = mria:wait_for_tables([tab2]),
+    ?tp(notice, test_tab2_loaded, #{node => node()}),
+    ok = mria:create_table(tab3, [{storage, disc_copies}, {rlog_shard, shard3}]),
+    ok = mria:wait_for_tables([tab3]),
+    ?tp(notice, test_all_loaded, #{node => node()}).
+
+t_schema_merge(_) ->
     Cluster = [C1, C2, C3] = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
