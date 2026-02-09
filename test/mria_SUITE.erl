@@ -1250,7 +1250,7 @@ t_full_cluster_restart(_) ->
            ok = ?ON(N1, mria:dirty_write(tab1, {tab1, foo, bar})),
            ok = ?ON(N2, mria:dirty_write(tab2, {tab2, foo, bar})),
            ok = ?ON(N3, mria:dirty_write(tab3, {tab3, foo, bar})),
-           %% Restart nodes simulataneously:
+           %% Restart nodes simultaneously:
            ?tp(notice, test_restart_nodes, #{}),
            [ok = slave:stop(N) || N <- Nodes],
            [mria_ct:start_slave(mria, CN) || CN <- Cluster],
@@ -1262,7 +1262,7 @@ t_full_cluster_restart(_) ->
        end,
        []).
 
-%% This function creates an an inter-dependent table load order that
+%% This function creates an inter-dependent table load order that
 %% simulates startup sequence of a release containing multiple OTP
 %% applications with complex dependencies:
 full_restart_load_chain() ->

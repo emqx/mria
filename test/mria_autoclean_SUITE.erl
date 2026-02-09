@@ -43,14 +43,21 @@ t_autoclean(_) ->
     ?check_trace(
        begin
            MaxDownSecs = 10,
-           Cluster = mria_ct:cluster([core, core], []),
+           Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
            try
                %% Prepare cluster:
-               [N0, N1] = mria_ct:start_cluster(mria, Cluster),
+               [N0, N1, N3] = mria_ct:start_cluster(mria, Cluster),
                ?assertMatch(
-                   [N0, N1],
+                   [N0, N1, N3],
                    erpc:call(N0, mria, info, [running_nodes])
                ),
+               timer:sleep(1000),
+               %% Create a table to simulate more realistic conditions:
+               ok = erpc:call(N0, mria, create_table,
+                              [?MODULE, [ {type, set}
+                                        , {storage, disc_copies}
+                                        , {rlog_shard, ?MODULE}
+                                        ]]),
                %% Shut down one node:
                mria_ct:stop_slave(N1),
                %% Reconfigure autoclean in the runtime to make sure autoclean
