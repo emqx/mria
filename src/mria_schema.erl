@@ -340,12 +340,12 @@ bootstrap() ->
                            , config = RlogSyncOpts
                            },
     ok = create_table(RlogSyncSpec),
+    %% Contents of this table are irrelevant, so force load:
+    force_load(?rlog_sync),
     %% Ensure replicas are available before starting copy:
     %% If we've managed to sync only mnesia schema up to this point, `copy_table/2` may
     %% fail if other nodes suddenly become unavailable.
     ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
-    %% Contents of this table are irrelevant, so force load:
-    force_load(?rlog_sync),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, RlogSyncSpec, write], infinity),
