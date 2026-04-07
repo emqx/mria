@@ -32,6 +32,7 @@
          upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
          get_shard_stats/1, agents/0, agents/1, replicants/0, get_shard_lag/1,
+         get_local_shard_stats/1,
 
          notify_replicant_state/2,
          notify_replicant_import_trans/2,
@@ -259,6 +260,19 @@ shards_down() ->
 
 -spec get_shard_stats(mria_rlog:shard()) -> map().
 get_shard_stats(Shard) ->
+    LocalStats = get_local_shard_stats(Shard),
+    case mria_config:role() of
+        core ->
+            LocalStats;
+        replicant ->
+            LocalStats#{lag => get_shard_lag(Shard)}
+    end.
+
+%% Almost identical to `get_shard_stats/1`, except that we avoid doing `erpc` calls and
+%% collect only what we can gather from local state.  For example, on replicants,
+%% `get_shard_lag/1` performs an `erpc` call to a core node, so we avoid that.
+-spec get_local_shard_stats(mria_rlog:shard()) -> map().
+get_local_shard_stats(Shard) ->
     case mria_config:role() of
         core ->
             Weight = case mria_lb:core_node_weight(Shard) of
@@ -282,7 +296,6 @@ get_shard_stats(Shard) ->
              , bootstrap_time      => get_bootstrap_time(Shard)
              , bootstrap_num_keys  => get_stat(Shard, ?replicant_bootstrap_import)
              , upstream            => Upstream
-             , lag                 => get_shard_lag(Shard)
              , message_queue_len   => get_mql(Shard)
              }
     end.
