@@ -38,6 +38,9 @@
         , start_link/0
 
         , wait_for_tables/1
+        , is_merge_shard/1
+        , is_merge_table/1
+        , get_merged_table_node_pattern/1
         ]).
 
 %% gen_server callbacks
@@ -167,6 +170,34 @@ wait_for_tables(Tables) ->
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec is_merge_shard(mria_rlog:shard()) -> {ok, boolean()} | {error, _}.
+is_merge_shard(Shard) ->
+    case mnesia:transaction(fun is_merge_shard_trans/1, [Shard]) of
+        {atomic, Merge} when is_boolean(Merge) ->
+            {ok, Merge};
+        Result ->
+            {error, #{reason => unknown_shard_type, shard => Shard, value => Result}}
+    end.
+
+-spec is_merge_table(mria:table()) -> {ok, boolean()} | undefined.
+is_merge_table(Table) ->
+    maybe
+        [#?schema{config = Conf}] ?= mnesia:dirty_read(?schema, Table),
+        {ok, proplists:get_value(merge_table, Conf, false)}
+    else
+        _ -> undefined
+    end.
+
+-spec get_merged_table_node_pattern(mria:table()) -> {ok, tuple()} | undefined.
+get_merged_table_node_pattern(Table) ->
+    maybe
+        [#?schema{config = Conf}] ?= mnesia:dirty_read(?schema, Table),
+        {node_pattern, Pat} ?= proplists:lookup(node_pattern, Conf),
+        {ok, Pat}
+    else
+        _ -> undefined
+    end.
+
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
@@ -234,6 +265,21 @@ handle_info(Info, State) ->
 %% Internal functions
 %%================================================================================
 
+-spec is_merge_shard_trans(mria_rlog:shard()) -> boolean() | undefined.
+is_merge_shard_trans(Shard) ->
+    MS = {#?schema{shard = Shard, config = '$1', _ = '_'}, [], ['$1']},
+    TablesOfShard = mnesia:select(?schema, [MS]),
+    case TablesOfShard of
+        [] ->
+            undefined;
+        _ ->
+            lists:any(
+              fun(Conf) ->
+                      proplists:get_value(merge_table, Conf, false)
+              end,
+              TablesOfShard)
+    end.
+
 -spec do_create_table(mria:table(), list()) -> mria:t_result(ok).
 do_create_table(Table, TabDef) ->
     case make_entry(Table, TabDef) of
@@ -281,14 +327,20 @@ add_entry(Entry) ->
               end
       end).
 
-verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf}) ->
+verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf, storage = Storage}) ->
     case {proplists:get_value(merge_table, Conf, false),
           proplists:get_value(node_pattern, Conf, undefined),
-          is_merge_table_shard(Shard)} of
+          is_merge_shard_trans(Shard)} of
         {true, undefined, _} ->
             mnesia:abort(#{ reason => node_pattern_required
                           , table => Table
                           , merge_table => true
+                          });
+        {true, _, _} when Storage =/= ram_copies ->
+            mnesia:abort(#{ reason => incompatible_options
+                          , table => Table
+                          , merge_table => true
+                          , storage => Storage
                           });
         {MergeTab, _, MergeShard} when is_boolean(MergeShard),
                                        MergeTab =/= MergeShard ->
@@ -300,22 +352,6 @@ verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf})
                           });
         _ ->
             ok
-    end.
-
--spec is_merge_table_shard(mria_rlog:shard()) -> boolean() | undefined.
-is_merge_table_shard(Shard) ->
-    MS = {#?schema{shard = Shard, config = '$1', _ = '_'}, [], ['$1']},
-    TablesOfShard = mnesia:select(?schema, [MS]),
-    ?tp(warning, tables_of_shard, #{shard => Shard, l => TablesOfShard}),
-    case TablesOfShard of
-        [] ->
-            undefined;
-        _ ->
-            lists:any(
-              fun(Conf) ->
-                      proplists:get_value(merge_table, Conf, false)
-              end,
-              TablesOfShard)
     end.
 
 -spec make_entry(mria:table(), _Properties :: list()) -> {ok, entry()} | {error, map()}.

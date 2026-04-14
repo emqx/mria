@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -68,7 +68,6 @@ compare_table_contents(Table, Nodes) ->
 
 common_env() ->
     [ {mria, db_backend, rlog}
-    , {mria, rlog_startup_shards, [test_shard]}
     , {mria, strict_mode, true}
     , {mria, lb_poll_interval, 100}
     ].

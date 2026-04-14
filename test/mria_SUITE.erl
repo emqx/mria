@@ -1554,7 +1554,7 @@ t_merge_table_schema(_) ->
                                         , {node_pattern, {'_', '$1'}}
                                         ])))
             || N <- Nodes],
-           %% Try to create tables with incompatible options:
+           %% Try to create merge table without `node_pattern', it should fail:
            [?assertMatch(
                {aborted, #{reason := node_pattern_required}},
                ?ON(N, mria:create_table(merge_table4,
@@ -1562,6 +1562,17 @@ t_merge_table_schema(_) ->
                                         , {type, set}
                                         , {rlog_shard, MergeShard}
                                         , {merge_table, true}
+                                        ])))
+           || N <- Nodes],
+           %% Currently only `ram_copies' tables can be merged:
+           [?assertMatch(
+               {aborted, #{reason := incompatible_options}},
+               ?ON(N, mria:create_table(merge_table5,
+                                        [ {storage, disc_copies}
+                                        , {type, set}
+                                        , {rlog_shard, MergeShard}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
                                         ])))
            || N <- Nodes]
        after

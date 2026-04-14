@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@
 %%================================================================================
 
 -define(clear_table, clear_table).
+-define(clear_table(NODE), {clear_table, NODE}).
 
 -type batch() :: { _From    :: pid()
                  , _Table   :: mria:table()
@@ -166,7 +167,8 @@ terminate(_Reason, St = #client{}) ->
 %% Internal functions
 %%================================================================================
 
--spec push_records(mria_lib:subscriber(), mria:table(), [tuple()] | ?clear_table) -> ok | {badrpc, _}.
+-spec push_records(mria_lib:subscriber(), mria:table(), Commands) -> ok | {badrpc, _}
+              when Commands :: [tuple()] | ?clear_table | ?clear_table(node()).
 push_records(Subscriber, Table, Records) ->
     push_batch(Subscriber, {self(), Table, Records}).
 
@@ -181,6 +183,10 @@ complete({Node, Pid}, Server, Checkpoint) ->
 handle_batch(_Server, Table, ?clear_table) ->
     mria_schema:ensure_local_table(Table),
     {atomic, ok} = mnesia:clear_table(Table),
+    ok;
+handle_batch(_Server, Table, ?clear_table(Node)) ->
+    mria_schema:ensure_local_table(Table),
+    clean_merge_table(Table, Node),
     ok;
 handle_batch(_Server, Table, Records) ->
     lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
@@ -237,7 +243,13 @@ iter_start(Subscriber, Table, BatchSize) ->
     %% Push an empty batch to the replica to make sure it created the
     %% local table before we start actual iteration and the receiving
     %% table is empty:
-    push_records(Subscriber, Table, ?clear_table),
+    ClearCommand = case mria_schema:is_merge_table(Table) of
+                       {ok, true} ->
+                           ?clear_table(node());
+                       {ok, false} ->
+                           ?clear_table
+                   end,
+    push_records(Subscriber, Table, ClearCommand),
     %% Start iteration over records:
     mnesia_lib:db_fixtable(Storage, Table, true),
     Iter0 = #iter{ table = Table
@@ -262,3 +274,8 @@ iter_next(Iter0 = #iter{storage = Storage, state = State}) ->
 -spec iter_end(#iter{}) -> ok.
 iter_end(#iter{table = Table, storage = Storage}) ->
     mnesia_lib:db_fixtable(Storage, Table, false).
+
+clean_merge_table(Table, Node) ->
+    {ok, Pattern} = mria_schema:get_merged_table_node_pattern(Table),
+    MS = {Pattern, [{'==', '$1', Node}], [true]},
+    ets:select_delete(Table, [MS]).

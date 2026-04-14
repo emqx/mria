@@ -82,6 +82,8 @@ In a clustered setup,
 the contents of the merge table consist of records from all reachable peer nodes.
 Records from remote nodes are read-only.
 
+Note: currently only `ram_copies` storage is supported.
+
 ## Enabling RLOG in your application
 
 It is important to make the application code compatible with the RLOG feature by using the correct APIs.
