@@ -128,7 +128,8 @@ t_bootstrap(_) ->
             ?wait_async_action(
                begin
                    ok = rpc:call(Replicant, application, stop, [mria]),
-                   ok = rpc:call(Replicant, application, start, [mria])
+                   ok = rpc:call(Replicant, application, start, [mria]),
+                   ok = ?ON(Replicant, mria_rlog:wait_for_shards([test_shard], infinity))
                end,
                #{?snk_kind := "Shard fully up", node := Replicant, shard := test_shard}),
             %% Compare contents of all tables
@@ -891,7 +892,12 @@ t_core_node_down(_) ->
              %% Restart mria:
              {_, {ok, _}} =
                  ?wait_async_action(
-                    [rpc:call(I, application, start, [mria]) || I <- [N1, N2]],
+                    [?ON(I,
+                         begin
+                             application:start(mria),
+                             ok = mria_rlog:wait_for_shards([test_shard], infinity)
+                         end)
+                     || I <- [N1, N2]],
                     #{ ?snk_kind := mria_status_change
                      , status    := up
                      , tag       := core_node
@@ -939,10 +945,16 @@ t_rlog_schema(_) ->
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
            %% Add a few new tables to the shard
-           [?assertMatch( {[ok, ok], []}
-                        , rpc:multicall([N1, N2], mria, create_table,
-                                        [Tab, [{rlog_shard, test_shard}]])
-                        ) || Tab <- [tab1, tab2, tab3, tab4, tab6, tab7, tab8, tab9, tab10]],
+           [begin
+                ?assertMatch( {[ok, ok], []}
+                            , rpc:multicall([N1, N2], mria, create_table,
+                                            [Tab, [{rlog_shard, test_shard}]])
+                            ),
+                ?assertMatch( {[ok, ok], []}
+                            , rpc:multicall([N1, N2], mria, wait_for_tables, [[Tab]])
+                            )
+            end
+            || Tab <- [tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10]],
            ok = rpc:call(N1, mria, dirty_write, [{tab1, 1, 1}]),
            %% Check idempotency:
            ?assertMatch( {[ok, ok], []}
@@ -971,7 +983,16 @@ t_rlog_schema(_) ->
                   ?strict_causality( #{ ?snk_kind := "Adding table to a shard"
                                       , shard := _Shard
                                       , table := _Table
-                                      }
+                                      } when _Table =:= tab1;
+                                             _Table =:= tab2;
+                                             _Table =:= tab3;
+                                             _Table =:= tab4;
+                                             _Table =:= tab5;
+                                             _Table =:= tab6;
+                                             _Table =:= tab7;
+                                             _Table =:= tab8;
+                                             _Table =:= tab9;
+                                             _Table =:= tab10
                                    , #{ ?snk_kind := "Shard schema change"
                                       , shard := _Shard
                                       , new_table := _Table
