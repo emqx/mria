@@ -256,6 +256,7 @@ add_entry(Entry) ->
               #?schema{ mnesia_table = Table
                       , shard        = Shard
                       } = Entry,
+              verify_merge_table(Entry),
               case mnesia:wread({?schema, Table}) of
                   [] ->
                       ?tp(info, "Adding table to a shard",
@@ -279,6 +280,43 @@ add_entry(Entry) ->
                       mnesia:abort(Info)
               end
       end).
+
+verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf}) ->
+    case {proplists:get_value(merge_table, Conf, false),
+          proplists:get_value(node_pattern, Conf, undefined),
+          is_merge_table_shard(Shard)} of
+        {true, undefined, _} ->
+            mnesia:abort(#{ reason => node_pattern_required
+                          , table => Table
+                          , merge_table => true
+                          });
+        {MergeTab, _, MergeShard} when is_boolean(MergeShard),
+                                       MergeTab =/= MergeShard ->
+            mnesia:abort(#{ reason => incompatible_shard
+                          , shard => Shard
+                          , table => Table
+                          , merge_table => MergeTab
+                          , merge_shard => MergeShard
+                          });
+        _ ->
+            ok
+    end.
+
+-spec is_merge_table_shard(mria_rlog:shard()) -> boolean() | undefined.
+is_merge_table_shard(Shard) ->
+    MS = {#?schema{shard = Shard, config = '$1', _ = '_'}, [], ['$1']},
+    TablesOfShard = mnesia:select(?schema, [MS]),
+    ?tp(warning, tables_of_shard, #{shard => Shard, l => TablesOfShard}),
+    case TablesOfShard of
+        [] ->
+            undefined;
+        _ ->
+            lists:any(
+              fun(Conf) ->
+                      proplists:get_value(merge_table, Conf, false)
+              end,
+              TablesOfShard)
+    end.
 
 -spec make_entry(mria:table(), _Properties :: list()) -> {ok, entry()} | {error, map()}.
 make_entry(Table, TabDef) ->
@@ -385,7 +423,13 @@ notify_change(Shard, Entry, Subscribers) ->
 %% @doc Try to create a mnesia table according to the spec
 -spec create_table(entry()) -> ok | _.
 create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config}) ->
-    mria_lib:ensure_tab(mnesia:create_table(Table, [{Storage, [node()]} | Config])).
+    MnesiaConfig = lists:filter(
+                     fun({node_pattern, _}) -> false;
+                        ({merge_table, _}) -> false;
+                        (_) -> true
+                     end,
+                     Config),
+    mria_lib:ensure_tab(mnesia:create_table(Table, [{Storage, [node()]} | MnesiaConfig])).
 
 %% @doc Force load a table. Note: mnesia waits for table implicitly.
 force_load(Table) ->

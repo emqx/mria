@@ -1488,6 +1488,87 @@ t_emqx14135(_) ->
        end,
        []).
 
+%% This testcase verifies that all tables in the shard have the same
+%% value of `merge_table' property and that `node_pattern' must be set
+%% for merge tables.
+t_merge_table_schema(_) ->
+    Cluster = mria_ct:cluster([core, replicant],
+                              mria_mnesia_test_util:common_env()),
+    MergeShard = merge_shard,
+    NormalShard = normal_shard,
+    ?check_trace(
+       #{timetrap => 15_000},
+       try
+           [N1, N2] = Nodes = mria_ct:start_cluster(mria, Cluster),
+           %% Create normal shard:
+           ?assertMatch(
+              ok,
+              ?ON(N1, mria:create_table(normal_table1,
+                                        [ {storage, ram_copies}
+                                        , {type, ordered_set}
+                                        , {rlog_shard, NormalShard}
+                                        ]))),
+           ?assertMatch(
+              ok,
+              ?ON(N2, mria:create_table(normal_table2,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, NormalShard}
+                                        ]))),
+           %% Create merge shard:
+           ?assertMatch(
+              ok,
+              ?ON(N1, mria:create_table(merge_table1,
+                                        [ {storage, ram_copies}
+                                        , {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        , {rlog_shard, MergeShard}
+                                        ]))),
+           ?assertMatch(
+              ok,
+              ?ON(N2, mria:create_table(merge_table2,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        , {rlog_shard, MergeShard}
+                                        ]))),
+           %% Try to add regular table to merge shard, it should fail:
+           [?assertMatch(
+               {aborted, #{reason := incompatible_shard}},
+               ?ON(N, mria:create_table(normal_table3,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, MergeShard}
+                                        ])))
+            || N <- Nodes],
+           %% Try to add merge table to regular shard, it should fail:
+           [?assertMatch(
+               {aborted, #{reason := incompatible_shard}},
+               ?ON(N, mria:create_table(merge_table3,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, NormalShard}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        ])))
+            || N <- Nodes],
+           %% Try to create tables with incompatible options:
+           [?assertMatch(
+               {aborted, #{reason := node_pattern_required}},
+               ?ON(N, mria:create_table(merge_table4,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, MergeShard}
+                                        , {merge_table, true}
+                                        ])))
+           || N <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
         begin

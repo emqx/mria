@@ -57,6 +57,31 @@ Transactions for each shard are replicated independently.
 Currently transaction can only modify tables in one shard.
 Usually it is a good idea to group all tables that belong to a particular OTP application in one shard.
 
+## Merge tables
+
+Tables where every entry includes ID of the node that created the record are called "merge tables".
+
+How to create such tables:
+
+```erlang
+mria:create_table(my_merged, [ {type, ordered_set}
+                             , {rlog_shard, shard_id}
+                             , {node_pattern, #my_record{key = {'_', '$1'}, _ = '_'}}
+                             , {merge_table, true}
+                             ])
+```
+
+1. All tables in the shard must have `merge_table` property = `true`.
+2. `node_pattern` property is mandatory.
+   Its value must be an ets match pattern with one free variable: `'$1'`.
+   Mria verifies that this value is set to `node()` for each record.
+
+Unlike regular tables,
+both cores and replicants use local writes to update such tables.
+In a clustered setup,
+the contents of the merge table consist of records from all reachable peer nodes.
+Records from remote nodes are read-only.
+
 ## Enabling RLOG in your application
 
 It is important to make the application code compatible with the RLOG feature by using the correct APIs.
