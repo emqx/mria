@@ -66,12 +66,15 @@
 
 -type fsm_result() :: gen_statem:event_handler_result(state()).
 
+-define(name(SHARD), {n, l, {?MODULE, Shard}}).
+-define(via(SHARD), {via, gproc, ?name(SHARD)}).
+
 %%================================================================================
 %% API funcions
 %%================================================================================
 
 start_link(ParentSup, Shard) ->
-    gen_statem:start_link({local, Shard}, ?MODULE, {ParentSup, Shard}, []).
+    gen_statem:start_link(?via(Shard), ?MODULE, {ParentSup, Shard}, []).
 
 %%================================================================================
 %% gen_statem callbacks

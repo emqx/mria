@@ -19,7 +19,8 @@
     gen_rpc,
     replayq,
     snabbkaffe,
-    optvar
+    optvar,
+    gproc
    ]},
   {modules, []},
   {licenses, ["Apache 2.0"]},
