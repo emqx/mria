@@ -185,7 +185,8 @@ get_protocol_version() ->
     %% boostrapper.
     %% 1 -> 2: Add `{clear_table, Tab, Pattern}` op to support
     %% `mnesia:match_delete/2` API extension.
-    2.
+    %% 2 -> 3: Add merge tables
+    3.
 
 intercept_trans(Tid, Commit) ->
     ?tp(mria_rlog_intercept_trans, Commit#{tid => Tid}),
