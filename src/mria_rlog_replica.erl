@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -230,7 +230,7 @@ initiate_bootstrap(D) ->
       , parent_sup       = ParentSup
       } = D,
     mria_status:notify_rpc_target_up(Shard, Remote),
-    _Pid = mria_replicant_shard_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
+    _Pid = mria_shard_downstream_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
     ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
     ReplayqExtraOpts = application:get_env(mria, rlog_replayq_options, #{}),
@@ -326,7 +326,7 @@ initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Re
     %% e.g, when an agent on a core node is down and mria_rlog_replica reconnects.
     %% If this behavior is ever changed, mria:sync_transaction/4,3,2 implementation
     %% needs to be updated accordingly (this is also covered by a test case).
-    mria_replicant_shard_sup:stop_importer_worker(SupPid),
+    mria_shard_downstream_sup:stop_importer_worker(SupPid),
     flush_importer_acks(Ref),
     D1 = close_replayq(D0),
     D = D1#d{ agent            = undefined
@@ -489,7 +489,7 @@ close_replayq(D = #d{replayq = RQ}) ->
 ensure_importer_worker(D = #d{importer_worker = Pid}) when is_pid(Pid) ->
     D;
 ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo}) ->
-    Pid = mria_replicant_shard_sup:start_importer_worker(Parent, Shard, SeqNo),
+    Pid = mria_shard_downstream_sup:start_importer_worker(Parent, Shard, SeqNo),
     D#d{importer_worker = Pid}.
 
 flush_importer_acks(Ref) ->

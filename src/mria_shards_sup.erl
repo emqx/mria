@@ -82,8 +82,8 @@ init([Shards]) ->
 
 shard_sup(Shard) ->
     Start = case mria_rlog:role() of
-                core      -> {mria_shard_upstream_sup,      start_link, [Shard]};
-                replicant -> {mria_replicant_shard_sup, start_link, [Shard]}
+                core      -> {mria_shard_upstream_sup,   start_link, [Shard]};
+                replicant -> {mria_shard_downstream_sup, start_link, [Shard]}
             end,
     #{ id       => Shard
      , start    => Start
