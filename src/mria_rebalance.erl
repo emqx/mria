@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2025-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -209,7 +209,7 @@ kick(Shard, AgentPid) ->
 
 %% RPC target:
 list_agents() ->
-    mria_core_shard_sup:list_agents().
+    mria_shard_upstream_sup:list_agents().
 
 %%================================================================================
 %% Internal functions

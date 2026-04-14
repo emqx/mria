@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -82,7 +82,7 @@ init([Shards]) ->
 
 shard_sup(Shard) ->
     Start = case mria_rlog:role() of
-                core      -> {mria_core_shard_sup,      start_link, [Shard]};
+                core      -> {mria_shard_upstream_sup,      start_link, [Shard]};
                 replicant -> {mria_replicant_shard_sup, start_link, [Shard]}
             end,
     #{ id       => Shard

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -127,8 +127,8 @@ handle_continue(post_init, {Parent, Shard}) ->
     Tables = process_schema(Shard),
     mria_schema:wait_for_tables(Tables),
     mria_schema:subscribe_to_shard_schema_updates(Shard),
-    AgentSup = mria_core_shard_sup:start_agent_sup(Parent, Shard),
-    BootstrapperSup = mria_core_shard_sup:start_bootstrapper_sup(Parent, Shard),
+    AgentSup = mria_shard_upstream_sup:start_agent_sup(Parent, Shard),
+    BootstrapperSup = mria_shard_upstream_sup:start_bootstrapper_sup(Parent, Shard),
     mria_status:notify_shard_up(Shard, self()),
     ?tp(info, "Shard fully up",
         #{ node  => node()
@@ -242,8 +242,8 @@ handle_schema_update( #?schema{shard = Shard, mnesia_table = Tab}
          , new_table => Tab
          }),
     %% Shut down all the downstream connections by restarting the supervisors:
-    AgentSup = mria_core_shard_sup:restart_agent_sup(Parent),
-    BootstrapperSup = mria_core_shard_sup:restart_bootstrapper_sup(Parent),
+    AgentSup = mria_shard_upstream_sup:restart_agent_sup(Parent),
+    BootstrapperSup = mria_shard_upstream_sup:restart_bootstrapper_sup(Parent),
     {noreply, St0#s{ agent_sup        = AgentSup
                    , bootstrapper_sup = BootstrapperSup
                    }};
