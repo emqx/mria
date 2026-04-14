@@ -48,6 +48,7 @@
         , handle_call/3
         , handle_cast/2
         , handle_info/2
+        , terminate/2
         ]).
 
 -include("mria_rlog.hrl").
@@ -68,6 +69,8 @@
 -opaque subscription() :: pid().
 
 -define(SERVER, ?MODULE).
+
+-define(pterm, mria_schema_data).
 
 -export_type([entry/0, subscription/0, event/0]).
 
@@ -170,20 +173,21 @@ wait_for_tables(Tables) ->
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec is_merge_shard(mria_rlog:shard()) -> {ok, boolean()} | {error, _}.
+-spec is_merge_shard(mria_rlog:shard()) -> {ok, boolean()} | {aborted, _}.
 is_merge_shard(Shard) ->
-    case mnesia:transaction(fun is_merge_shard_trans/1, [Shard]) of
-        {atomic, Merge} when is_boolean(Merge) ->
-            {ok, Merge};
-        Result ->
-            {error, #{reason => unknown_shard_type, shard => Shard, value => Result}}
+    #{merge_shards := MS} = persistent_term:get(?pterm),
+    case MS of
+        #{Shard := Val} ->
+            {ok, Val};
+        #{} ->
+            {aborted, {unknown_shard, Shard}}
     end.
 
 -spec is_merge_table(mria:table()) -> {ok, boolean()} | undefined.
 is_merge_table(Table) ->
     maybe
-        [#?schema{config = Conf}] ?= mnesia:dirty_read(?schema, Table),
-        {ok, proplists:get_value(merge_table, Conf, false)}
+        [Entry] ?= mnesia:dirty_read(?schema, Table),
+        {ok, entry_is_merge_table(Entry)}
     else
         _ -> undefined
     end.
@@ -212,6 +216,7 @@ get_merged_table_node_pattern(Table) ->
         }).
 
 init([]) ->
+    process_flag(trap_exit, true),
     logger:set_process_metadata(#{domain => [mria, rlog, schema]}),
     ?tp(debug, rlog_schema_init, #{}),
     State0 = bootstrap(),
@@ -220,6 +225,7 @@ init([]) ->
     ?tp(info, "Converging schema", #{}),
     Specs = table_specs_of_shard('_'),
     State = converge_schema(Specs, State0),
+    update_persistent_term(State),
     {ok, State}.
 
 handle_call({subscribe_to_shard_schema_updates, Shard, Pid}, _From, State0 = #s{subscribers = Subs0}) ->
@@ -243,6 +249,8 @@ handle_cast(Cast, State) ->
     ?unexpected_event_tp(#{cast => Cast, state => State}),
     {noreply, State}.
 
+handle_info({'EXIT', _, shutdown}, State) ->
+    {stop, State};
 handle_info({mnesia_table_event, Event}, State0) ->
     case Event of
         {write, Entry = #?schema{}, _ActivityId} ->
@@ -261,6 +269,9 @@ handle_info(Info, State) ->
     ?unexpected_event_tp(#{info => Info, state => State}),
     {noreply, State}.
 
+terminate(_Reason, _State) ->
+    persistent_term:erase(?pterm).
+
 %%================================================================================
 %% Internal functions
 %%================================================================================
@@ -269,15 +280,15 @@ handle_info(Info, State) ->
 is_merge_shard_trans(?LOCAL_CONTENT_SHARD) ->
     false;
 is_merge_shard_trans(Shard) ->
-    MS = {#?schema{shard = Shard, config = '$1', _ = '_'}, [], ['$1']},
+    MS = {#?schema{shard = Shard,  _ = '_'}, [], ['$_']},
     TablesOfShard = mnesia:select(?schema, [MS]),
     case TablesOfShard of
         [] ->
             undefined;
         _ ->
             lists:any(
-              fun(Conf) ->
-                      proplists:get_value(merge_table, Conf, false)
+              fun(Spec) ->
+                      entry_is_merge_table(Spec)
               end,
               TablesOfShard)
     end.
@@ -436,7 +447,7 @@ bootstrap() ->
 
 -spec apply_schema_op(entry(), #s{}) -> #s{}.
 apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard} = Entry
-               , #s{specs = OldEntries, subscribers = Subscribers} = State
+               , #s{specs = OldEntries, subscribers = Subscribers} = State0
                ) ->
     case lists:keyfind(Table, #?schema.mnesia_table, OldEntries) of
         false -> % new entry
@@ -449,11 +460,13 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
             ok = Ret, %% TODO: print an error message under some conditions?
             Tables = tables_of_shard(Shard),
             mria_config:load_shard_config(Shard, Tables),
+            State = State0#s{specs = [Entry|OldEntries]},
+            update_persistent_term(State),
             mria_status:notify_local_table(Table),
             notify_change(Shard, Entry, Subscribers),
-            State#s{specs = [Entry|OldEntries]};
+            State;
         _CachedEntry ->
-            State
+            State0
     end.
 
 -spec notify_change(mria_rlog:shard(), entry(), subscribers()) -> ok.
@@ -488,3 +501,22 @@ force_load(Table) ->
         Other ->
             logger:error("Failed to force loading table ~p: ~p", [Table, Other])
     end.
+
+update_persistent_term(#s{specs = Specs}) ->
+    MergeShards = lists:foldl(
+                    fun(#?schema{shard = Shard} = Entry, Acc) ->
+                            case entry_is_merge_table(Entry) of
+                                true  -> Acc#{Shard => true};
+                                false -> Acc#{Shard => false}
+                            end
+                    end,
+                    #{},
+                    Specs),
+    persistent_term:put(
+      ?pterm,
+      #{ merge_shards => MergeShards
+       }),
+    ok.
+
+entry_is_merge_table(#?schema{config = Conf}) ->
+    proplists:get_value(merge_table, Conf, false).
