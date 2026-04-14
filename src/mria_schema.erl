@@ -266,6 +266,8 @@ handle_info(Info, State) ->
 %%================================================================================
 
 -spec is_merge_shard_trans(mria_rlog:shard()) -> boolean() | undefined.
+is_merge_shard_trans(?LOCAL_CONTENT_SHARD) ->
+    false;
 is_merge_shard_trans(Shard) ->
     MS = {#?schema{shard = Shard, config = '$1', _ = '_'}, [], ['$1']},
     TablesOfShard = mnesia:select(?schema, [MS]),
@@ -335,6 +337,11 @@ verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf, 
             mnesia:abort(#{ reason => node_pattern_required
                           , table => Table
                           , merge_table => true
+                          });
+        {false, NodePattern, _} when NodePattern =/= undefined ->
+            mnesia:abort(#{ reason => unexpected_node_pattern
+                          , table => Table
+                          , node_pattern => NodePattern
                           });
         {true, _, _} when Storage =/= ram_copies ->
             mnesia:abort(#{ reason => incompatible_options
@@ -458,14 +465,20 @@ notify_change(Shard, Entry, Subscribers) ->
 
 %% @doc Try to create a mnesia table according to the spec
 -spec create_table(entry()) -> ok | _.
-create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config}) ->
-    MnesiaConfig = lists:filter(
-                     fun({node_pattern, _}) -> false;
-                        ({merge_table, _}) -> false;
-                        (_) -> true
-                     end,
-                     Config),
-    mria_lib:ensure_tab(mnesia:create_table(Table, [{Storage, [node()]} | MnesiaConfig])).
+create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config0}) ->
+    Config2 = case lists:keytake(merge_table, 1, Config0) of
+                  {value, {_, IsMerge}, Config1} ->
+                      lists:keydelete(node_pattern, 1, Config1);
+                  false ->
+                      IsMerge = false,
+                      Config0
+              end,
+    Config3 = case IsMerge of
+                  true  -> [{local_content, true} | Config2];
+                  false -> Config2
+              end,
+    Config = [{Storage, [node()]} | Config3],
+    mria_lib:ensure_tab(mnesia:create_table(Table, Config)).
 
 %% @doc Force load a table. Note: mnesia waits for table implicitly.
 force_load(Table) ->
