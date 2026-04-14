@@ -34,6 +34,7 @@
 
         , intercept_trans/2
         , ensure_shard/1
+        , shard_writes/1
         ]).
 
 -export_type([ shard/0
@@ -46,6 +47,7 @@
              , entry/0
              , transport/0
              , sync_reply_to/0
+             , shard_writes/0
              ]).
 
 -include("mria_rlog.hrl").
@@ -82,6 +84,8 @@
 
 -type sync_reply_to() :: #?rlog_sync{reply_to :: reference(), shard :: shard()}.
 
+-type shard_writes() :: mnesia | local | remote.
+
 %%================================================================================
 %% API
 %%================================================================================
@@ -117,6 +121,29 @@ role(Node) ->
     case mria_lib:rpc_call_nothrow(Node, ?MODULE, role, []) of
         core -> core;
         replicant -> replicant
+    end.
+
+-spec shard_writes(shard()) -> {ok, shard_writes()} | {aborted, _}.
+shard_writes(Shard) ->
+    case mria_config:whoami() of
+        mnesia ->
+            {ok, mnesia};
+        core ->
+            {ok, local};
+        replicant ->
+            case Shard of
+                ?LOCAL_CONTENT_SHARD ->
+                    {ok, local};
+                _ ->
+                    case mria_schema:is_merge_shard(Shard) of
+                        {ok, true} ->
+                            {ok, local};
+                        {ok, false} ->
+                            {ok, remote};
+                        Err ->
+                            Err
+                    end
+            end
     end.
 
 backend() ->
