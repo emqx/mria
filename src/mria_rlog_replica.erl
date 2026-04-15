@@ -21,7 +21,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/3]).
+-export([start_link/3, where/2, ls/1]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4, format_status/1]).
@@ -83,6 +83,19 @@
 -spec start_link(pid(), mria_rlog:shard(), upstream()) -> gen_server:start_ret().
 start_link(ParentSup, Shard, Upstream) ->
     gen_statem:start_link(?via(Shard, Upstream), ?MODULE, {ParentSup, Shard, Upstream}, []).
+
+-spec where(mria_rlog:shard(), upstream()) -> {ok, pid()} | undefined.
+where(Shard, Upstream) ->
+    case gproc:where(?name(Shard, Upstream)) of
+        Pid when is_pid(Pid) -> {ok, Pid};
+        undefined            -> undefined
+    end.
+
+-spec ls(mria_rlog:shard()) -> [{upstream(), pid()}].
+ls(Shard) ->
+    %% TODO: verify that fields are correct
+    MS = {{?name(Shard, '$1'), '_', '$2'}, [], [{{'$1', '$2'}}]},
+    gproc:select({local, names}, [MS]).
 
 %%================================================================================
 %% gen_statem callbacks
@@ -352,12 +365,12 @@ initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Re
 
 %% @private Try connecting to a core node
 -spec handle_reconnect(data()) -> fsm_result().
-handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentSup}) ->
+handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentSup, upstream = Upstream}) ->
     ?tp(debug, rlog_replica_reconnect,
         #{ node => node()
          , shard => Shard
          }),
-    case try_connect(Shard, Checkpoint) of
+    case try_connect(Shard, Upstream, Checkpoint) of
         {ok, _BootstrapNeeded = true, Node, ConnPid, _TableSpecs, SeqNo} ->
             D = D0#d{ shard            = Shard
                     , parent_sup       = ParentSup
@@ -384,7 +397,7 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
             {keep_state_and_data, [{state_timeout, ReconnectTimeout, ?reconnect}]}
     end.
 
--spec try_connect(mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
+-spec try_connect(mria_rlog:shard(), upstream(), mria_rlog_server:checkpoint()) ->
                 { ok
                 , boolean()
                 , node()
@@ -393,16 +406,18 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
                 , integer()
                 }
               | {error, term()}.
-try_connect(Shard, Checkpoint) ->
+try_connect(Shard, any_core, Checkpoint) ->
     Timeout = 4_000, % Don't block FSM forever, allow it to process other messages.
     %% Get the best node according to the LB
     Nodes = case mria_status:replica_get_core_node(Shard, Timeout) of
                 {ok, N} -> [N];
                 timeout -> []
             end,
-    try_connect(Nodes, Shard, Checkpoint).
+    try_connect1(Nodes, Shard, Checkpoint);
+try_connect(Shard, Upstream, Checkpoint) ->
+    try_connect1([Upstream], Shard, Checkpoint).
 
--spec try_connect([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
+-spec try_connect1([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
                 { ok
                 , boolean()
                 , node()
@@ -411,9 +426,9 @@ try_connect(Shard, Checkpoint) ->
                 , integer()
                 }
               | {error, term()}.
-try_connect([], _, _) ->
+try_connect1([], _, _) ->
     {error, no_core_available};
-try_connect([Node|Rest], Shard, Checkpoint) ->
+try_connect1([Node|Rest], Shard, Checkpoint) ->
     ?tp(debug, "Trying to connect to the core node",
         #{ node => Node
          }),
@@ -431,7 +446,7 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
                 #{ node => Node
                  , reason => Err
                  }),
-            try_connect(Rest, Shard, Checkpoint)
+            try_connect1(Rest, Shard, Checkpoint)
     end.
 
 -spec buffer_tlog_ops(mria_rlog:tx(), data()) -> data().
@@ -504,8 +519,8 @@ close_replayq(D = #d{replayq = RQ}) ->
 
 ensure_importer_worker(D = #d{importer_worker = Pid}) when is_pid(Pid) ->
     D;
-ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo}) ->
-    Pid = mria_shard_downstream_sup:start_importer_worker(Parent, Shard, SeqNo),
+ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo, upstream = Upstream}) ->
+    Pid = mria_shard_downstream_sup:start_importer_worker(Parent, Shard, Upstream, SeqNo),
     D#d{importer_worker = Pid}.
 
 flush_importer_acks(Ref) ->

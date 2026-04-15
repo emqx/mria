@@ -53,9 +53,10 @@
                  }.
 
 -record(iter,
-        { table   :: mria:table()
-        , storage :: atom() | {ext, _, _}
-        , state   :: _
+        { table          :: mria:table()
+        , storage        :: atom() | {ext, _, _}
+        , state          :: _
+        , is_merge_shard :: boolean()
         }).
 
 -record(server,
@@ -243,19 +244,27 @@ iter_start(Subscriber, Table, BatchSize) ->
     %% Push an empty batch to the replica to make sure it created the
     %% local table before we start actual iteration and the receiving
     %% table is empty:
-    ClearCommand = case mria_schema:is_merge_table(Table) of
-                       {ok, true} ->
-                           ?clear_table(node());
-                       {ok, false} ->
-                           ?clear_table
+    {ok, IsMerge} = mria_schema:is_merge_table(Table),
+    ClearCommand = case IsMerge of
+                       true  -> ?clear_table(node());
+                       false -> ?clear_table
                    end,
     push_records(Subscriber, Table, ClearCommand),
     %% Start iteration over records:
     mnesia_lib:db_fixtable(Storage, Table, true),
     Iter0 = #iter{ table = Table
                  , storage = Storage
+                 , is_merge_shard = IsMerge
                  },
-    case mnesia_lib:db_init_chunk(Storage, Table, BatchSize) of
+    InitChunk = case IsMerge of
+                    true ->
+                        {ok, NodePattern} = mria_schema:get_merged_table_node_pattern(Table),
+                        MS = {NodePattern, [{'==', '$1', node()}], ['$_']},
+                        ets:select(Table, [MS], BatchSize);
+                    false ->
+                        mnesia_lib:db_init_chunk(Storage, Table, BatchSize)
+                end,
+    case InitChunk of
         {Matches, Cont} ->
             {Iter0#iter{state = Cont}, Matches};
         ?end_of_table ->
@@ -263,8 +272,8 @@ iter_start(Subscriber, Table, BatchSize) ->
     end.
 
 -spec iter_next(#iter{}) -> {#iter{}, [tuple()] | ?end_of_table}.
-iter_next(Iter0 = #iter{storage = Storage, state = State}) ->
-    case mnesia_lib:db_chunk(Storage, State) of
+iter_next(Iter0 = #iter{storage = Storage, state = State, is_merge_shard = IsMerge}) ->
+    case next_chunk(IsMerge, Storage, State) of
         {Matches, Cont} ->
             {Iter0#iter{state = Cont}, Matches};
         ?end_of_table ->
@@ -279,3 +288,8 @@ clean_merge_table(Table, Node) ->
     {ok, Pattern} = mria_schema:get_merged_table_node_pattern(Table),
     MS = {Pattern, [{'==', '$1', Node}], [true]},
     ets:select_delete(Table, [MS]).
+
+next_chunk(false, Storage, Iter) ->
+    mnesia_lib:db_chunk(Storage, Iter);
+next_chunk(true, ram_copies, Iter) ->
+    ets:select(Iter).

@@ -248,6 +248,9 @@ ping(Node, Member, Retries) ->
                  ping(Node, Member, Retries -1)
     end.
 
+%% FIXME: hack
+pong(_, false) ->
+    ok;
 pong(Node, Member) ->
     cast(Node, {pong, Member}).
 

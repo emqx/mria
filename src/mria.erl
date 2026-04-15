@@ -393,15 +393,16 @@ ro_transaction(Shard, Fun) ->
 -spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list(), timeout()) ->
           t_result(A) | {timeout, t_result(A)} | {timeout, {error, shard_not_ready}}.
 sync_transaction(Shard, Function, Args, ReplTimeout) ->
-    case {mria_config:whoami(), Shard} of
-        {mnesia, _} ->
-            maybe_middleman(mnesia, transaction, [Function, Args]);
-        {_, ?LOCAL_CONTENT_SHARD} ->
-            maybe_middleman(mria_upstream, transactional_wrapper, [?LOCAL_CONTENT_SHARD, Function, Args]);
-        {core, _} ->
-            maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
-        {replicant, _} ->
-            sync_replicant_trans(Shard, Function, Args, ReplTimeout)
+    maybe
+        {ok, Writes} ?= mria_rlog:shard_writes(Shard),
+        case Writes of
+            mnesia ->
+                maybe_middleman(mnesia, transaction, [Function, Args]);
+            local ->
+                maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
+            remote ->
+                sync_replicant_trans(Shard, Function, Args, ReplTimeout)
+        end
     end.
 
 -spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list()) ->

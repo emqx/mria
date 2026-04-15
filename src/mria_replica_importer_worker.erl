@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 %% API:
 -export([ set_initial_seqno/2
         , import_batch/3
-        , start_link/2
+        , start_link/3
         , name/1
         ]).
 
@@ -48,13 +48,21 @@
         , seqno :: non_neg_integer() | undefined
         }).
 
+-define(name(SHARD, UPSTREAM), {n, l, {?MODULE, SHARD, UPSTREAM}}).
+-define(via(SHARD, UPSTREAM), {via, gproc, ?name(SHARD, UPSTREAM)}).
+
 %%================================================================================
 %% API funcions
 %%================================================================================
 
--spec start_link(mria_rlog:shard(), integer()) -> {ok, pid()}.
-start_link(Shard, SeqNo) ->
-    gen_server:start_link(?MODULE, [Shard, SeqNo], []).
+%% @doc WARNING: this API only works for non-merged shards.
+-spec name(mria_rlog:shard()) -> atom().
+name(Shard) ->
+    list_to_atom(atom_to_list(Shard) ++ "_importer_worker").
+
+-spec start_link(mria_rlog:shard(), mria_rlog_replica:upstream(), integer()) -> {ok, pid()}.
+start_link(Shard, Upstream, SeqNo) ->
+    gen_server:start_link(?via(Shard, Upstream), ?MODULE, [Shard, Upstream, SeqNo], []).
 
 -spec import_batch(transaction | dirty, pid(), [mria_rlog:tx()]) -> reference().
 import_batch(ImportType, Server, Tx) ->
@@ -66,22 +74,21 @@ import_batch(ImportType, Server, Tx) ->
 set_initial_seqno(Server, SeqNo) ->
     gen_server:call(Server, {set_initial_seqno, SeqNo}).
 
--spec name(mria_rlog:shard()) -> atom().
-name(Shard) ->
-    list_to_atom(atom_to_list(Shard) ++ "_importer_worker").
-
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
 
-init([Shard, SeqNo]) ->
+init([Shard, Upstream, SeqNo]) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{ domain => [mria, rlog, replica, importer]
                                  , shard  => Shard
                                  }),
     ?tp(mria_replica_importer_worker_start, #{shard => Shard, seqno => SeqNo}),
     State = #s{shard = Shard, seqno = SeqNo},
-    register(name(Shard), self()),
+    %% This is needed for sync transactions, where the remote node
+    %% should notify the importer. In merged shards all writes are
+    %% local.
+    Upstream =:= any_core andalso register(name(Shard), self()),
     {ok, State}.
 
 handle_call(Call, From, St) ->
