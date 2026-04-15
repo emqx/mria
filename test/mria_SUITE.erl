@@ -1555,7 +1555,7 @@ t_merge_table_schema(_) ->
                                         , {node_pattern, {'_', '$1'}}
                                         , {rlog_shard, MergeShard}
                                         ]))),
-           %% Try to add regular table to merge shard, it should fail:
+           %% Try to add a regular table to a merge shard, it should fail:
            [?assertMatch(
                {aborted, #{reason := incompatible_shard}},
                ?ON(N, mria:create_table(normal_table3,
@@ -1564,7 +1564,7 @@ t_merge_table_schema(_) ->
                                         , {rlog_shard, MergeShard}
                                         ])))
             || N <- Nodes],
-           %% Try to add merge table to regular shard, it should fail:
+           %% Try to add a merge table to a regular shard, it should fail:
            [?assertMatch(
                {aborted, #{reason := incompatible_shard}},
                ?ON(N, mria:create_table(merge_table3,
@@ -1575,7 +1575,7 @@ t_merge_table_schema(_) ->
                                         , {node_pattern, {'_', '$1'}}
                                         ])))
             || N <- Nodes],
-           %% Try to create merge table without `node_pattern', it should fail:
+           %% Try to create a merge table without `node_pattern', it should fail:
            [?assertMatch(
                {aborted, #{reason := node_pattern_required}},
                ?ON(N, mria:create_table(merge_table4,
@@ -1595,7 +1595,19 @@ t_merge_table_schema(_) ->
                                         , {merge_table, true}
                                         , {node_pattern, {'_', '$1'}}
                                         ])))
-           || N <- Nodes]
+           || N <- Nodes],
+           %% Verify schema cache in persistent term:
+           mria_mnesia_test_util:wait_tables(
+             [ normal_table1, normal_table2
+             %, merge_table1, merge_table2 % FIXME
+             ],
+             Nodes),
+           [?assertMatch(
+               #{merge_shards := #{ NormalShard := false
+                                  , MergeShard  := true
+                                  }},
+               ?ON(I, persistent_term:get(mria_schema_data)))
+            || I <- Nodes]
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
