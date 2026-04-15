@@ -21,7 +21,7 @@
 -behaviour(supervisor).
 
 %% API:
--export([ start_link/1
+-export([ start_link/2
         , start_importer_worker/3
         , stop_importer_worker/1
         , start_bootstrap_client/4
@@ -36,9 +36,9 @@
 %% API funcions
 %%================================================================================
 
--spec start_link(mria_rlog:shard()) -> {ok, pid()}.
-start_link(Shard) ->
-    supervisor:start_link(?MODULE, Shard).
+-spec start_link(mria_rlog:shard(), mria_rlog_replica:upstream()) -> {ok, pid()}.
+start_link(Shard, Upstream) ->
+    supervisor:start_link(?MODULE, {Shard, Upstream}).
 
 -spec start_importer_worker(pid(), mria_rlog:shard(), integer()) -> pid().
 start_importer_worker(SupPid, Shard, SeqNo) ->
@@ -71,14 +71,14 @@ start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
 %% Supervisor callbacks
 %%================================================================================
 
-init(Shard) ->
+init({Shard, Upstream}) ->
     SupFlags = #{ strategy      => one_for_all
                 , intensity     => 0
                 , period        => 1
                 , auto_shutdown => any_significant
                 },
     Children = [ #{ id          => replica
-                  , start       => {mria_rlog_replica, start_link, [self(), Shard]}
+                  , start       => {mria_rlog_replica, start_link, [self(), Shard, Upstream]}
                   , restart     => transient
                   , significant => true
                   , shutdown    => ?shutdown

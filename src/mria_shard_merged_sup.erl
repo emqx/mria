@@ -51,7 +51,7 @@ init(Shard) ->
                   , type        => supervisor
                   }
                , #{ id          => downstream
-                  , start       => {mria_shard_downstream_sup, start_link, [Shard]}
+                  , start       => {mria_shard_downstream_sup, start_link, [Shard, 'FIXME']}
                   , restart     => permanent
                   , shutdown    => infinity
                   , type        => supervisor
