@@ -67,9 +67,10 @@
         }).
 
 -record(client,
-        { shard       :: mria_rlog:shard()
-        , server      :: pid()
-        , parent      :: pid()
+        { shard          :: mria_rlog:shard()
+        , server         :: pid()
+        , parent         :: pid()
+        , is_merge_shard :: boolean()
         }).
 
 %%================================================================================
@@ -125,9 +126,11 @@ init({client, Shard, RemoteNode, Parent}) ->
                                  }),
     mria_status:notify_replicant_bootstrap_start(Shard),
     {ok, Pid} = mria_rlog_server:bootstrap_me(RemoteNode, Shard),
-    {ok, #client{ parent     = Parent
-                , shard      = Shard
-                , server     = Pid
+    {ok, IsMerge} = mria_schema:is_merge_shard(Shard),
+    {ok, #client{ parent         = Parent
+                , shard          = Shard
+                , server         = Pid
+                , is_merge_shard = IsMerge
                 }}.
 
 handle_info(loop, St = #server{}) ->
@@ -146,8 +149,8 @@ handle_call({complete, Server, Checkpoint}, From, St = #client{server = Server, 
     gen_server:reply(From, ok),
     mria_status:notify_replicant_bootstrap_complete(Shard),
     {stop, normal, St};
-handle_call({batch, {Server, Table, Records}}, _From, St = #client{server = Server, shard = Shard}) ->
-    handle_batch(Server, Table, Records),
+handle_call({batch, {Server, Table, Records}}, _From, St = #client{server = Server, shard = Shard, is_merge_shard = IsMerge}) ->
+    handle_batch(IsMerge, Server, Table, Records),
     mria_status:notify_replicant_bootstrap_import(Shard),
     {reply, ok, St};
 handle_call(Call, From, St) ->
@@ -181,16 +184,18 @@ push_batch({Node, Pid}, Batch = {_, _, _}) ->
 complete({Node, Pid}, Server, Checkpoint) ->
     mria_lib:rpc_call_nothrow(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
-handle_batch(_Server, Table, ?clear_table) ->
+handle_batch(_IsMerge, _Server, Table, ?clear_table) ->
     mria_schema:ensure_local_table(Table),
     {atomic, ok} = mnesia:clear_table(Table),
     ok;
-handle_batch(_Server, Table, ?clear_table(Node)) ->
+handle_batch(_IsMerge, _Server, Table, ?clear_table(Node)) ->
     mria_schema:ensure_local_table(Table),
     clean_merge_table(Table, Node),
     ok;
-handle_batch(_Server, Table, Records) ->
-    lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
+handle_batch(false, _Server, Table, Records) ->
+    lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records);
+handle_batch(true, _Server, Table, Records) ->
+    ets:insert(Table, Records).
 
 server_loop(St = #server{tables = [], subscriber = Subscriber, iterator = undefined}) ->
     %% All tables and chunks have been sent:
