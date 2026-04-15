@@ -16,7 +16,7 @@
 
 -module(mria_mnesia_test_util).
 
--export([stabilize/1, wait_tables/1, common_env/0,
+-export([stabilize/1, wait_tables/1, wait_tables/2, common_env/0,
          compare_table_contents/2, wait_full_replication/1,
          wait_full_replication/2]).
 
@@ -38,10 +38,14 @@ stabilize(Timeout) ->
     end.
 
 wait_tables(Nodes) ->
+    wait_tables(
+      [test_tab, test_bag, mria_helper_tab],
+      Nodes).
+
+wait_tables(Tables, Nodes) ->
     ?tp(mria_test_util_waiting_for_tables, #{nodes => Nodes}),
     [?block_until(#{?snk_kind := mria_ct_cluster_join, node := Node})
      || Node <- Nodes],
-    Tables = [test_tab, test_bag, mria_helper_tab],
     {Rep, BadNodes} = rpc:multicall(Nodes, mria, wait_for_tables, [Tables], infinity),
     case lists:all(fun(A) -> A =:= ok end, Rep) andalso BadNodes =:= [] of
         true ->
