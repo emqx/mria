@@ -68,6 +68,7 @@ mria:create_table(my_merged, [ {type, ordered_set}
                              , {rlog_shard, shard_id}
                              , {node_pattern, #my_record{key = {'_', '$1'}, _ = '_'}}
                              , {merge_table, true}
+                             , {auto_clean, boolean()} %% Optional, default = false
                              ])
 ```
 
@@ -75,6 +76,7 @@ mria:create_table(my_merged, [ {type, ordered_set}
 2. `node_pattern` property is mandatory.
    Its value must be an ets match pattern with one free variable: `'$1'`.
    Mria verifies that this value is set to `node()` for each record.
+3. `auto_clean` is an optional property that allows a downstream node to clean all records owned by an upstream node when the latter disconnects.
 
 Unlike regular tables,
 both cores and replicants use local writes to update such tables.

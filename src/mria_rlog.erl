@@ -70,7 +70,8 @@
 -type op() :: {write, mria:table(), mria_mnesia:record()}
             | {delete, mria:table(), _Key}
             | {delete_object, mria:table(), mria_mnesia:record()}
-            | {clear_table, mria:table()}.
+            | {clear_table, mria:table()}
+            | {clear_table, mria:table(), ets:match_pattern()}.
 
 -type tx() :: {mria_mnesia:tid(), [op()]}.
 

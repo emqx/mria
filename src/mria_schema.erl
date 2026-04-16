@@ -42,6 +42,7 @@
         , is_merge_table/1
         , get_merged_table_node_pattern/1
         , get_merged_table_check_spec/1
+        , get_merged_table_auto_clean/1
         ]).
 
 %% gen_server callbacks
@@ -210,6 +211,15 @@ get_merged_table_check_spec(Table) ->
             {ok, CMS};
         #{merge_table_check_spec := _} ->
             undefined
+    end.
+
+-spec get_merged_table_auto_clean(mria:table()) -> boolean().
+get_merged_table_auto_clean(Table) ->
+    maybe
+        [#?schema{config = Conf}] ?= mnesia:dirty_read(?schema, Table),
+        proplists:get_value(auto_clean, Conf, false)
+    else
+        _ -> false
     end.
 
 %%================================================================================
@@ -491,7 +501,9 @@ notify_change(Shard, Entry, Subscribers) ->
 create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config0}) ->
     Config2 = case lists:keytake(merge_table, 1, Config0) of
                   {value, {_, IsMerge}, Config1} ->
-                      lists:keydelete(node_pattern, 1, Config1);
+                      [I || I <- Config1,
+                            element(1, I) =/= node_pattern,
+                            element(1, I) =/= auto_clean];
                   false ->
                       IsMerge = false,
                       Config0

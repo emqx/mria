@@ -21,7 +21,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/3, where/2, ls/1]).
+-export([start_link/3, where/2, ls/1, clean_merge_table/2]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4, format_status/1]).
@@ -95,6 +95,13 @@ where(Shard, Upstream) ->
 ls(Shard) ->
     MS = {{?name(Shard, '$1'), '$2', '_'}, [], [{{'$1', '$2'}}]},
     gproc:select({local, names}, [MS]).
+
+-spec clean_merge_table(mria:table(), node()) -> ok.
+clean_merge_table(Table, Node) ->
+    {ok, Pattern} = mria_schema:get_merged_table_node_pattern(Table),
+    MS = {Pattern, [{'==', '$1', Node}], [true]},
+    _ = ets:select_delete(Table, [MS]),
+    ok.
 
 %%================================================================================
 %% gen_statem callbacks
@@ -344,7 +351,12 @@ handle_importer_ack(State, Ack, Data) ->
     error(internal_bootstrap_error).
 
 -spec initiate_reconnect(data()) -> fsm_result().
-initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Ref, is_merge_shard = IsMerge}) ->
+initiate_reconnect(#d{ shard = Shard
+                     , parent_sup = SupPid
+                     , importer_ref = Ref
+                     , is_merge_shard = IsMerge
+                     , upstream = Upstream
+                     } = D0) ->
     IsMerge orelse mria_status:notify_shard_down(Shard),
     %% IMPORTANT: mria:sync_transaction/4,3,2 relies on the fact that
     %% importer_worker is restarted whenever something goes wrong,
@@ -352,6 +364,7 @@ initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Re
     %% If this behavior is ever changed, mria:sync_transaction/4,3,2 implementation
     %% needs to be updated accordingly (this is also covered by a test case).
     mria_shard_downstream_sup:stop_importer_worker(SupPid),
+    IsMerge andalso perform_autoclean(Shard, Upstream),
     flush_importer_acks(Ref),
     D1 = close_replayq(D0),
     D = D1#d{ agent            = undefined
@@ -527,3 +540,9 @@ flush_importer_acks(Ref) ->
         #imported{ref = Ref} -> ok
     after 0 -> ok
     end.
+
+perform_autoclean(Shard, Upstream) ->
+    [clean_merge_table(Table, Upstream)
+     || Table <- mria_schema:tables_of_shard(Shard),
+        mria_schema:get_merged_table_auto_clean(Table)],
+    ok.

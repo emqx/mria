@@ -49,7 +49,7 @@
 
 -type batch() :: { _From    :: pid()
                  , _Table   :: mria:table()
-                 , _Records :: [tuple()] | ?clear_table
+                 , _Records :: [tuple()] | ?clear_table | ?clear_table(node())
                  }.
 
 -record(iter,
@@ -190,7 +190,7 @@ handle_batch(_IsMerge, _Server, Table, ?clear_table) ->
     ok;
 handle_batch(_IsMerge, _Server, Table, ?clear_table(Node)) ->
     mria_schema:ensure_local_table(Table),
-    clean_merge_table(Table, Node),
+    mria_rlog_replica:clean_merge_table(Table, Node),
     ok;
 handle_batch(false, _Server, Table, Records) ->
     lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records);
@@ -288,11 +288,6 @@ iter_next(Iter0 = #iter{storage = Storage, state = State, is_merge_shard = IsMer
 -spec iter_end(#iter{}) -> ok.
 iter_end(#iter{table = Table, storage = Storage}) ->
     mnesia_lib:db_fixtable(Storage, Table, false).
-
-clean_merge_table(Table, Node) ->
-    {ok, Pattern} = mria_schema:get_merged_table_node_pattern(Table),
-    MS = {Pattern, [{'==', '$1', Node}], [true]},
-    ets:select_delete(Table, [MS]).
 
 next_chunk(false, Storage, Iter) ->
     mnesia_lib:db_chunk(Storage, Iter);
