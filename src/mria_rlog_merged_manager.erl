@@ -48,7 +48,7 @@ init([Shard]) ->
     mria_status:notify_shard_up(Shard, self()),
     pg:join(?mria_pg_scope, #merged_pg_group{s = Shard}, [self()]),
     {Ref, _} = pg:monitor(?mria_pg_scope, #merged_pg_group{s = Shard}),
-    %% FIXME: create a nicer mechanism that dump polling
+    %% Periodically poll, in addition to events:
     timer:send_interval(5_000, poll),
     S = #s{ shard = Shard
           , pg_ref = Ref

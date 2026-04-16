@@ -1599,7 +1599,7 @@ t_merge_table_schema(_) ->
            %% Verify schema cache in persistent term:
            mria_mnesia_test_util:wait_tables(
              [ normal_table1, normal_table2
-             %, merge_table1, merge_table2 % FIXME
+             , merge_table1, merge_table2
              ],
              Nodes),
            [?assertMatch(
