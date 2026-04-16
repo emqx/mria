@@ -372,10 +372,16 @@ handle_cast({healing, Node}, State) ->
 
 handle_cast({ping, Member = #member{node = Node}}, State) ->
     ?tp(mria_membership_ping, #{member => Member}),
-    pong(Node, local_any_member()),
-    {Member1, State1} = monitor_if_replicant(Member, State),
-    insert(Member1),
-    {noreply, State1};
+    case local_any_member() of
+        false ->
+            %% Not initialized:
+            {noreply, State};
+        LocalMember = #member{} ->
+            pong(Node, LocalMember),
+            {Member1, State1} = monitor_if_replicant(Member, State),
+            insert(Member1),
+            {noreply, State1}
+    end;
 
 handle_cast({pong, Member}, State) ->
     ?tp(mria_membership_pong, #{member => Member}),
