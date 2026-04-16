@@ -332,7 +332,7 @@ handle_importer_ack( State
                    , D0 = #d{importer_ref = Ref, replayq = Q, shard = Shard, is_merge_shard = IsMerge}
                    ) when State =:= ?normal;
                           State =:= ?local_replay ->
-    %% FIXME: this should be reported per upstream
+    %% TODO: this should be reported per upstream
     IsMerge orelse mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D = D0#d{importer_ref = false},
     case replayq:is_empty(Q) of

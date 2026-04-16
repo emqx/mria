@@ -79,7 +79,7 @@ t_rlog_agent_linked_to_subscriber(_) ->
        try
            Nodes = [_N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
-           ReplicantPid = erpc:call(N2, erlang, whereis, [test_shard]),
+           [{_, ReplicantPid}] = erpc:call(N2, mria_rlog_replica, ls, [test_shard]),
            Ref = monitor(process, ReplicantPid),
            exit(ReplicantPid, kill),
            receive
