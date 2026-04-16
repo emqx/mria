@@ -49,6 +49,8 @@ ensure_downstream(Shard, Upstream) ->
     case supervisor:start_child(?via(Shard), [Upstream]) of
         {ok, _} = Ok ->
             Ok;
+        {ok, Pid, _} ->
+            {ok, Pid};
         {error, {already_started, Pid}} ->
             {ok, Pid};
         Err ->

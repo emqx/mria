@@ -250,7 +250,7 @@ handle_cast(Cast, State) ->
     {noreply, State}.
 
 handle_info({'EXIT', _, shutdown}, State) ->
-    {stop, State};
+    {stop, shutdown, State};
 handle_info({mnesia_table_event, Event}, State0) ->
     case Event of
         {write, Entry = #?schema{}, _ActivityId} ->

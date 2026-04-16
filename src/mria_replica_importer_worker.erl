@@ -43,6 +43,10 @@
 -include_lib("snabbkaffe/include/trace.hrl").
 -include("mria_rlog.hrl").
 
+%%================================================================================
+%% Type declarations
+%%================================================================================
+
 -record(s,
         { shard          :: mria_rlog:shard()
         , seqno          :: non_neg_integer() | undefined
@@ -51,6 +55,8 @@
 
 -define(name(SHARD, UPSTREAM), {n, l, {?MODULE, SHARD, UPSTREAM}}).
 -define(via(SHARD, UPSTREAM), {via, gproc, ?name(SHARD, UPSTREAM)}).
+
+-type sync_replies() :: [#?rlog_sync{}].
 
 %%================================================================================
 %% API funcions
@@ -201,7 +207,7 @@ do_import_batch(transaction, [{TID, Ops} | Rest]) when ?IS_TRANS(TID) ->
 do_import_batch(_, L) ->
     L.
 
--spec import_op(mria_rlog:op(), list()) -> list().
+-spec import_op(mria_rlog:op(), sync_replies()) -> sync_replies().
 import_op(Op, Acc) ->
     case Op of
         {write, ?rlog_sync, ReplyTo} ->
@@ -223,7 +229,7 @@ import_op(Op, Acc) ->
             Acc
     end.
 
--spec import_op_dirty(mria_rlog:op(), list()) -> ok.
+-spec import_op_dirty(mria_rlog:op(), sync_replies()) -> sync_replies().
 import_op_dirty(Op, Acc) ->
     case Op of
         {write, ?rlog_sync, ReplyTo} ->
@@ -254,7 +260,7 @@ import_op_dirty(Op, Acc) ->
     end.
 
 
--spec import_op_ets(mria_rlog:op(), list()) -> ok.
+-spec import_op_ets(mria_rlog:op(), sync_replies()) -> sync_replies().
 import_op_ets(Op, Acc) ->
     case Op of
         {write, ?rlog_sync, ReplyTo} ->
@@ -284,6 +290,7 @@ import_op_ets(Op, Acc) ->
             Acc
     end.
 
+-spec maybe_add_reply(#?rlog_sync{}, sync_replies()) -> sync_replies().
 maybe_add_reply(#?rlog_sync{reply_to = Alias} = ReplyTo, Acc)
   when node(Alias) =:= node() ->
     ?tp(importer_worker_sync_trans_recv, #{reply_to => Alias}),

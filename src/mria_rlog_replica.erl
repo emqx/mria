@@ -93,8 +93,7 @@ where(Shard, Upstream) ->
 
 -spec ls(mria_rlog:shard()) -> [{upstream(), pid()}].
 ls(Shard) ->
-    %% TODO: verify that fields are correct
-    MS = {{?name(Shard, '$1'), '_', '$2'}, [], [{{'$1', '$2'}}]},
+    MS = {{?name(Shard, '$1'), '$2', '_'}, [], [{{'$1', '$2'}}]},
     gproc:select({local, names}, [MS]).
 
 %%================================================================================
