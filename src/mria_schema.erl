@@ -203,7 +203,7 @@ get_merged_table_node_pattern(Table) ->
         _ -> undefined
     end.
 
--spec get_merged_table_check_spec(mria:table()) -> {ok, ets:match_spec()} | undefined.
+-spec get_merged_table_check_spec(mria:table()) -> {ok, ets:compiled_match_spec()} | undefined.
 get_merged_table_check_spec(Table) ->
     case persistent_term:get(?pterm) of
         #{merge_table_check_spec := #{Table := CMS}} ->
@@ -521,9 +521,10 @@ update_persistent_term(#s{specs = Specs}) ->
                             entry_is_merge_table(Entry)
                     end,
                     TablesPerShard),
-    CheckSpecs = #{Shard => create_shard_check_spec(Shard, Tables)
-                   || Shard := Tables <- TablesPerShard,
-                      maps:get(Shard, MergeShards)},
+    CheckSpecs = #{Table => create_shard_check_spec(Table, NodePattern)
+                   || #?schema{mnesia_table = Table, config = Config} <- Specs,
+                      {node_pattern, NodePattern} <- [proplists:lookup(node_pattern, Config)]
+                  },
     persistent_term:put(
       ?pterm,
       #{ merge_shards           => MergeShards
@@ -531,36 +532,12 @@ update_persistent_term(#s{specs = Specs}) ->
        }),
     ok.
 
-create_shard_check_spec(_Shard, Tables) ->
-    TableSpecs = [MS || #?schema{mnesia_table = Tab, config = Conf} <- Tables,
-                        MS <- merge_table_check_specs(Tab, Conf)],
-    LocksMS = {{{locks, '_', '_'}, '_'}, [], ['$_']},
-    NodesMS = {{nodes, '_'}, [], ['$_']},
-    Specs = [ LocksMS
-            , NodesMS
-            | TableSpecs],
-    _ = ets:match_spec_compile(Specs),
-    Specs.
-
-merge_table_check_specs(Table, Conf) ->
-    case proplists:lookup(node_pattern, Conf) of
-        {node_pattern, RecordPat} ->
-            %% Match spec that verifies data stored in the Mnesia transaction shadow table.
-            %% It can have the following values:
-            %%
-            %% {{Table, Key}, Record, write}
-            %% {{Table, Key}, Record, delete_object}
-            %% {{Table, Key}, Key, delete}
-            %%
-            %% TODO: verify match_delete and friends.
-            MS = { {{Table, '_'}, RecordPat, '_'}
-                 , [{'=:=', '$1', node()}]
-                 , ['$_']
-                 },
-            [MS];
-        none ->
-            []
-    end.
+create_shard_check_spec(_Table, NodePattern) ->
+    MS = { NodePattern
+         , []
+         , [{'=:=', '$1', node()}]
+         },
+    ets:match_spec_compile([MS]).
 
 entry_is_merge_table(#?schema{config = Conf}) ->
     proplists:get_value(merge_table, Conf, false).

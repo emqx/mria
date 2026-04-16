@@ -1613,6 +1613,83 @@ t_merge_table_schema(_) ->
        end,
        []).
 
+%% This testcase verifies that each node can only update merge table
+%% records that belong to itself
+t_merge_table_verify_op(_) ->
+    Cluster = mria_ct:cluster([core], mria_mnesia_test_util:common_env()),
+    Tab = ?FUNCTION_NAME,
+    Shard = verify_op_shard,
+    ?check_trace(
+       #{timetrap => 15_000},
+       try
+           [N] = mria_ct:start_cluster(mria, Cluster),
+           ?assertMatch(
+              ok,
+              ?ON(N, mria:create_table(Tab,
+                                       [ {type, set}
+                                       , {merge_table, true}
+                                       , {node_pattern, {Tab, {'_', '$1'}, '_'}}
+                                       , {rlog_shard, Shard}
+                                       ]))),
+           mria_mnesia_test_util:wait_tables([Tab], [N]),
+           %% Happy cases:
+           ?assertMatch(
+              {atomic, ok},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, {1, node()}, 1})
+                       end))),
+           ?assertMatch(
+              {atomic, ok},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:delete_object({Tab, {1, node()}, 2})
+                       end))),
+           ?assertMatch(
+              {atomic, ok},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, {2, node()}, 2}),
+                               mnesia:delete({Tab, {1, node()}})
+                       end))),
+           %% Violations:
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, {1, 1}, 1})
+                       end))),
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, 1, node()})
+                       end))),
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:delete_object({Tab, {1, 1}, node()})
+                       end))),
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:delete_object({Tab, 1, node()})
+                       end))),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
         begin
