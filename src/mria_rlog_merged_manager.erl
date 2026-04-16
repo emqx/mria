@@ -16,11 +16,14 @@
 
 -export_type([]).
 
+-include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %%================================================================================
 %% Type declarations
 %%================================================================================
+
+-record(merged_pg_group, {s :: mria_rlog:shard()}).
 
 %%================================================================================
 %% API functions
@@ -36,15 +39,19 @@ start_link(Shard) ->
 
 -record(s,
         { shard :: mria_rlog:shard()
+        , pg_ref :: reference()
         }).
 
 init([Shard]) ->
     process_flag(trap_exit, true),
     %% TODO: self is not an agent. How is this pid used?
     mria_status:notify_shard_up(Shard, self()),
+    pg:join(?mria_pg_scope, #merged_pg_group{s = Shard}, [self()]),
+    {Ref, _} = pg:monitor(?mria_pg_scope, #merged_pg_group{s = Shard}),
     %% FIXME: create a nicer mechanism that dump polling
     timer:send_interval(5_000, poll),
     S = #s{ shard = Shard
+          , pg_ref = Ref
           },
     {ok, S}.
 
@@ -56,12 +63,15 @@ handle_cast(_Cast, S) ->
 
 handle_info({'EXIT', _, shutdown}, S) ->
     {stop, shutdown, S};
+handle_info({Ref, Event, _Pids}, S = #s{pg_ref = Ref}) when Event =:= join; Event =:= leave ->
+    {noreply, manage_workers(S)};
 handle_info(poll, S) ->
     {noreply, manage_workers(S)};
 handle_info(_Info, S) ->
     {noreply, S}.
 
 terminate(_Reason, #s{shard = Shard}) ->
+    pg:leave(?mria_pg_scope, #merged_pg_group{s = Shard}, [self()]),
     mria_status:notify_shard_down(Shard),
     ok.
 
@@ -76,9 +86,10 @@ terminate(_Reason, #s{shard = Shard}) ->
 manage_workers(S = #s{shard = Shard}) ->
     Nodes = mria:cluster_nodes(all),
     Workers = mria_rlog_replica:ls(Shard),
-    ?tp(notice, blah, #{n => Nodes, w => Workers}),
     [mria_shard_merged_sup:ensure_downstream(Shard, I)
-     || I <- Nodes, I =/= node()],
+     || I <- Nodes,
+        I =/= node(),
+        not lists:any(fun({N, _}) -> N =:= I end, Workers)],
     [mria_shard_merged_sup:stop_downstream(Shard, Pid)
      || {Node, Pid} <- Workers, not lists:member(Node, Nodes)],
     S.

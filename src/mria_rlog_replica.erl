@@ -70,8 +70,8 @@
 
 -type fsm_result() :: gen_statem:event_handler_result(state()).
 
--type upstream() :: any_core  % Regular shard on replicant
-                  | node().   % Merge table
+-type upstream() :: ?any_core  % Regular shard on replicant
+                  | node().    % Merge table
 
 -define(name(SHARD, UPSTREAM), {n, l, {?MODULE, SHARD, UPSTREAM}}).
 -define(via(SHARD, UPSTREAM), {via, gproc, ?name(SHARD, UPSTREAM)}).
@@ -406,7 +406,7 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
                 , integer()
                 }
               | {error, term()}.
-try_connect(Shard, any_core, Checkpoint) ->
+try_connect(Shard, ?any_core, Checkpoint) ->
     Timeout = 4_000, % Don't block FSM forever, allow it to process other messages.
     %% Get the best node according to the LB
     Nodes = case mria_status:replica_get_core_node(Shard, Timeout) of
@@ -519,8 +519,8 @@ close_replayq(D = #d{replayq = RQ}) ->
 
 ensure_importer_worker(D = #d{importer_worker = Pid}) when is_pid(Pid) ->
     D;
-ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo, upstream = Upstream}) ->
-    Pid = mria_shard_downstream_sup:start_importer_worker(Parent, Shard, Upstream, SeqNo),
+ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo, upstream = Upstream, is_merge_shard = IsMerge}) ->
+    Pid = mria_shard_downstream_sup:start_importer_worker(Parent, Shard, Upstream, IsMerge, SeqNo),
     D#d{importer_worker = Pid}.
 
 flush_importer_acks(Ref) ->

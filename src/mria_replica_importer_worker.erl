@@ -28,7 +28,7 @@
 %% API:
 -export([ set_initial_seqno/2
         , import_batch/3
-        , start_link/3
+        , start_link/4
         , name/1
         ]).
 
@@ -44,8 +44,9 @@
 -include("mria_rlog.hrl").
 
 -record(s,
-        { shard :: mria_rlog:shard()
-        , seqno :: non_neg_integer() | undefined
+        { shard          :: mria_rlog:shard()
+        , seqno          :: non_neg_integer() | undefined
+        , is_merge_shard :: boolean()
         }).
 
 -define(name(SHARD, UPSTREAM), {n, l, {?MODULE, SHARD, UPSTREAM}}).
@@ -60,9 +61,9 @@
 name(Shard) ->
     list_to_atom(atom_to_list(Shard) ++ "_importer_worker").
 
--spec start_link(mria_rlog:shard(), mria_rlog_replica:upstream(), integer()) -> {ok, pid()}.
-start_link(Shard, Upstream, SeqNo) ->
-    gen_server:start_link(?via(Shard, Upstream), ?MODULE, [Shard, Upstream, SeqNo], []).
+-spec start_link(mria_rlog:shard(), mria_rlog_replica:upstream(), boolean(), integer()) -> {ok, pid()}.
+start_link(Shard, Upstream, IsMergeShard, SeqNo) ->
+    gen_server:start_link(?via(Shard, Upstream), ?MODULE, [Shard, Upstream, IsMergeShard, SeqNo], []).
 
 -spec import_batch(transaction | dirty, pid(), [mria_rlog:tx()]) -> reference().
 import_batch(ImportType, Server, Tx) ->
@@ -78,17 +79,17 @@ set_initial_seqno(Server, SeqNo) ->
 %% gen_server callbacks
 %%================================================================================
 
-init([Shard, Upstream, SeqNo]) ->
+init([Shard, _Upstream, IsMergeShard, SeqNo]) ->
     process_flag(trap_exit, true),
     logger:set_process_metadata(#{ domain => [mria, rlog, replica, importer]
                                  , shard  => Shard
                                  }),
     ?tp(mria_replica_importer_worker_start, #{shard => Shard, seqno => SeqNo}),
-    State = #s{shard = Shard, seqno = SeqNo},
-    %% This is needed for sync transactions, where the remote node
-    %% should notify the importer. In merged shards all writes are
+    State = #s{shard = Shard, seqno = SeqNo, is_merge_shard = IsMergeShard},
+    %% This is needed only for sync transactions, where the remote
+    %% node notifies the importer. In merged shards all writes are
     %% local.
-    Upstream =:= any_core andalso register(name(Shard), self()),
+    IsMergeShard orelse register(name(Shard), self()),
     {ok, State}.
 
 handle_call(Call, From, St) ->
@@ -99,11 +100,12 @@ handle_info(Info, St) ->
     ?unexpected_event_tp(#{info => Info, state => St}),
     {noreply, St}.
 
-handle_cast({import_batch, ImportType, Alias, Batch}, St = #s{shard = Shard, seqno = SeqNo0}) ->
+handle_cast({import_batch, ImportType, Alias, Batch}, St = #s{shard = Shard, is_merge_shard = IsMerge, seqno = SeqNo0}) ->
     ?tp(importer_worker_import_batch, #{shard => Shard, reply_to => Alias}),
     ok = case ImportType of
-             dirty       -> import_batch_dirty(Batch);
-             transaction -> import_batch(Batch)
+             _ when IsMerge -> import_batch_ets(Batch);
+             dirty          -> import_batch_dirty(Batch);
+             transaction    -> import_batch(Batch)
          end,
     SeqNo = SeqNo0 + length(Batch),
     mria_status:notify_replicant_import_trans(Shard, SeqNo),
@@ -123,6 +125,18 @@ terminate(_Reason, #s{shard = _Shard, seqno = _SeqNo}) ->
 %%================================================================================
 %% Transaction import
 %%================================================================================
+
+-spec import_batch_ets([mria_rlog:tx()]) -> ok.
+import_batch_ets(Batch) ->
+    lists:foreach(fun({_TID, Ops}) ->
+                          ?tp(rlog_import_ets,
+                              #{ tid => _TID
+                               , ops => Ops
+                               }),
+                          Waiting = lists:foldr(fun import_op_ets/2, [], Ops),
+                          maybe_reply_awaiting_dirty(Waiting)
+                  end,
+                  Batch).
 
 -spec import_batch_dirty([mria_rlog:tx()]) -> ok.
 import_batch_dirty(Batch) ->
@@ -236,6 +250,37 @@ import_op_dirty(Op, Acc) ->
             %% new replicants must connect only to new cores,
             %% so that both should have this new function.
             mnesia:match_delete(Tab, Pattern),
+            Acc
+    end.
+
+
+-spec import_op_ets(mria_rlog:op(), list()) -> ok.
+import_op_ets(Op, Acc) ->
+    case Op of
+        {write, ?rlog_sync, ReplyTo} ->
+            maybe_add_reply(ReplyTo, Acc);
+        {write, Tab, Rec} ->
+            ets:insert(Tab, Rec),
+            Acc;
+        {delete, Tab, Key} ->
+            ets:delete(Tab, Key),
+            Acc;
+        {delete_object, Tab, Rec} ->
+            ets:delete_object(Tab, Rec),
+            Acc;
+        {update_counter, Tab, Key, Incr} ->
+            ets:update_counter(Tab, Key, Incr),
+            Acc;
+        {clear_table, Tab} ->
+            ets:delete_all_objects(Tab),
+            Acc;
+        {clear_table, Tab, Pattern} ->
+            %% If this op is received, we assume that this node also has
+            %% `mnesia:match_delete/2.
+            %% As mria protocol has been bumped, during rolling updates
+            %% new replicants must connect only to new cores,
+            %% so that both should have this new function.
+            ets:match_delete(Tab, Pattern),
             Acc
     end.
 

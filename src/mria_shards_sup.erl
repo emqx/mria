@@ -87,7 +87,7 @@ shard_sup(Shard) ->
         Start = case {IsMerge, mria_rlog:role()} of
                     {true, _}          -> {mria_shard_merged_sup,     start_link, [Shard]};
                     {false, core}      -> {mria_shard_upstream_sup,   start_link, [Shard]};
-                    {false, replicant} -> {mria_shard_downstream_sup, start_link, [Shard, any_core]}
+                    {false, replicant} -> {mria_shard_downstream_sup, start_link, [Shard, ?any_core]}
                 end,
         {ok, #{ id       => Shard
               , start    => Start

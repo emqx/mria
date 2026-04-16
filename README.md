@@ -82,7 +82,12 @@ In a clustered setup,
 the contents of the merge table consist of records from all reachable peer nodes.
 Records from remote nodes are read-only.
 
-Note: currently only `ram_copies` storage is supported.
+### Limitations
+
+- Only `ram_copies` storage is currently supported.
+
+- Importing of data from remote nodes is always done using dirty operations.
+  `mria:transaction` and `mria:ro_transaction` interfaces do not guarantee atomicity when reading data from the remote nodes.
 
 ## Enabling RLOG in your application
 

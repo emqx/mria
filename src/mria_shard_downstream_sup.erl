@@ -22,7 +22,7 @@
 
 %% API:
 -export([ start_link/2
-        , start_importer_worker/4
+        , start_importer_worker/5
         , stop_importer_worker/1
         , start_bootstrap_client/4
         ]).
@@ -40,11 +40,11 @@
 start_link(Shard, Upstream) ->
     supervisor:start_link(?MODULE, {Shard, Upstream}).
 
--spec start_importer_worker(pid(), mria_rlog:shard(), mria_rlog_replica:upstream(), integer()) -> pid().
-start_importer_worker(SupPid, Shard, Upstream, SeqNo) ->
+-spec start_importer_worker(pid(), mria_rlog:shard(), mria_rlog_replica:upstream(), boolean(), integer()) -> pid().
+start_importer_worker(SupPid, Shard, Upstream, IsMergeShard, SeqNo) ->
     Id = importer_worker,
     Spec = #{ id          => Id
-            , start       => {mria_replica_importer_worker, start_link, [Shard, Upstream, SeqNo]}
+            , start       => {mria_replica_importer_worker, start_link, [Shard, Upstream, IsMergeShard, SeqNo]}
             , restart     => permanent
             , significant => false
             , type        => worker

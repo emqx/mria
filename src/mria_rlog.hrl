@@ -57,4 +57,8 @@
 -define(TRANSPORT_GEN_RPC, gen_rpc).
 -define(DEFAULT_SHARD_TRANSPORT, ?TRANSPORT_ERL_DISTR).
 
+-define(mria_pg_scope, mria_pg_scope).
+
+-define(any_core, any_core).
+
 -endif.
