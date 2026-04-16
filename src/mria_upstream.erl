@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2022-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2022-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ transactional_wrapper(Shard, Fun, Args) ->
     mnesia:transaction(fun() ->
                                Res = apply(Fun, Args),
                                {_TID, TxStore} = mria_mnesia:get_internals(),
+                               ensure_no_ops_outside_node_for_merged_table(TxStore, Shard),
                                ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid),
                                Res
                        end).
@@ -97,6 +98,25 @@ ensure_no_transaction() ->
     case mnesia:get_activity_id() of
         undefined -> ok;
         _         -> error(nested_transaction)
+    end.
+
+ensure_no_ops_outside_node_for_merged_table(TxStore, Shard) ->
+    case mria_schema:get_merged_table_check_spec(Shard) of
+        {ok, MatchSpec} ->
+            ExpectedCount = ets:info(TxStore, size),
+            %% TODO: this can be slow for large transactions:
+            ValidRecords = ets:select(TxStore, MatchSpec),
+            case length(ValidRecords) of
+                ExpectedCount ->
+                    %% All records are ok:
+                    ok;
+                Count ->
+                    InvalidRecords = ets:tab2list(TxStore) -- ValidRecords,
+                    mnesia:abort({merge_table_violation, {Count, ExpectedCount}, InvalidRecords})
+            end;
+        undefined ->
+            %% Not a merge shard:
+            ok
     end.
 
 ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid) ->
