@@ -50,6 +50,8 @@ start_shard(Shard) ->
             maybe
                 {ok, Child} ?= shard_sup(Shard),
                 supervisor:start_child(?SUPERVISOR, Child)
+            else
+                Err -> {error, Err}
             end
     end.
 
