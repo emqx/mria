@@ -245,12 +245,7 @@ do_detect_shard({{Tab, _Key}, _Value, _Operation}) ->
 
 -spec init() -> ok.
 init() ->
-    case mria_config:whoami() of
-        core ->
-            mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2);
-        _ ->
-            ok
-    end.
+    mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2).
 
 cleanup() ->
     case mria_config:whoami() of

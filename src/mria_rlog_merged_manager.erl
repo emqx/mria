@@ -86,10 +86,17 @@ terminate(_Reason, #s{shard = Shard}) ->
 manage_workers(S = #s{shard = Shard}) ->
     Nodes = mria:cluster_nodes(all),
     Workers = mria_rlog_replica:ls(Shard),
-    [mria_shard_merged_sup:ensure_downstream(Shard, I)
+    [?tp_span(
+        debug, mria_merged_start_downstream,
+        #{shard => Shard, upstream => I, node => node()},
+        mria_shard_merged_sup:ensure_downstream(Shard, I))
      || I <- Nodes,
         I =/= node(),
         not lists:any(fun({N, _}) -> N =:= I end, Workers)],
-    [mria_shard_merged_sup:stop_downstream(Shard, Pid)
-     || {Node, Pid} <- Workers, not lists:member(Node, Nodes)],
+    [?tp_span(
+        debug, mria_merged_stop_downstream,
+        #{shard => Shard, upstream => Node},
+        mria_shard_merged_sup:stop_downstream(Shard, Pid))
+     || {Node, Pid} <- Workers,
+        not lists:member(Node, Nodes)],
     S.
