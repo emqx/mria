@@ -264,8 +264,8 @@ iter_start(Subscriber, Table, BatchSize) ->
     InitChunk = case IsMerge of
                     true ->
                         {ok, NodePattern} = mria_schema:get_merged_table_node_pattern(Table),
-                        MS = {NodePattern, [{'==', '$1', node()}], ['$_']},
-                        ets:select(Table, [MS], BatchSize);
+                        MS = [{I, [{'==', '$1', node()}], ['$_']} || I <- NodePattern],
+                        ets:select(Table, MS, BatchSize);
                     false ->
                         mnesia_lib:db_init_chunk(Storage, Table, BatchSize)
                 end,

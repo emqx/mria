@@ -99,8 +99,8 @@ ls(Shard) ->
 -spec clean_merge_table(mria:table(), node()) -> ok.
 clean_merge_table(Table, Node) ->
     {ok, Pattern} = mria_schema:get_merged_table_node_pattern(Table),
-    MS = {Pattern, [{'==', '$1', Node}], [true]},
-    _ = ets:select_delete(Table, [MS]),
+    MS = [{I, [{'==', '$1', Node}], [true]} || I <- Pattern],
+    _ = ets:select_delete(Table, MS),
     ok.
 
 %%================================================================================

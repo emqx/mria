@@ -1745,7 +1745,7 @@ t_merge_table_metadata(_) ->
             || N <- Nodes],
            %% Node pattern is stored:
            [?assertMatch(
-               {ok, T} when is_tuple(T),
+               {ok, T} when is_list(T),
                ?ON(N, mria_schema:get_merged_table_node_pattern(Tab)))
             || N <- Nodes,
                Tab <- Tables],
@@ -1807,7 +1807,9 @@ t_merge_table_transaction(_) ->
                ?ON(N, mria:create_table(Tab2,
                                         [ {type, ordered_set}
                                         , {merge_table, true}
-                                        , {node_pattern, {Tab2, '_', '$1'}}
+                                        , {node_pattern, [ {Tab2, '_', '$1'}
+                                                         , {Tab2, '_', {'_', '$1'}}
+                                                         ]}
                                         , {rlog_shard, Shard}
                                         ])))
             || N <- Nodes],
@@ -1830,7 +1832,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:write({Tab1, {1, node()}, trans}),
                                 mnesia:write({Tab1, {2, node()}, trans}),
                                 mnesia:write({Tab2, {1, N}, node()}),
-                                mnesia:write({Tab2, {2, N}, node()})
+                                mnesia:write({Tab2, {2, N}, {hello, node()}})
                         end)))
             || N <- Nodes],
            ct:sleep(100),
@@ -1842,7 +1844,8 @@ t_merge_table_transaction(_) ->
             || N <- Nodes],
            [?defer_assert(
                ?assertEqual(
-                  [{Tab2, {I, Ni}, Ni} || I <- [1, 2], Ni <- Nodes],
+                  [{Tab2, {1, Ni}, Ni} || Ni <- Nodes] ++
+                  [{Tab2, {2, Ni}, {hello, Ni}} || Ni <- Nodes],
                   dump_table(Tab2, N),
                   #{on => N}))
             || N <- Nodes],
@@ -1853,7 +1856,7 @@ t_merge_table_transaction(_) ->
                         Shard,
                         fun() ->
                                 mnesia:delete_object({Tab1, {2, node()}, trans}),
-                                mnesia:delete_object({Tab2, {2, N}, node()})
+                                mnesia:delete_object({Tab2, {2, N}, {hello, node()}})
                         end)))
             || N <- Nodes],
            ct:sleep(100),
@@ -2032,7 +2035,9 @@ t_merge_table_bootstrap(_) ->
                ?ON(N, mria:create_table(Tab1,
                                         [ {type, ordered_set}
                                         , {merge_table, true}
-                                        , {node_pattern, {Tab1, {'_', '$1'}, '_'}}
+                                        , {node_pattern, [ {Tab1, {'_', '$1'}, '_'}
+                                                         , {Tab1, '$1', '_'}
+                                                         ]}
                                         , {rlog_shard, Shard}
                                         ])))
             || N <- Nodes],
@@ -2056,6 +2061,7 @@ t_merge_table_bootstrap(_) ->
                         Shard,
                         fun() ->
                                 mnesia:write({Tab1, {1, node()}, trans}),
+                                mnesia:write({Tab1, node(), trans}),
                                 mnesia:write({Tab2, node(), node()})
                         end)))
             || N <- [N1, N3]],
@@ -2075,6 +2081,7 @@ t_merge_table_bootstrap(_) ->
            %% Verify that data on all nodes is consistent:
            [?defer_assert(
                ?assertEqual(
+                  [{Tab1, I, trans} || I <- [N1, N3]] ++
                   [{Tab1, {1, I}, trans} || I <- [N1, N3]],
                   dump_table(Tab1, N),
                   #{on => N}))
@@ -2106,7 +2113,9 @@ t_merge_table_autoclean(_) ->
                ?ON(N, mria:create_table(Tab1,
                                         [ {type, ordered_set}
                                         , {merge_table, true}
-                                        , {node_pattern, {Tab1, '$1', '_'}}
+                                        , {node_pattern, [ {Tab1, '$1', '_'}
+                                                         , {Tab1, {'_', '$1'}, '_'}
+                                                         ]}
                                         , {rlog_shard, Shard}
                                         , {auto_clean, true}
                                         ])))
@@ -2138,23 +2147,33 @@ t_merge_table_autoclean(_) ->
             || N <- Nodes],
            [?assertMatch(
                ok,
+               ?ON(N, mria:dirty_write({Tab1, {1, node()}, hello})))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
                ?ON(N, mria:dirty_write({Tab2, node(), hello})))
             || N <- Nodes],
            ct:sleep(100),
            %% Verify data:
            [?assertEqual(
-               [{Tab, Ni, hello} || Ni <- Nodes],
-               dump_table(Tab, N),
+               [{Tab1, Ni, hello} || Ni <- Nodes] ++
+               [{Tab1, {1, Ni}, hello} || Ni <- Nodes],
+               dump_table(Tab1, N),
                #{on => N})
-            || N <- Nodes,
-               Tab <- [Tab1, Tab2]],
+            || N <- Nodes],
+           [?assertEqual(
+               [{Tab2, Ni, hello} || Ni <- Nodes],
+               dump_table(Tab2, N),
+               #{on => N})
+            || N <- Nodes],
            %% Stop two nodes:
            mria_ct:stop_slave(N2),
            mria_ct:stop_slave(N4),
            ct:sleep(100),
            %% Verify that data owned by the stopped nodes is gone:
            [?assertEqual(
-               [{Tab1, Ni, hello} || Ni <- [N1, N3]],
+               [{Tab1, Ni, hello} || Ni <- [N1, N3]] ++
+               [{Tab1, {1, Ni}, hello} || Ni <- [N1, N3]],
                dump_table(Tab1, N),
                #{on => N})
             || N <- [N1, N3]],

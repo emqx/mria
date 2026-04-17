@@ -76,6 +76,13 @@ mria:create_table(my_merged, [ {type, ordered_set}
 2. `node_pattern` property is mandatory.
    Its value must be an ets match pattern with one free variable: `'$1'`.
    Mria verifies that this value is set to `node()` for each record.
+
+   It is possible to specify multiple match clauses in a list, for example:
+   ```erlang
+   {node_pattern, [ #my_record{key = '$1', _ = '_'}
+                  , #my_record{key = {'_', '$1'}, _ = '_'}
+                  ]}
+   ```
 3. `auto_clean` is an optional property that allows a downstream node to clean all records owned by an upstream node when the latter disconnects.
 
 Unlike regular tables,
