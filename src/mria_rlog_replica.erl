@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,13 +21,15 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/2]).
+-export([start_link/3, where/2, ls/1, clean_merge_table/2]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4, format_status/1]).
 
 %% Internal exports:
 -export([do_push_tlog_entry/2, push_tlog_entry/4]).
+
+-export_type([upstream/0]).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -53,6 +55,8 @@
 -record(d,
         { shard                        :: mria_rlog:shard()
         , parent_sup                   :: pid()
+        , upstream                     :: upstream()
+        , is_merge_shard               :: boolean()
         , remote_core_node = undefined :: node() | undefined
         , agent                        :: pid() | undefined
         , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
@@ -66,12 +70,38 @@
 
 -type fsm_result() :: gen_statem:event_handler_result(state()).
 
+-type upstream() :: ?any_core  % Regular shard on replicant
+                  | node().    % Merge table
+
+-define(name(SHARD, UPSTREAM), {n, l, {?MODULE, SHARD, UPSTREAM}}).
+-define(via(SHARD, UPSTREAM), {via, gproc, ?name(SHARD, UPSTREAM)}).
+
 %%================================================================================
 %% API funcions
 %%================================================================================
 
-start_link(ParentSup, Shard) ->
-    gen_statem:start_link({local, Shard}, ?MODULE, {ParentSup, Shard}, []).
+-spec start_link(pid(), mria_rlog:shard(), upstream()) -> gen_server:start_ret().
+start_link(ParentSup, Shard, Upstream) ->
+    gen_statem:start_link(?via(Shard, Upstream), ?MODULE, {ParentSup, Shard, Upstream}, []).
+
+-spec where(mria_rlog:shard(), upstream()) -> {ok, pid()} | undefined.
+where(Shard, Upstream) ->
+    case gproc:where(?name(Shard, Upstream)) of
+        Pid when is_pid(Pid) -> {ok, Pid};
+        undefined            -> undefined
+    end.
+
+-spec ls(mria_rlog:shard()) -> [{upstream(), pid()}].
+ls(Shard) ->
+    MS = {{?name(Shard, '$1'), '$2', '_'}, [], [{{'$1', '$2'}}]},
+    gproc:select({local, names}, [MS]).
+
+-spec clean_merge_table(mria:table(), node()) -> ok.
+clean_merge_table(Table, Node) ->
+    {ok, Pattern} = mria_schema:get_merged_table_node_pattern(Table),
+    MS = [{I, [{'==', '$1', Node}], [true]} || I <- Pattern],
+    _ = ets:select_delete(Table, MS),
+    ok.
 
 %%================================================================================
 %% gen_statem callbacks
@@ -83,20 +113,23 @@ start_link(ParentSup, Shard) ->
 %% group event handlers logically.
 callback_mode() -> [handle_event_function, state_enter].
 
--spec init({pid(), mria_rlog:shard()}) -> {ok, state(), data()}.
-init({ParentSup, Shard}) ->
+-spec init({pid(), mria_rlog:shard(), upstream()}) -> {ok, state(), data()}.
+init({ParentSup, Shard, Upstream}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]
                                     , shard  => Shard
                                     }),
-    ?tp(info, "starting_rlog_shard", #{shard => Shard}),
+    {ok, IsMerge} = mria_schema:is_merge_shard(Shard),
+    ?tp(info, "starting_rlog_shard", #{shard => Shard, upstream => Upstream, merge => IsMerge}),
     ?tp(rlog_replica_start,
         #{ node => node()
          , shard => Shard
          }),
     D = #d{ shard           = Shard
           , parent_sup      = ParentSup
+          , upstream        = Upstream
+          , is_merge_shard  = IsMerge
           },
     {ok, ?disconnected, D}.
 
@@ -225,9 +258,10 @@ initiate_bootstrap(D) ->
     #d{ shard            = Shard
       , remote_core_node = Remote
       , parent_sup       = ParentSup
+      , is_merge_shard   = IsMerge
       } = D,
-    mria_status:notify_rpc_target_up(Shard, Remote),
-    _Pid = mria_replicant_shard_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
+    IsMerge orelse mria_status:notify_rpc_target_up(Shard, Remote),
+    _Pid = mria_shard_downstream_sup:start_bootstrap_client(ParentSup, Shard, Remote, self()),
     ReplayqMemOnly = application:get_env(mria, rlog_replayq_mem_only, true),
     ReplayqBaseDir = application:get_env(mria, rlog_replayq_dir, "/tmp/rlog"),
     ReplayqExtraOpts = application:get_env(mria, rlog_replayq_options, #{}),
@@ -252,12 +286,12 @@ handle_bootstrap_complete(Checkpoint, D) ->
                                    }}.
 
 -spec handle_agent_down(state(), term(), data()) -> fsm_result().
-handle_agent_down(State, Reason, D) ->
+handle_agent_down(State, Reason, D = #d{shard = Shard, is_merge_shard = IsMerge}) ->
     ?tp(notice, "Remote RLOG agent died",
         #{ reason => Reason
          , repl_state => State
          }),
-    mria_status:notify_rpc_target_down(D#d.shard),
+    IsMerge orelse mria_status:notify_rpc_target_down(Shard),
     case State of
         ?normal ->
             {next_state, ?disconnected, D#d{agent = undefined}};
@@ -295,10 +329,11 @@ async_replay(State, D0) ->
 -spec handle_importer_ack(state(), #imported{}, data()) -> fsm_result().
 handle_importer_ack( State
                    , #imported{ref = Ref}
-                   , D0 = #d{importer_ref = Ref, replayq = Q, shard = Shard}
+                   , D0 = #d{importer_ref = Ref, replayq = Q, shard = Shard, is_merge_shard = IsMerge}
                    ) when State =:= ?normal;
                           State =:= ?local_replay ->
-    mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    %% TODO: this should be reported per upstream
+    IsMerge orelse mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D = D0#d{importer_ref = false},
     case replayq:is_empty(Q) of
         true ->
@@ -316,14 +351,20 @@ handle_importer_ack(State, Ack, Data) ->
     error(internal_bootstrap_error).
 
 -spec initiate_reconnect(data()) -> fsm_result().
-initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Ref}) ->
-    mria_status:notify_shard_down(Shard),
+initiate_reconnect(#d{ shard = Shard
+                     , parent_sup = SupPid
+                     , importer_ref = Ref
+                     , is_merge_shard = IsMerge
+                     , upstream = Upstream
+                     } = D0) ->
+    IsMerge orelse mria_status:notify_shard_down(Shard),
     %% IMPORTANT: mria:sync_transaction/4,3,2 relies on the fact that
     %% importer_worker is restarted whenever something goes wrong,
     %% e.g, when an agent on a core node is down and mria_rlog_replica reconnects.
     %% If this behavior is ever changed, mria:sync_transaction/4,3,2 implementation
     %% needs to be updated accordingly (this is also covered by a test case).
-    mria_replicant_shard_sup:stop_importer_worker(SupPid),
+    mria_shard_downstream_sup:stop_importer_worker(SupPid),
+    IsMerge andalso perform_autoclean(Shard, Upstream),
     flush_importer_acks(Ref),
     D1 = close_replayq(D0),
     D = D1#d{ agent            = undefined
@@ -336,12 +377,12 @@ initiate_reconnect(D0 = #d{shard = Shard, parent_sup = SupPid, importer_ref = Re
 
 %% @private Try connecting to a core node
 -spec handle_reconnect(data()) -> fsm_result().
-handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentSup}) ->
+handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = ParentSup, upstream = Upstream}) ->
     ?tp(debug, rlog_replica_reconnect,
         #{ node => node()
          , shard => Shard
          }),
-    case try_connect(Shard, Checkpoint) of
+    case try_connect(Shard, Upstream, Checkpoint) of
         {ok, _BootstrapNeeded = true, Node, ConnPid, _TableSpecs, SeqNo} ->
             D = D0#d{ shard            = Shard
                     , parent_sup       = ParentSup
@@ -368,7 +409,7 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
             {keep_state_and_data, [{state_timeout, ReconnectTimeout, ?reconnect}]}
     end.
 
--spec try_connect(mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
+-spec try_connect(mria_rlog:shard(), upstream(), mria_rlog_server:checkpoint()) ->
                 { ok
                 , boolean()
                 , node()
@@ -377,16 +418,18 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
                 , integer()
                 }
               | {error, term()}.
-try_connect(Shard, Checkpoint) ->
+try_connect(Shard, ?any_core, Checkpoint) ->
     Timeout = 4_000, % Don't block FSM forever, allow it to process other messages.
     %% Get the best node according to the LB
     Nodes = case mria_status:replica_get_core_node(Shard, Timeout) of
                 {ok, N} -> [N];
                 timeout -> []
             end,
-    try_connect(Nodes, Shard, Checkpoint).
+    try_connect1(Nodes, Shard, Checkpoint);
+try_connect(Shard, Upstream, Checkpoint) ->
+    try_connect1([Upstream], Shard, Checkpoint).
 
--spec try_connect([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
+-spec try_connect1([node()], mria_rlog:shard(), mria_rlog_server:checkpoint()) ->
                 { ok
                 , boolean()
                 , node()
@@ -395,9 +438,9 @@ try_connect(Shard, Checkpoint) ->
                 , integer()
                 }
               | {error, term()}.
-try_connect([], _, _) ->
+try_connect1([], _, _) ->
     {error, no_core_available};
-try_connect([Node|Rest], Shard, Checkpoint) ->
+try_connect1([Node|Rest], Shard, Checkpoint) ->
     ?tp(debug, "Trying to connect to the core node",
         #{ node => Node
          }),
@@ -415,20 +458,23 @@ try_connect([Node|Rest], Shard, Checkpoint) ->
                 #{ node => Node
                  , reason => Err
                  }),
-            try_connect(Rest, Shard, Checkpoint)
+            try_connect1(Rest, Shard, Checkpoint)
     end.
 
 -spec buffer_tlog_ops(mria_rlog:tx(), data()) -> data().
-buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard}) ->
+buffer_tlog_ops(Transaction, D = #d{replayq = Q0, shard = Shard, is_merge_shard = IsMerge}) ->
     Q = replayq:append(Q0, [Transaction]),
-    mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
+    IsMerge orelse mria_status:notify_replicant_replayq_len(Shard, replayq:count(Q)),
     D#d{replayq = Q}.
 
 -spec enter_normal(data()) -> fsm_result().
-enter_normal(D = #d{shard = Shard, agent = Agent}) ->
+enter_normal(D = #d{shard = Shard, agent = Agent, is_merge_shard = IsMerge}) ->
     %% Now we can enable local reads:
-    set_where_to_read(Shard, node()),
-    mria_status:notify_shard_up(Shard, Agent),
+    IsMerge orelse
+       begin
+           set_where_to_read(Shard, node()),
+           mria_status:notify_shard_up(Shard, Agent)
+       end,
     ?tp(notice, "Shard fully up",
         #{ node => node()
          , shard => D#d.shard
@@ -444,13 +490,13 @@ handle_unknown(EventType, Event, State, Data) ->
                           }),
     keep_state_and_data.
 
-handle_state_trans(OldState, State, #d{shard = Shard}) ->
+handle_state_trans(OldState, State, #d{shard = Shard, is_merge_shard = IsMerge}) ->
     ?tp(info, state_change,
         #{ from => OldState
          , to => State
          , shard => Shard
          }),
-    mria_status:notify_replicant_state(Shard, State),
+    IsMerge orelse mria_status:notify_replicant_state(Shard, State),
     keep_state_and_data.
 
 -spec do_push_tlog_entry(pid(), mria_rlog:entry()) -> ok.
@@ -485,8 +531,8 @@ close_replayq(D = #d{replayq = RQ}) ->
 
 ensure_importer_worker(D = #d{importer_worker = Pid}) when is_pid(Pid) ->
     D;
-ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo}) ->
-    Pid = mria_replicant_shard_sup:start_importer_worker(Parent, Shard, SeqNo),
+ensure_importer_worker(D = #d{shard = Shard, parent_sup = Parent, next_batch_seqno = SeqNo, upstream = Upstream, is_merge_shard = IsMerge}) ->
+    Pid = mria_shard_downstream_sup:start_importer_worker(Parent, Shard, Upstream, IsMerge, SeqNo),
     D#d{importer_worker = Pid}.
 
 flush_importer_acks(Ref) ->
@@ -494,3 +540,9 @@ flush_importer_acks(Ref) ->
         #imported{ref = Ref} -> ok
     after 0 -> ok
     end.
+
+perform_autoclean(Shard, Upstream) ->
+    [clean_merge_table(Table, Upstream)
+     || Table <- mria_schema:tables_of_shard(Shard),
+        mria_schema:get_merged_table_auto_clean(Table)],
+    ok.

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2022-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2022-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ transactional_wrapper(Shard, Fun, Args) ->
     mnesia:transaction(fun() ->
                                Res = apply(Fun, Args),
                                {_TID, TxStore} = mria_mnesia:get_internals(),
+                               ensure_no_ops_outside_node_for_merged_table(TxStore, Shard),
                                ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid),
                                Res
                        end).
@@ -98,6 +99,32 @@ ensure_no_transaction() ->
         undefined -> ok;
         _         -> error(nested_transaction)
     end.
+
+ensure_no_ops_outside_node_for_merged_table(TxStore, _Shard) ->
+    Violations = ets:foldl(fun verify_merge_table_update/2, [], TxStore),
+    case Violations of
+        [] ->
+            ok;
+        _ ->
+            mnesia:abort({merge_table_violation, Violations})
+    end.
+
+verify_merge_table_update({{Table, _Key}, Record, Op} = Entry, Acc) when Op =:= write;
+                                                                         Op =:= delete_object ->
+    case mria_schema:get_merged_table_check_spec(Table) of
+        {ok, MatchSpec} ->
+            case ets:match_spec_run([Record], MatchSpec) of
+                [true] ->
+                    Acc;
+                _ ->
+                    [Entry | Acc]
+            end;
+        _ ->
+            Acc
+    end;
+verify_merge_table_update(_Op, Acc) ->
+    %% TODO: deletions and other operations are more tricky.
+    Acc.
 
 ensure_no_ops_outside_shard(TxStore, Shard, OldServerPid) ->
     case mria_config:strict_mode() of

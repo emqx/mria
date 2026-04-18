@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,8 +31,7 @@
 %%================================================================================
 
 start_link() ->
-    Shards = application:get_env(mria, rlog_startup_shards, []),
-    supervisor:start_link({local, ?SUPERVISOR}, ?MODULE, [Shards]).
+    supervisor:start_link({local, ?SUPERVISOR}, ?MODULE, []).
 
 -spec find_shard(mria_rlog:shard()) -> {ok, pid()} | undefined.
 find_shard(Shard) ->
@@ -48,8 +47,12 @@ start_shard(Shard) ->
             timer:sleep(100),
             start_shard(Shard);
         _Pid ->
-            Child = shard_sup(Shard),
-            supervisor:start_child(?SUPERVISOR, Child)
+            maybe
+                {ok, Child} ?= shard_sup(Shard),
+                supervisor:start_child(?SUPERVISOR, Child)
+            else
+                Err -> {error, Err}
+            end
     end.
 
 %% @doc Restart a shard
@@ -66,28 +69,32 @@ restart_shard(Shard, Reason) ->
 %% supervisor callbacks
 %%================================================================================
 
-init([Shards]) ->
+init(_) ->
     %% Shards should be restarted individually to avoid bootstrapping
     %% of too many replicants simulataneously, hence `one_for_one':
     SupFlags = #{ strategy  => one_for_one
                 , intensity => 100
                 , period    => 1
                 },
-    Children = lists:map(fun shard_sup/1, [?mria_meta_shard|Shards]),
-    {ok, {SupFlags, Children}}.
+    {ok, MetaShard} = shard_sup(?mria_meta_shard),
+    {ok, {SupFlags, [MetaShard]}}.
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
 shard_sup(Shard) ->
-    Start = case mria_rlog:role() of
-                core      -> {mria_core_shard_sup,      start_link, [Shard]};
-                replicant -> {mria_replicant_shard_sup, start_link, [Shard]}
-            end,
-    #{ id       => Shard
-     , start    => Start
-     , restart  => permanent
-     , shutdown => infinity
-     , type     => supervisor
-     }.
+    maybe
+        {ok, IsMerge} ?= mria_schema:is_merge_shard(Shard),
+        Start = case {IsMerge, mria_rlog:role()} of
+                    {true, _}          -> {mria_shard_merged_sup,     start_link, [Shard]};
+                    {false, core}      -> {mria_shard_upstream_sup,   start_link, [Shard]};
+                    {false, replicant} -> {mria_shard_downstream_sup, start_link, [Shard, ?any_core]}
+                end,
+        {ok, #{ id       => Shard
+              , start    => Start
+              , restart  => permanent
+              , shutdown => infinity
+              , type     => supervisor
+              }}
+    end.

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -147,8 +147,8 @@ start_mria(#{node := Node} = Spec) ->
     ok = rpc(Node, mria, start, []),
     maybe_join_core_cluster(Spec),
     %% Emulate start of the business apps:
-    rpc(Node, mria_transaction_gen, init, []),
-    ?tp(mria_ct_cluster_join, #{node => Node}),
+    InitGenResult = rpc(Node, mria_transaction_gen, init, []),
+    ?tp(mria_ct_cluster_join, #{node => Node, init_gen => InitGenResult}),
     Node.
 
 maybe_join_core_cluster(#{node := Node, role := core, join_to := JoinTo}) ->

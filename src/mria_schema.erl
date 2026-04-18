@@ -38,6 +38,11 @@
         , start_link/0
 
         , wait_for_tables/1
+        , is_merge_shard/1
+        , is_merge_table/1
+        , get_merged_table_node_pattern/1
+        , get_merged_table_check_spec/1
+        , get_merged_table_auto_clean/1
         ]).
 
 %% gen_server callbacks
@@ -45,6 +50,7 @@
         , handle_call/3
         , handle_cast/2
         , handle_info/2
+        , terminate/2
         ]).
 
 -include("mria_rlog.hrl").
@@ -64,9 +70,13 @@
 
 -opaque subscription() :: pid().
 
+-type node_pattern() :: [tuple(), ...].
+
 -define(SERVER, ?MODULE).
 
--export_type([entry/0, subscription/0, event/0]).
+-define(pterm, mria_schema_data).
+
+-export_type([entry/0, subscription/0, event/0, node_pattern/0]).
 
 %%================================================================================
 %% Type declarations
@@ -167,6 +177,53 @@ wait_for_tables(Tables) ->
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec is_merge_shard(mria_rlog:shard()) -> {ok, boolean()} | {aborted, _}.
+is_merge_shard(Shard) ->
+    #{merge_shards := MS} = persistent_term:get(?pterm),
+    case MS of
+        #{Shard := Val} ->
+            {ok, Val};
+        #{} ->
+            {aborted, {unknown_shard, Shard}}
+    end.
+
+-spec is_merge_table(mria:table()) -> {ok, boolean()} | undefined.
+is_merge_table(Table) ->
+    maybe
+        [Entry] ?= mnesia:dirty_read(?schema, Table),
+        {ok, entry_is_merge_table(Entry)}
+    else
+        _ -> undefined
+    end.
+
+-spec get_merged_table_node_pattern(mria:table()) -> {ok, node_pattern()} | undefined.
+get_merged_table_node_pattern(Table) ->
+    maybe
+        [Entry] ?= mnesia:dirty_read(?schema, Table),
+        {ok, Pat} ?= entry_get_node_pattern(Entry),
+        {ok, Pat}
+    else
+        _ -> undefined
+    end.
+
+-spec get_merged_table_check_spec(mria:table()) -> {ok, ets:compiled_match_spec()} | undefined.
+get_merged_table_check_spec(Table) ->
+    case persistent_term:get(?pterm) of
+        #{merge_table_check_spec := #{Table := CMS}} ->
+            {ok, CMS};
+        #{merge_table_check_spec := _} ->
+            undefined
+    end.
+
+-spec get_merged_table_auto_clean(mria:table()) -> boolean().
+get_merged_table_auto_clean(Table) ->
+    maybe
+        [#?schema{config = Conf}] ?= mnesia:dirty_read(?schema, Table),
+        proplists:get_value(auto_clean, Conf, false)
+    else
+        _ -> false
+    end.
+
 %%================================================================================
 %% gen_server callbacks
 %%================================================================================
@@ -181,7 +238,8 @@ start_link() ->
         }).
 
 init([]) ->
-    logger:set_process_metadata(#{domain => [mria, rlog, schema]}),
+    process_flag(trap_exit, true),
+    %% logger:set_process_metadata(#{domain => [mria, rlog, schema]}),
     ?tp(debug, rlog_schema_init, #{}),
     State0 = bootstrap(),
     {ok, _} = mnesia:subscribe({table, ?schema, simple}),
@@ -189,6 +247,7 @@ init([]) ->
     ?tp(info, "Converging schema", #{}),
     Specs = table_specs_of_shard('_'),
     State = converge_schema(Specs, State0),
+    update_persistent_term(State),
     {ok, State}.
 
 handle_call({subscribe_to_shard_schema_updates, Shard, Pid}, _From, State0 = #s{subscribers = Subs0}) ->
@@ -212,6 +271,8 @@ handle_cast(Cast, State) ->
     ?unexpected_event_tp(#{cast => Cast, state => State}),
     {noreply, State}.
 
+handle_info({'EXIT', _, shutdown}, State) ->
+    {stop, shutdown, State};
 handle_info({mnesia_table_event, Event}, State0) ->
     case Event of
         {write, Entry = #?schema{}, _ActivityId} ->
@@ -230,9 +291,29 @@ handle_info(Info, State) ->
     ?unexpected_event_tp(#{info => Info, state => State}),
     {noreply, State}.
 
+terminate(_Reason, _State) ->
+    persistent_term:erase(?pterm).
+
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+-spec is_merge_shard_trans(mria_rlog:shard()) -> boolean() | undefined.
+is_merge_shard_trans(?LOCAL_CONTENT_SHARD) ->
+    false;
+is_merge_shard_trans(Shard) ->
+    MS = {#?schema{shard = Shard,  _ = '_'}, [], ['$_']},
+    TablesOfShard = mnesia:select(?schema, [MS]),
+    case TablesOfShard of
+        [] ->
+            undefined;
+        _ ->
+            lists:any(
+              fun(Spec) ->
+                      entry_is_merge_table(Spec)
+              end,
+              TablesOfShard)
+    end.
 
 -spec do_create_table(mria:table(), list()) -> mria:t_result(ok).
 do_create_table(Table, TabDef) ->
@@ -256,6 +337,7 @@ add_entry(Entry) ->
               #?schema{ mnesia_table = Table
                       , shard        = Shard
                       } = Entry,
+              verify_merge_table(Entry),
               case mnesia:wread({?schema, Table}) of
                   [] ->
                       ?tp(info, "Adding table to a shard",
@@ -279,6 +361,38 @@ add_entry(Entry) ->
                       mnesia:abort(Info)
               end
       end).
+
+verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf, storage = Storage} = Entry) ->
+    case {proplists:get_value(merge_table, Conf, false),
+          entry_get_node_pattern(Entry),
+          is_merge_shard_trans(Shard)} of
+        {true, undefined, _} ->
+            mnesia:abort(#{ reason => node_pattern_required
+                          , table => Table
+                          , merge_table => true
+                          });
+        {false, {ok, NodePattern}, _} ->
+            mnesia:abort(#{ reason => unexpected_node_pattern
+                          , table => Table
+                          , node_pattern => NodePattern
+                          });
+        {true, _, _} when Storage =/= ram_copies ->
+            mnesia:abort(#{ reason => incompatible_options
+                          , table => Table
+                          , merge_table => true
+                          , storage => Storage
+                          });
+        {MergeTab, _, MergeShard} when is_boolean(MergeShard),
+                                       MergeTab =/= MergeShard ->
+            mnesia:abort(#{ reason => incompatible_shard
+                          , shard => Shard
+                          , table => Table
+                          , merge_table => MergeTab
+                          , merge_shard => MergeShard
+                          });
+        _ ->
+            ok
+    end.
 
 -spec make_entry(mria:table(), _Properties :: list()) -> {ok, entry()} | {error, map()}.
 make_entry(Table, TabDef) ->
@@ -355,7 +469,7 @@ bootstrap() ->
 
 -spec apply_schema_op(entry(), #s{}) -> #s{}.
 apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard} = Entry
-               , #s{specs = OldEntries, subscribers = Subscribers} = State
+               , #s{specs = OldEntries, subscribers = Subscribers} = State0
                ) ->
     case lists:keyfind(Table, #?schema.mnesia_table, OldEntries) of
         false -> % new entry
@@ -368,11 +482,13 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
             ok = Ret, %% TODO: print an error message under some conditions?
             Tables = tables_of_shard(Shard),
             mria_config:load_shard_config(Shard, Tables),
+            State = State0#s{specs = [Entry|OldEntries]},
+            update_persistent_term(State),
             mria_status:notify_local_table(Table),
             notify_change(Shard, Entry, Subscribers),
-            State#s{specs = [Entry|OldEntries]};
+            State;
         _CachedEntry ->
-            State
+            State0
     end.
 
 -spec notify_change(mria_rlog:shard(), entry(), subscribers()) -> ok.
@@ -384,8 +500,22 @@ notify_change(Shard, Entry, Subscribers) ->
 
 %% @doc Try to create a mnesia table according to the spec
 -spec create_table(entry()) -> ok | _.
-create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config}) ->
-    mria_lib:ensure_tab(mnesia:create_table(Table, [{Storage, [node()]} | Config])).
+create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config0}) ->
+    Config2 = case lists:keytake(merge_table, 1, Config0) of
+                  {value, {_, IsMerge}, Config1} ->
+                      [I || I <- Config1,
+                            element(1, I) =/= node_pattern,
+                            element(1, I) =/= auto_clean];
+                  false ->
+                      IsMerge = false,
+                      Config0
+              end,
+    Config3 = case IsMerge of
+                  true  -> [{local_content, true} | Config2];
+                  false -> Config2
+              end,
+    Config = [{Storage, [node()]} | Config3],
+    mria_lib:ensure_tab(mnesia:create_table(Table, Config)).
 
 %% @doc Force load a table. Note: mnesia waits for table implicitly.
 force_load(Table) ->
@@ -394,4 +524,47 @@ force_load(Table) ->
             ok;
         Other ->
             logger:error("Failed to force loading table ~p: ~p", [Table, Other])
+    end.
+
+update_persistent_term(#s{specs = Specs}) ->
+    TablesPerShard = maps:groups_from_list(
+                       fun(#?schema{shard = Shard}) -> Shard end,
+                       Specs),
+    MergeShards = maps:map(
+                    fun(_, [Entry | _]) ->
+                            entry_is_merge_table(Entry)
+                    end,
+                    TablesPerShard),
+    CheckSpecs = #{Table => create_shard_check_spec(Table, NodePattern)
+                   || Entry = #?schema{mnesia_table = Table} <- Specs,
+                      {ok, NodePattern} <- [entry_get_node_pattern(Entry)]
+                  },
+    persistent_term:put(
+      ?pterm,
+      #{ merge_shards           => MergeShards
+       , merge_table_check_spec => CheckSpecs
+       }),
+    ok.
+
+-spec create_shard_check_spec(mria:table(), node_pattern()) -> ets:compiled_match_spec().
+create_shard_check_spec(_Table, NodePattern) ->
+    MS = [{ I
+          , [{'=:=', '$1', node()}]
+          , [true]
+          }
+          || I <- NodePattern],
+    ets:match_spec_compile(MS).
+
+entry_is_merge_table(#?schema{config = Conf}) ->
+    proplists:get_value(merge_table, Conf, false).
+
+-spec entry_get_node_pattern(#?schema{}) -> {ok, node_pattern()} | undefined.
+entry_get_node_pattern(#?schema{config = Conf}) ->
+    case proplists:lookup(node_pattern, Conf) of
+        {node_pattern, Pat} when is_tuple(Pat) ->
+            {ok, [Pat]};
+        {node_pattern, [_ | _] = Pat}  ->
+            {ok, Pat};
+        none ->
+            undefined
     end.

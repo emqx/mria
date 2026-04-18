@@ -128,7 +128,8 @@ t_bootstrap(_) ->
             ?wait_async_action(
                begin
                    ok = rpc:call(Replicant, application, stop, [mria]),
-                   ok = rpc:call(Replicant, application, start, [mria])
+                   ok = rpc:call(Replicant, application, start, [mria]),
+                   ok = ?ON(Replicant, mria_rlog:wait_for_shards([test_shard], infinity))
                end,
                #{?snk_kind := "Shard fully up", node := Replicant, shard := test_shard}),
             %% Compare contents of all tables
@@ -891,7 +892,12 @@ t_core_node_down(_) ->
              %% Restart mria:
              {_, {ok, _}} =
                  ?wait_async_action(
-                    [rpc:call(I, application, start, [mria]) || I <- [N1, N2]],
+                    [?ON(I,
+                         begin
+                             application:start(mria),
+                             ok = mria_rlog:wait_for_shards([test_shard], infinity)
+                         end)
+                     || I <- [N1, N2]],
                     #{ ?snk_kind := mria_status_change
                      , status    := up
                      , tag       := core_node
@@ -939,10 +945,16 @@ t_rlog_schema(_) ->
            Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:wait_tables(Nodes),
            %% Add a few new tables to the shard
-           [?assertMatch( {[ok, ok], []}
-                        , rpc:multicall([N1, N2], mria, create_table,
-                                        [Tab, [{rlog_shard, test_shard}]])
-                        ) || Tab <- [tab1, tab2, tab3, tab4, tab6, tab7, tab8, tab9, tab10]],
+           [begin
+                ?assertMatch( {[ok, ok], []}
+                            , rpc:multicall([N1, N2], mria, create_table,
+                                            [Tab, [{rlog_shard, test_shard}]])
+                            ),
+                ?assertMatch( {[ok, ok], []}
+                            , rpc:multicall([N1, N2], mria, wait_for_tables, [[Tab]])
+                            )
+            end
+            || Tab <- [tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10]],
            ok = rpc:call(N1, mria, dirty_write, [{tab1, 1, 1}]),
            %% Check idempotency:
            ?assertMatch( {[ok, ok], []}
@@ -971,7 +983,16 @@ t_rlog_schema(_) ->
                   ?strict_causality( #{ ?snk_kind := "Adding table to a shard"
                                       , shard := _Shard
                                       , table := _Table
-                                      }
+                                      } when _Table =:= tab1;
+                                             _Table =:= tab2;
+                                             _Table =:= tab3;
+                                             _Table =:= tab4;
+                                             _Table =:= tab5;
+                                             _Table =:= tab6;
+                                             _Table =:= tab7;
+                                             _Table =:= tab8;
+                                             _Table =:= tab9;
+                                             _Table =:= tab10
                                    , #{ ?snk_kind := "Shard schema change"
                                       , shard := _Shard
                                       , new_table := _Table
@@ -1488,6 +1509,687 @@ t_emqx14135(_) ->
        end,
        []).
 
+%% This testcase verifies that all tables in the shard have the same
+%% value of `merge_table' property and that `node_pattern' must be set
+%% for merge tables.
+t_merge_table_schema(_) ->
+    Cluster = mria_ct:cluster([core, replicant],
+                              mria_mnesia_test_util:common_env()),
+    MergeShard = merge_shard,
+    NormalShard = normal_shard,
+    ?check_trace(
+       #{timetrap => 15_000},
+       try
+           [N1, N2] = Nodes = mria_ct:start_cluster(mria, Cluster),
+           %% Create normal shard:
+           ?assertMatch(
+              ok,
+              ?ON(N1, mria:create_table(normal_table1,
+                                        [ {storage, ram_copies}
+                                        , {type, ordered_set}
+                                        , {rlog_shard, NormalShard}
+                                        ]))),
+           ?assertMatch(
+              ok,
+              ?ON(N2, mria:create_table(normal_table2,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, NormalShard}
+                                        ]))),
+           %% Create merge shard:
+           ?assertMatch(
+              ok,
+              ?ON(N1, mria:create_table(merge_table1,
+                                        [ {storage, ram_copies}
+                                        , {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        , {rlog_shard, MergeShard}
+                                        ]))),
+           ?assertMatch(
+              ok,
+              ?ON(N2, mria:create_table(merge_table2,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        , {rlog_shard, MergeShard}
+                                        ]))),
+           %% Try to add a regular table to a merge shard, it should fail:
+           [?assertMatch(
+               {aborted, #{reason := incompatible_shard}},
+               ?ON(N, mria:create_table(normal_table3,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, MergeShard}
+                                        ])))
+            || N <- Nodes],
+           %% Try to add a merge table to a regular shard, it should fail:
+           [?assertMatch(
+               {aborted, #{reason := incompatible_shard}},
+               ?ON(N, mria:create_table(merge_table3,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, NormalShard}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        ])))
+            || N <- Nodes],
+           %% Try to create a merge table without `node_pattern', it should fail:
+           [?assertMatch(
+               {aborted, #{reason := node_pattern_required}},
+               ?ON(N, mria:create_table(merge_table4,
+                                        [ {storage, ram_copies}
+                                        , {type, set}
+                                        , {rlog_shard, MergeShard}
+                                        , {merge_table, true}
+                                        ])))
+           || N <- Nodes],
+           %% Currently only `ram_copies' tables can be merged:
+           [?assertMatch(
+               {aborted, #{reason := incompatible_options}},
+               ?ON(N, mria:create_table(merge_table5,
+                                        [ {storage, disc_copies}
+                                        , {type, set}
+                                        , {rlog_shard, MergeShard}
+                                        , {merge_table, true}
+                                        , {node_pattern, {'_', '$1'}}
+                                        ])))
+           || N <- Nodes],
+           %% Verify schema cache in persistent term:
+           mria_mnesia_test_util:wait_tables(
+             [ normal_table1, normal_table2
+             , merge_table1, merge_table2
+             ],
+             Nodes),
+           [?assertMatch(
+               #{merge_shards := #{ NormalShard := false
+                                  , MergeShard  := true
+                                  }},
+               ?ON(I, persistent_term:get(mria_schema_data)))
+            || I <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies that each node can only update merge table
+%% records that belong to itself
+t_merge_table_verify_op(_) ->
+    Cluster = mria_ct:cluster([core], mria_mnesia_test_util:common_env()),
+    Tab = ?FUNCTION_NAME,
+    Shard = verify_op_shard,
+    ?check_trace(
+       #{timetrap => 15_000},
+       try
+           [N] = mria_ct:start_cluster(mria, Cluster),
+           ?assertMatch(
+              ok,
+              ?ON(N, mria:create_table(Tab,
+                                       [ {type, set}
+                                       , {merge_table, true}
+                                       , {node_pattern, {Tab, {'_', '$1'}, '_'}}
+                                       , {rlog_shard, Shard}
+                                       ]))),
+           mria_mnesia_test_util:wait_tables([Tab], [N]),
+           %% Happy cases:
+           ?assertMatch(
+              {atomic, ok},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, {1, node()}, 1})
+                       end))),
+           ?assertMatch(
+              {atomic, ok},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:delete_object({Tab, {1, node()}, 2})
+                       end))),
+           ?assertMatch(
+              {atomic, ok},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, {2, node()}, 2}),
+                               mnesia:delete({Tab, {1, node()}})
+                       end))),
+           ?assertMatch(
+              ok,
+              ?ON(N, mria:dirty_write({Tab, {3, node()}, 3}))),
+           ?assertMatch(
+              ok,
+              ?ON(N, mria:dirty_delete_object({Tab, {3, node()}, 3}))),
+           %% Violations:
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, {1, 1}, 1})
+                       end))),
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:write({Tab, 1, node()})
+                       end))),
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:delete_object({Tab, {1, 1}, node()})
+                       end))),
+           ?assertMatch(
+              {aborted, {merge_table_violation, _}},
+              ?ON(N, mria:transaction(
+                       Shard,
+                       fun() ->
+                               mnesia:delete_object({Tab, 1, node()})
+                       end))),
+           %% TODO: Verify dirty operation.
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies internal metadata and processes necessary for operation of merge tables.
+%% Successful execution of this test is required for other scenarios.
+t_merge_table_metadata(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    Tab1 = tab1,
+    Tab2 = tab2,
+    Tables = [Tab1, Tab2],
+    Shard = merge_shard,
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = [_N1, _N2] = mria_ct:start_cluster(mria, Cluster),
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab1,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab1, {'_', '$1'}, '_'}}
+                                        , {rlog_shard, Shard}
+                                        , {auto_clean, true}
+                                        ])))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab2,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab2, '_', '$1'}}
+                                        , {rlog_shard, Shard}
+                                        ])),
+              #{on => N})
+            || N <- Nodes],
+           ok = mria_mnesia_test_util:wait_tables(Tables, Nodes),
+           %% Wait until nodes discover each other:
+           [?block_until(
+               #{ ?snk_kind := mria_merged_start_downstream
+                , shard := Shard
+                , ?snk_meta := #{node := N}
+                , ?snk_span := {complete, {ok, _}}
+                })
+            || N <- Nodes],
+           %% Shard is considered merged:
+           [?assertMatch(
+               {ok, true},
+               ?ON(N, mria_schema:is_merge_shard(Shard)))
+            || N <- Nodes],
+           %% Node pattern is stored:
+           [?assertMatch(
+               {ok, T} when is_list(T),
+               ?ON(N, mria_schema:get_merged_table_node_pattern(Tab)))
+            || N <- Nodes,
+               Tab <- Tables],
+           %% Node check specifications are present:
+           [?assertMatch(
+               {ok, _},
+               ?ON(N, mria_schema:get_merged_table_check_spec(Tab)),
+               #{on => N, tab => Tab})
+            || N <- Nodes,
+               Tab <- Tables],
+           %% `local_content' is automatically set to `true' for each table:
+           [?assert(
+               ?ON(N, mnesia:table_info(Tab, local_content)),
+               #{on => N, table => Tab})
+            || N <- Nodes,
+               Tab <- Tables],
+           %% `mria_rlog_server' workers are started:
+           [?assertMatch(
+               Pid when is_pid(Pid),
+               ?ON(N, whereis(Shard)),
+               #{on => N})
+            || N <- Nodes],
+           %% Downstream importers are running:
+           [?defer_assert(
+               ?assertMatch(
+                  [{_, _}],
+                  ?ON(N, mria_rlog_replica:ls(Shard)),
+                  #{on => N}))
+            || N <- Nodes],
+           %% Autoclean:
+           [?assert(?ON(N, mria_schema:get_merged_table_auto_clean(Tab1))) || N <- Nodes],
+           [?assertNot(?ON(N, mria_schema:get_merged_table_auto_clean(Tab2))) || N <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies replication of transactional writes in merge tables.
+t_merge_table_transaction(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    Tab1 = tab1,
+    Tab2 = tab2,
+    Shard = merge_shard,
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = mria_ct:start_cluster(mria, Cluster),
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab1,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab1, {'_', '$1'}, '_'}}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab2,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, [ {Tab2, '_', '$1'}
+                                                         , {Tab2, '_', {'_', '$1'}}
+                                                         ]}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], Nodes),
+           %% Wait until nodes discover each other:
+           [?block_until(
+               #{ ?snk_kind := mria_merged_start_downstream
+                , shard := Shard
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                , ?snk_span := {complete, _}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
+           %% Transactaional write:
+           [?assertMatch(
+               {atomic, ok},
+               ?ON(N, mria:transaction(
+                        Shard,
+                        fun() ->
+                                mnesia:write({Tab1, {1, node()}, trans}),
+                                mnesia:write({Tab1, {2, node()}, trans}),
+                                mnesia:write({Tab2, {1, N}, node()}),
+                                mnesia:write({Tab2, {2, N}, {hello, node()}})
+                        end)))
+            || N <- Nodes],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab1, {I, Ni}, trans} || I <- [1, 2], Ni <- Nodes],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes],
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab2, {1, Ni}, Ni} || Ni <- Nodes] ++
+                  [{Tab2, {2, Ni}, {hello, Ni}} || Ni <- Nodes],
+                  dump_table(Tab2, N),
+                  #{on => N}))
+            || N <- Nodes],
+           %% Transactional delete_object:
+           [?assertMatch(
+               {atomic, ok},
+               ?ON(N, mria:transaction(
+                        Shard,
+                        fun() ->
+                                mnesia:delete_object({Tab1, {2, node()}, trans}),
+                                mnesia:delete_object({Tab2, {2, N}, {hello, node()}})
+                        end)))
+            || N <- Nodes],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab1, {1, Ni}, trans} || Ni <- Nodes],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes],
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab2, {1, Ni}, Ni} || Ni <- Nodes],
+                  dump_table(Tab2, N),
+                  #{on => N}))
+            || N <- Nodes],
+           %% Transactional delete:
+           [?assertMatch(
+               {atomic, ok},
+               ?ON(N, mria:transaction(
+                        Shard,
+                        fun() ->
+                                mnesia:delete(Tab1, {1, node()}, write),
+                                mnesia:delete(Tab2, {1, N}, write)
+                        end)))
+            || N <- Nodes],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes],
+           [?defer_assert(
+               ?assertEqual(
+                  [],
+                  dump_table(Tab2, N),
+                  #{on => N}))
+            || N <- Nodes],
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies replication of dirty operations in merge tables.
+t_merge_table_dirty(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    Tab1 = tab1,
+    Tab2 = tab2,
+    Shard = merge_shard,
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = mria_ct:start_cluster(mria, Cluster),
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab1,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab1, {'_', '$1'}, '_'}}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab2,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab2, '_', '$1'}}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], Nodes),
+           %% Wait until nodes discover each other:
+           [?block_until(
+               #{ ?snk_kind := mria_merged_start_downstream
+                , shard := Shard
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                , ?snk_span := {complete, _}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
+           %% Dirty writes:
+           [ok = ?ON(N, mria:dirty_write({Tab1, {I, node()}, dirty}))
+            || N <- Nodes,
+               I <- [1, 2]],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab1, {I, Ni}, dirty} || I <- [1, 2], Ni <- Nodes],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes],
+           %% Dirty delete_object:
+           [ok = ?ON(N, mria:dirty_delete_object({Tab1, {1, node()}, dirty}))
+            || N <- Nodes],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab1, {2, Ni}, dirty} || Ni <- Nodes],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes],
+           %% Dirty delete:
+           [ok = ?ON(N, mria:dirty_delete(Tab1, {2, node()}))
+            || N <- Nodes],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+t_merge_table_counters(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    Tab = tab,
+    Shard = merge_shard,
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = mria_ct:start_cluster(mria, Cluster),
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab, '$1', '_'}}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           ok = mria_mnesia_test_util:wait_tables([Tab], Nodes),
+           %% Wait until nodes discover each other:
+           [?block_until(
+               #{ ?snk_kind := mria_merged_start_downstream
+                , shard := Shard
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                , ?snk_span := {complete, _}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
+           %% Each client updates the counter:
+           [?assertMatch(
+               1,
+               ?ON(N,
+                   mria:dirty_update_counter(Tab, node(), 1)))
+            || N <- Nodes],
+           ct:sleep(100),
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab, I, 1} || I <- Nodes],
+                  dump_table(Tab, N),
+                  #{on => N}))
+            || N <- Nodes]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies that nodes pull data from the peers when they reconnect to the cluster:
+t_merge_table_bootstrap(_) ->
+    Cluster = [_, S2, _, S4] = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    Tab1 = tab1,
+    Tab2 = tab2,
+    Shard = merge_shard,
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab1,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, [ {Tab1, {'_', '$1'}, '_'}
+                                                         , {Tab1, '$1', '_'}
+                                                         ]}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab2,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab2, '_', '$1'}}
+                                        , {rlog_shard, Shard}
+                                        ])))
+            || N <- Nodes],
+           ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], Nodes),
+           %% Stop one core and one replicant:
+           mria_ct:stop_slave(N2),
+           mria_ct:stop_slave(N4),
+           %% Write some data on the remaining nodes:
+           [?assertMatch(
+               {atomic, _},
+               ?ON(N, mria:transaction(
+                        Shard,
+                        fun() ->
+                                mnesia:write({Tab1, {1, node()}, trans}),
+                                mnesia:write({Tab1, node(), trans}),
+                                mnesia:write({Tab2, node(), node()})
+                        end)))
+            || N <- [N1, N3]],
+           %% Restart the nodes:
+           mria_ct:start_cluster(mria, [S2, S4]),
+           ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], [N2, N4]),
+           %% Wait until nodes discover each other:
+           [?block_until(
+               #{ ?snk_kind := mria_merged_start_downstream
+                , shard := Shard
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                , ?snk_span := {complete, _}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
+           ct:sleep(1000),
+           %% Verify that data on all nodes is consistent:
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab1, I, trans} || I <- [N1, N3]] ++
+                  [{Tab1, {1, I}, trans} || I <- [N1, N3]],
+                  dump_table(Tab1, N),
+                  #{on => N}))
+            || N <- Nodes],
+           [?defer_assert(
+               ?assertEqual(
+                  [{Tab2, I, I} || I <- [N1, N3]],
+                  dump_table(Tab2, N),
+                  #{on => N}))
+            || N <- Nodes],
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies that nodes pull data from the peers when they reconnect to the cluster:
+t_merge_table_autoclean(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    Tab1 = tab1,
+    Tab2 = tab2,
+    Shard = merge_shard,
+    ?check_trace(
+       #{timetrap => 30_000},
+       try
+           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab1,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, [ {Tab1, '$1', '_'}
+                                                         , {Tab1, {'_', '$1'}, '_'}
+                                                         ]}
+                                        , {rlog_shard, Shard}
+                                        , {auto_clean, true}
+                                        ])))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:create_table(Tab2,
+                                        [ {type, ordered_set}
+                                        , {merge_table, true}
+                                        , {node_pattern, {Tab2, '$1', '_'}}
+                                        , {rlog_shard, Shard}
+                                        , {auto_clean, false}
+                                        ])))
+            || N <- Nodes],
+           ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], Nodes),
+           %% Wait until nodes discover each other:
+           [?block_until(
+               #{ ?snk_kind := mria_merged_start_downstream
+                , shard := Shard
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                , ?snk_span := {complete, _}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
+           %% Write some data on all nodes:
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:dirty_write({Tab1, node(), hello})))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:dirty_write({Tab1, {1, node()}, hello})))
+            || N <- Nodes],
+           [?assertMatch(
+               ok,
+               ?ON(N, mria:dirty_write({Tab2, node(), hello})))
+            || N <- Nodes],
+           ct:sleep(100),
+           %% Verify data:
+           [?assertEqual(
+               [{Tab1, Ni, hello} || Ni <- Nodes] ++
+               [{Tab1, {1, Ni}, hello} || Ni <- Nodes],
+               dump_table(Tab1, N),
+               #{on => N})
+            || N <- Nodes],
+           [?assertEqual(
+               [{Tab2, Ni, hello} || Ni <- Nodes],
+               dump_table(Tab2, N),
+               #{on => N})
+            || N <- Nodes],
+           %% Stop two nodes:
+           mria_ct:stop_slave(N2),
+           mria_ct:stop_slave(N4),
+           ct:sleep(100),
+           %% Verify that data owned by the stopped nodes is gone:
+           [?assertEqual(
+               [{Tab1, Ni, hello} || Ni <- [N1, N3]] ++
+               [{Tab1, {1, Ni}, hello} || Ni <- [N1, N3]],
+               dump_table(Tab1, N),
+               #{on => N})
+            || N <- [N1, N3]],
+           %% But table without autoclean retains it:
+           [?assertEqual(
+               [{Tab2, Ni, hello} || Ni <- Nodes],
+               dump_table(Tab2, N),
+               #{on => N})
+            || N <- [N1, N3]],
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
         begin
@@ -1667,3 +2369,7 @@ common_checks() ->
     , fun mria_rlog_props:no_unexpected_events/1
     , fun mria_rlog_props:no_split_brain/1
     ].
+
+dump_table(Tab, Node) ->
+    ?ON(Node,
+        mnesia:dirty_select(Tab, [{'_', [], ['$_']}])).

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021, 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021, 2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -44,14 +44,14 @@ init(core) ->
                 , intensity => 1
                 , period => 1
                 },
-    Children = [child_sup()],
+    Children = [pg_child(), shards_sup()],
     {ok, {SupFlags, Children}};
 init(replicant) ->
     SupFlags = #{ strategy => one_for_all
                 , intensity => 1
                 , period => 1
                 },
-    Children = [core_node_lb(), child_sup()],
+    Children = [pg_child(), core_node_lb(), shards_sup()],
     {ok, {SupFlags, Children}}.
 
 %%================================================================================
@@ -66,10 +66,18 @@ core_node_lb() ->
      , type => worker
      }.
 
-child_sup() ->
+shards_sup() ->
     #{ id => mria_shards_sup
      , start => {mria_shards_sup, start_link, []}
      , restart => permanent
      , shutdown => infinity
      , type => supervisor
+     }.
+
+pg_child() ->
+    #{ id => mria_pg
+     , start => {pg, start_link, [?mria_pg_scope]}
+     , restart => permanent
+     , type => worker
+     , shutdown => 5_000
      }.

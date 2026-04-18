@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@
 
         , intercept_trans/2
         , ensure_shard/1
+        , shard_writes/1
         ]).
 
 -export_type([ shard/0
@@ -46,6 +47,7 @@
              , entry/0
              , transport/0
              , sync_reply_to/0
+             , shard_writes/0
              ]).
 
 -include("mria_rlog.hrl").
@@ -68,7 +70,8 @@
 -type op() :: {write, mria:table(), mria_mnesia:record()}
             | {delete, mria:table(), _Key}
             | {delete_object, mria:table(), mria_mnesia:record()}
-            | {clear_table, mria:table()}.
+            | {clear_table, mria:table()}
+            | {clear_table, mria:table(), ets:match_pattern()}.
 
 -type tx() :: {mria_mnesia:tid(), [op()]}.
 
@@ -81,6 +84,8 @@
 -type transport() :: ?TRANSPORT_GEN_RPC | ?TRANSPORT_ERL_DISTR.
 
 -type sync_reply_to() :: #?rlog_sync{reply_to :: reference(), shard :: shard()}.
+
+-type shard_writes() :: mnesia | local | remote.
 
 %%================================================================================
 %% API
@@ -117,6 +122,29 @@ role(Node) ->
     case mria_lib:rpc_call_nothrow(Node, ?MODULE, role, []) of
         core -> core;
         replicant -> replicant
+    end.
+
+-spec shard_writes(shard()) -> {ok, shard_writes()} | {aborted, _}.
+shard_writes(Shard) ->
+    case mria_config:whoami() of
+        mnesia ->
+            {ok, mnesia};
+        core ->
+            {ok, local};
+        replicant ->
+            case Shard of
+                ?LOCAL_CONTENT_SHARD ->
+                    {ok, local};
+                _ ->
+                    case mria_schema:is_merge_shard(Shard) of
+                        {ok, true} ->
+                            {ok, local};
+                        {ok, false} ->
+                            {ok, remote};
+                        Err ->
+                            Err
+                    end
+            end
     end.
 
 backend() ->
@@ -185,7 +213,8 @@ get_protocol_version() ->
     %% boostrapper.
     %% 1 -> 2: Add `{clear_table, Tab, Pattern}` op to support
     %% `mnesia:match_delete/2` API extension.
-    2.
+    %% 2 -> 3: Add merge tables
+    3.
 
 intercept_trans(Tid, Commit) ->
     ?tp(mria_rlog_intercept_trans, Commit#{tid => Tid}),
@@ -217,12 +246,7 @@ do_detect_shard({{Tab, _Key}, _Value, _Operation}) ->
 
 -spec init() -> ok.
 init() ->
-    case mria_config:whoami() of
-        core ->
-            mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2);
-        _ ->
-            ok
-    end.
+    mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2).
 
 cleanup() ->
     case mria_config:whoami() of

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -16,13 +16,13 @@
 
 %% Supervision tree for the shard.
 %% Runs on replicant nodes under `mria_shards_sup'
--module(mria_replicant_shard_sup).
+-module(mria_shard_downstream_sup).
 
 -behaviour(supervisor).
 
 %% API:
--export([ start_link/1
-        , start_importer_worker/3
+-export([ start_link/2
+        , start_importer_worker/5
         , stop_importer_worker/1
         , start_bootstrap_client/4
         ]).
@@ -36,15 +36,15 @@
 %% API funcions
 %%================================================================================
 
--spec start_link(mria_rlog:shard()) -> {ok, pid()}.
-start_link(Shard) ->
-    supervisor:start_link(?MODULE, Shard).
+-spec start_link(mria_rlog:shard(), mria_rlog_replica:upstream()) -> {ok, pid()}.
+start_link(Shard, Upstream) ->
+    supervisor:start_link(?MODULE, {Shard, Upstream}).
 
--spec start_importer_worker(pid(), mria_rlog:shard(), integer()) -> pid().
-start_importer_worker(SupPid, Shard, SeqNo) ->
+-spec start_importer_worker(pid(), mria_rlog:shard(), mria_rlog_replica:upstream(), boolean(), integer()) -> pid().
+start_importer_worker(SupPid, Shard, Upstream, IsMergeShard, SeqNo) ->
     Id = importer_worker,
     Spec = #{ id          => Id
-            , start       => {mria_replica_importer_worker, start_link, [Shard, SeqNo]}
+            , start       => {mria_replica_importer_worker, start_link, [Shard, Upstream, IsMergeShard, SeqNo]}
             , restart     => permanent
             , significant => false
             , type        => worker
@@ -71,14 +71,14 @@ start_bootstrap_client(SupPid, Shard, RemoteNode, ReplicaPid) ->
 %% Supervisor callbacks
 %%================================================================================
 
-init(Shard) ->
+init({Shard, Upstream}) ->
     SupFlags = #{ strategy      => one_for_all
                 , intensity     => 0
                 , period        => 1
                 , auto_shutdown => any_significant
                 },
     Children = [ #{ id          => replica
-                  , start       => {mria_rlog_replica, start_link, [self(), Shard]}
+                  , start       => {mria_rlog_replica, start_link, [self(), Shard, Upstream]}
                   , restart     => transient
                   , significant => true
                   , shutdown    => ?shutdown

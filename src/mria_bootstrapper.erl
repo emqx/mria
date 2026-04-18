@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -45,16 +45,18 @@
 %%================================================================================
 
 -define(clear_table, clear_table).
+-define(clear_table(NODE), {clear_table, NODE}).
 
 -type batch() :: { _From    :: pid()
                  , _Table   :: mria:table()
-                 , _Records :: [tuple()] | ?clear_table
+                 , _Records :: [tuple()] | ?clear_table | ?clear_table(node())
                  }.
 
 -record(iter,
-        { table   :: mria:table()
-        , storage :: atom() | {ext, _, _}
-        , state   :: _
+        { table          :: mria:table()
+        , storage        :: atom() | {ext, _, _}
+        , state          :: _
+        , is_merge_shard :: boolean()
         }).
 
 -record(server,
@@ -65,9 +67,10 @@
         }).
 
 -record(client,
-        { shard       :: mria_rlog:shard()
-        , server      :: pid()
-        , parent      :: pid()
+        { shard          :: mria_rlog:shard()
+        , server         :: pid()
+        , parent         :: pid()
+        , is_merge_shard :: boolean()
         }).
 
 %%================================================================================
@@ -123,9 +126,11 @@ init({client, Shard, RemoteNode, Parent}) ->
                                  }),
     mria_status:notify_replicant_bootstrap_start(Shard),
     {ok, Pid} = mria_rlog_server:bootstrap_me(RemoteNode, Shard),
-    {ok, #client{ parent     = Parent
-                , shard      = Shard
-                , server     = Pid
+    {ok, IsMerge} = mria_schema:is_merge_shard(Shard),
+    {ok, #client{ parent         = Parent
+                , shard          = Shard
+                , server         = Pid
+                , is_merge_shard = IsMerge
                 }}.
 
 handle_info(loop, St = #server{}) ->
@@ -144,8 +149,8 @@ handle_call({complete, Server, Checkpoint}, From, St = #client{server = Server, 
     gen_server:reply(From, ok),
     mria_status:notify_replicant_bootstrap_complete(Shard),
     {stop, normal, St};
-handle_call({batch, {Server, Table, Records}}, _From, St = #client{server = Server, shard = Shard}) ->
-    handle_batch(Server, Table, Records),
+handle_call({batch, {Server, Table, Records}}, _From, St = #client{server = Server, shard = Shard, is_merge_shard = IsMerge}) ->
+    handle_batch(IsMerge, Server, Table, Records),
     mria_status:notify_replicant_bootstrap_import(Shard),
     {reply, ok, St};
 handle_call(Call, From, St) ->
@@ -166,7 +171,8 @@ terminate(_Reason, St = #client{}) ->
 %% Internal functions
 %%================================================================================
 
--spec push_records(mria_lib:subscriber(), mria:table(), [tuple()] | ?clear_table) -> ok | {badrpc, _}.
+-spec push_records(mria_lib:subscriber(), mria:table(), Commands) -> ok | {badrpc, _}
+              when Commands :: [tuple()] | ?clear_table | ?clear_table(node()).
 push_records(Subscriber, Table, Records) ->
     push_batch(Subscriber, {self(), Table, Records}).
 
@@ -178,12 +184,18 @@ push_batch({Node, Pid}, Batch = {_, _, _}) ->
 complete({Node, Pid}, Server, Checkpoint) ->
     mria_lib:rpc_call_nothrow(Node, ?MODULE, do_complete, [Pid, Server, Checkpoint]).
 
-handle_batch(_Server, Table, ?clear_table) ->
+handle_batch(_IsMerge, _Server, Table, ?clear_table) ->
     mria_schema:ensure_local_table(Table),
     {atomic, ok} = mnesia:clear_table(Table),
     ok;
-handle_batch(_Server, Table, Records) ->
-    lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records).
+handle_batch(_IsMerge, _Server, Table, ?clear_table(Node)) ->
+    mria_schema:ensure_local_table(Table),
+    mria_rlog_replica:clean_merge_table(Table, Node),
+    ok;
+handle_batch(false, _Server, Table, Records) ->
+    lists:foreach(fun(I) -> mnesia:dirty_write(Table, I) end, Records);
+handle_batch(true, _Server, Table, Records) ->
+    ets:insert(Table, Records).
 
 server_loop(St = #server{tables = [], subscriber = Subscriber, iterator = undefined}) ->
     %% All tables and chunks have been sent:
@@ -237,13 +249,27 @@ iter_start(Subscriber, Table, BatchSize) ->
     %% Push an empty batch to the replica to make sure it created the
     %% local table before we start actual iteration and the receiving
     %% table is empty:
-    push_records(Subscriber, Table, ?clear_table),
+    {ok, IsMerge} = mria_schema:is_merge_table(Table),
+    ClearCommand = case IsMerge of
+                       true  -> ?clear_table(node());
+                       false -> ?clear_table
+                   end,
+    push_records(Subscriber, Table, ClearCommand),
     %% Start iteration over records:
     mnesia_lib:db_fixtable(Storage, Table, true),
     Iter0 = #iter{ table = Table
                  , storage = Storage
+                 , is_merge_shard = IsMerge
                  },
-    case mnesia_lib:db_init_chunk(Storage, Table, BatchSize) of
+    InitChunk = case IsMerge of
+                    true ->
+                        {ok, NodePattern} = mria_schema:get_merged_table_node_pattern(Table),
+                        MS = [{I, [{'==', '$1', node()}], ['$_']} || I <- NodePattern],
+                        ets:select(Table, MS, BatchSize);
+                    false ->
+                        mnesia_lib:db_init_chunk(Storage, Table, BatchSize)
+                end,
+    case InitChunk of
         {Matches, Cont} ->
             {Iter0#iter{state = Cont}, Matches};
         ?end_of_table ->
@@ -251,8 +277,8 @@ iter_start(Subscriber, Table, BatchSize) ->
     end.
 
 -spec iter_next(#iter{}) -> {#iter{}, [tuple()] | ?end_of_table}.
-iter_next(Iter0 = #iter{storage = Storage, state = State}) ->
-    case mnesia_lib:db_chunk(Storage, State) of
+iter_next(Iter0 = #iter{storage = Storage, state = State, is_merge_shard = IsMerge}) ->
+    case next_chunk(IsMerge, Storage, State) of
         {Matches, Cont} ->
             {Iter0#iter{state = Cont}, Matches};
         ?end_of_table ->
@@ -262,3 +288,8 @@ iter_next(Iter0 = #iter{storage = Storage, state = State}) ->
 -spec iter_end(#iter{}) -> ok.
 iter_end(#iter{table = Table, storage = Storage}) ->
     mnesia_lib:db_fixtable(Storage, Table, false).
+
+next_chunk(false, Storage, Iter) ->
+    mnesia_lib:db_chunk(Storage, Iter);
+next_chunk(true, ram_copies, Iter) ->
+    ets:select(Iter).

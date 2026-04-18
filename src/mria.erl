@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -347,34 +347,35 @@ wait_for_tables(Tables) ->
     end.
 
 -spec ro_transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
-ro_transaction(?LOCAL_CONTENT_SHARD, Fun) ->
-    maybe_middleman(mnesia, transaction, [fun ro_transaction/1, [Fun]]);
 ro_transaction(Shard, Fun) ->
-    case mria_rlog:role() of
-        core ->
-            maybe_middleman(mnesia, transaction, [fun ro_transaction/1, [Fun]]);
-        replicant ->
-            ?tp(mria_ro_transaction, #{role => replicant}),
-            case mria_status:upstream(Shard) of
-                {ok, AgentPid} ->
-                    Ret = maybe_middleman(mnesia, transaction, [fun ro_transaction/1, [Fun]]),
-                    %% Now we check that the agent pid is still the
-                    %% same, meaning the replicant node haven't gone
-                    %% through bootstrapping process while running the
-                    %% transaction and it didn't have a chance to
-                    %% observe the stale writes.
-                    case mria_status:upstream(Shard) of
-                        {ok, AgentPid} ->
-                            Ret;
-                        _ ->
-                            %% Restart transaction. If the shard is
-                            %% still disconnected, it will become an
-                            %% RPC call to a core node:
-                            ro_transaction(Shard, Fun)
-                    end;
-                disconnected ->
-                    ro_trans_rpc(Shard, Fun)
-            end
+    maybe
+        {ok, Writes} ?= mria_rlog:shard_writes(Shard),
+        case Writes of
+            remote ->
+                ?tp(mria_ro_transaction, #{role => replicant}),
+                case mria_status:upstream(Shard) of
+                    {ok, AgentPid} ->
+                        Ret = maybe_middleman(mnesia, transaction, [fun ro_transaction/1, [Fun]]),
+                        %% Now we check that the agent pid is still the
+                        %% same, meaning the replicant node haven't gone
+                        %% through bootstrapping process while running the
+                        %% transaction and it didn't have a chance to
+                        %% observe the stale writes.
+                        case mria_status:upstream(Shard) of
+                            {ok, AgentPid} ->
+                                Ret;
+                            _ ->
+                                %% Restart transaction. If the shard is
+                                %% still disconnected, it will become an
+                                %% RPC call to a core node:
+                                ro_transaction(Shard, Fun)
+                        end;
+                    disconnected ->
+                        ro_trans_rpc(Shard, Fun)
+                end;
+            _ ->
+                maybe_middleman(mnesia, transaction, [fun ro_transaction/1, [Fun]])
+        end
     end.
 
 %% @doc Synchronous transaction.
@@ -392,15 +393,16 @@ ro_transaction(Shard, Fun) ->
 -spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list(), timeout()) ->
           t_result(A) | {timeout, t_result(A)} | {timeout, {error, shard_not_ready}}.
 sync_transaction(Shard, Function, Args, ReplTimeout) ->
-    case {mria_config:whoami(), Shard} of
-        {mnesia, _} ->
-            maybe_middleman(mnesia, transaction, [Function, Args]);
-        {_, ?LOCAL_CONTENT_SHARD} ->
-            maybe_middleman(mria_upstream, transactional_wrapper, [?LOCAL_CONTENT_SHARD, Function, Args]);
-        {core, _} ->
-            maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
-        {replicant, _} ->
-            sync_replicant_trans(Shard, Function, Args, ReplTimeout)
+    maybe
+        {ok, Writes} ?= mria_rlog:shard_writes(Shard),
+        case Writes of
+            mnesia ->
+                maybe_middleman(mnesia, transaction, [Function, Args]);
+            local ->
+                maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
+            remote ->
+                sync_replicant_trans(Shard, Function, Args, ReplTimeout)
+        end
     end.
 
 -spec sync_transaction(mria_rlog:shard(), fun((...) -> A), list()) ->
@@ -415,34 +417,35 @@ sync_transaction(Shard, Fun) ->
 
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
 transaction(Shard, Function, Args) ->
-    case {mria_config:whoami(), Shard} of
-        {mnesia, _} ->
-            maybe_middleman(mnesia, transaction, [Function, Args]);
-        {_, ?LOCAL_CONTENT_SHARD} ->
-            maybe_middleman(mria_upstream, transactional_wrapper, [?LOCAL_CONTENT_SHARD, Function, Args]);
-        {core, _} ->
-            maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
-        {replicant, _} ->
-            rpc_to_core_node(Shard, mria_upstream, transactional_wrapper, [Shard, Function, Args])
+    maybe
+        {ok, Writes} ?= mria_rlog:shard_writes(Shard),
+        case Writes of
+            mnesia ->
+                maybe_middleman(mnesia, transaction, [Function, Args]);
+            local ->
+                maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
+            remote ->
+                rpc_to_core_node(Shard, mria_upstream, transactional_wrapper, [Shard, Function, Args])
+        end
     end.
 
 -spec transaction(mria_rlog:shard(), fun(() -> A)) -> t_result(A).
 transaction(Shard, Fun) ->
     transaction(Shard, Fun, []).
 
--spec async_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A | no_return().
+-spec async_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A.
 async_dirty(Shard, Fun, Args) ->
     call_backend_rw(Shard, mnesia, async_dirty, [Fun, Args]).
 
--spec async_dirty(mria_rlog:shard(), fun(() -> A)) -> A | no_return().
+-spec async_dirty(mria_rlog:shard(), fun(() -> A)) -> A.
 async_dirty(Shard, Fun) ->
     async_dirty(Shard, Fun, []).
 
--spec sync_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A | no_return().
+-spec sync_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A.
 sync_dirty(Shard, Fun, Args) ->
     call_backend_rw(Shard, mnesia, sync_dirty, [Fun, Args]).
 
--spec sync_dirty(mria_rlog:shard(), fun(() -> A)) -> A | no_return().
+-spec sync_dirty(mria_rlog:shard(), fun(() -> A)) -> A.
 sync_dirty(Shard, Fun) ->
     sync_dirty(Shard, Fun, []).
 
@@ -519,11 +522,14 @@ call_backend_rw_dirty(Function, Table, Args) ->
 
 -spec call_backend_rw(mria_rlog:shard(), module(), atom(), list()) -> term().
 call_backend_rw(Shard, Module, Function, Args) ->
-    case is_upstream(Shard) of
-        true ->
+    case mria_rlog:shard_writes(Shard) of
+        {ok, remote} ->
+            rpc_to_core_node(Shard, Module, Function, Args);
+        {ok, _} ->
+            %% Core or mnesia:
             maybe_middleman(Module, Function, Args);
-        false ->
-            rpc_to_core_node(Shard, Module, Function, Args)
+        Badshard ->
+            exit(Badshard)
     end.
 
 -spec maybe_middleman(module(), atom(), list()) -> term().
@@ -661,19 +667,6 @@ do_assert_ro_trans() ->
     case ets:match(Ets, {'_', '_', '_'}) of
         []  -> ok;
         Ops -> error({transaction_is_not_readonly, Ops})
-    end.
-
-%% @doc Return `true' if the local node is the upstream for the shard.
--spec is_upstream(mria_rlog:shard()) -> boolean().
-is_upstream(Shard) ->
-    case mria_config:whoami() of
-        replicant ->
-            case Shard of
-                ?LOCAL_CONTENT_SHARD -> true;
-                _                    -> false
-            end;
-        _ -> % core or mnesia
-            true
     end.
 
 %% Stop the application and reload the basic config from scratch.
