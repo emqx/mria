@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@
          notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
          notify_core_node_up/2, notify_core_node_down/1, replica_get_core_node/2,
          notify_core_intercept_trans/2,
+         notify_upstream_status/3, get_upstream_status/2,
+
 
          upstream/1, upstream_node/1,
          shards_status/0, shards_up/0, shards_syncing/0, shards_down/0,
@@ -353,6 +355,36 @@ waiting_shards() ->
     [Shard || ?optvar({?upstream_pid, Shard}) <- optvar:list_all(),
               not optvar:is_set({?upstream_pid, Shard})].
 
+-spec notify_upstream_status(mria_rlog:shard(), node(), down | {syncing, pid()} | {ready, pid()}) -> ok.
+notify_upstream_status(Shard, UpstreamNode, down) ->
+    del_stat(Shard, {upstream_status, UpstreamNode}),
+    ?tp(debug, mria_upstream_status,
+        #{ shard => Shard
+         , upstream => UpstreamNode
+         , status => down
+         });
+notify_upstream_status(Shard, UpstreamNode, Status) ->
+    set_stat(Shard, {upstream_status, UpstreamNode}, Status),
+    ?tp(debug, mria_upstream_status,
+        #{ shard => Shard
+         , upstream => UpstreamNode
+         , status => Status
+         }).
+
+-spec get_upstream_status(mria_rlog:shard(), node()) -> down | {syncing, pid()} | {ready, pid()}.
+get_upstream_status(Shard, UpstreamNode) ->
+    case get_stat(Shard, {upstream_status, UpstreamNode}) of
+        undefined ->
+            down;
+        {_, Pid} = Ret ->
+            case is_process_alive(Pid) of
+                true ->
+                    Ret;
+                false ->
+                    down
+            end
+    end.
+
 %%================================================================================
 %% gen_server callbacks:
 %%================================================================================
@@ -381,17 +413,22 @@ handle_cast(_, State) ->
 %% Internal functions
 %%================================================================================
 
--spec set_stat(mria_rlog:shard(), atom(), term()) -> ok.
+-spec set_stat(mria_rlog:shard(), _Stat, term()) -> ok.
 set_stat(Shard, Stat, Val) ->
     ets:insert(?stats_tab, {{Stat, Shard}, Val}),
     ok.
 
--spec get_stat(mria_rlog:shard(), atom()) -> term() | undefined.
+-spec get_stat(mria_rlog:shard(), _Stat) -> term() | undefined.
 get_stat(Shard, Stat) ->
     case ets:lookup(?stats_tab, {Stat, Shard}) of
         [{_, Val}] -> Val;
         []         -> undefined
     end.
+
+-spec del_stat(mria_rlog:shard(), _) -> ok.
+del_stat(Shard, Stat) ->
+    ets:delete(?stats_tab, {Stat, Shard}),
+    ok.
 
 -spec get_bootstrap_time(mria_rlog:shard()) -> integer() | undefined.
 get_bootstrap_time(Shard) ->

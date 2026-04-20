@@ -170,9 +170,10 @@ handle_event(EventType, Event, State, Data) ->
 code_change(_OldVsn, State, Data, _Extra) ->
     {ok, State, Data}.
 
-terminate(_Reason, _State, Data) ->
+terminate(_Reason, _State, Data = #d{shard = Shard, is_merge_shard = IsMerge, upstream = Upstream}) ->
     ?terminate_tp,
     close_replayq(Data),
+    IsMerge andalso mria_status:notify_upstream_status(Shard, Upstream, down),
     ?tp(stopping_rlog_shard, #{shard => Data#d.shard, reason => _Reason}),
     ok.
 
@@ -490,13 +491,24 @@ handle_unknown(EventType, Event, State, Data) ->
                           }),
     keep_state_and_data.
 
-handle_state_trans(OldState, State, #d{shard = Shard, is_merge_shard = IsMerge}) ->
+handle_state_trans(OldState, State, #d{shard = Shard, is_merge_shard = IsMerge, upstream = Upstream}) ->
     ?tp(info, state_change,
         #{ from => OldState
          , to => State
          , shard => Shard
          }),
-    IsMerge orelse mria_status:notify_replicant_state(Shard, State),
+    case IsMerge of
+        true ->
+            UpstreamStatus = case State of
+                                 ?disconnected -> down;
+                                 ?bootstrap -> {syncing, self()};
+                                 ?local_replay -> {syncing, self()};
+                                 ?normal -> {ready, self()}
+                             end,
+            mria_status:notify_upstream_status(Shard, Upstream, UpstreamStatus);
+        false ->
+            mria_status:notify_replicant_state(Shard, State)
+    end,
     keep_state_and_data.
 
 -spec do_push_tlog_entry(pid(), mria_rlog:entry()) -> ok.
