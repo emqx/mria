@@ -100,13 +100,20 @@ ensure_no_transaction() ->
         _         -> error(nested_transaction)
     end.
 
-ensure_no_ops_outside_node_for_merged_table(TxStore, _Shard) ->
-    Violations = ets:foldl(fun verify_merge_table_update/2, [], TxStore),
-    case Violations of
-        [] ->
+ensure_no_ops_outside_node_for_merged_table(TxStore, Shard) ->
+    case mria_schema:is_merge_shard(Shard) of
+        {ok, true} ->
+            Violations = ets:foldl(fun verify_merge_table_update/2, [], TxStore),
+            case Violations of
+                [] ->
+                    ok;
+                _ ->
+                    mnesia:abort({merge_table_violation, Violations})
+            end;
+        {ok, false} ->
             ok;
-        _ ->
-            mnesia:abort({merge_table_violation, Violations})
+        {aborted, Err} ->
+            mnesia:abort(Err)
     end.
 
 verify_merge_table_update({{Table, _Key}, Record, Op} = Entry, Acc) when Op =:= write;

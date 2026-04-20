@@ -179,11 +179,12 @@ start_link() ->
 
 -spec is_merge_shard(mria_rlog:shard()) -> {ok, boolean()} | {aborted, _}.
 is_merge_shard(Shard) ->
-    #{merge_shards := MS} = persistent_term:get(?pterm),
-    case MS of
-        #{Shard := Val} ->
-            {ok, Val};
-        #{} ->
+    maybe
+        #{merge_shards := MS} ?= persistent_term:get(?pterm, undefined),
+        #{Shard := Val} ?= MS,
+        {ok, Val}
+    else
+        _ ->
             {aborted, {unknown_shard, Shard}}
     end.
 
