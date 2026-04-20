@@ -1256,10 +1256,10 @@ t_cluster_nodes(_) ->
        []).
 
 %% This testcase verifies that nodes don't get stuck waiting for each
-%% other during a full cluster restart. To make things realistic, this
+%% other during a full cluster parallel restart. To make things realistic, this
 %% testcase creates a wait chain of tables, where creation of one
 %% table depends on waiting for another.
-t_full_cluster_restart(_) ->
+t_full_cluster_parallel_restart(_) ->
     Cluster = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30_000},
@@ -1274,8 +1274,41 @@ t_full_cluster_restart(_) ->
            %% Restart nodes simultaneously:
            ?tp(notice, test_restart_nodes, #{}),
            [ok = slave:stop(N) || N <- Nodes],
-           [mria_ct:start_slave(mria, CN) || CN <- Cluster],
+           Me = self(),
+           [spawn_link(fun() -> mria_ct:start_slave(mria, CN), Me ! {slave_up, CN},timer:sleep(60000) end) || CN <- Cluster],
+           %% Waiting for all slaves are started.
+           _ = [ ok  || CN <- Cluster, receive {slave_up, CN} -> true end],
            %% Restart the chain:
+           OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
+%% This testcase verifies that nodes don't get stuck waiting for each
+%% other during a full cluster seq restart. To make things realistic, this
+%% testcase creates a wait chain of tables, where creation of one
+%% table depends on waiting for another.
+t_full_cluster_seq_restart(_) ->
+    Cluster = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30_0000},
+       try
+           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+           OK = [{ok, ok}, {ok, ok}, {ok, ok}],
+           OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
+           %% Write some data:
+           ok = ?ON(N1, mria:dirty_write(tab1, {tab1, foo, bar})),
+           ok = ?ON(N2, mria:dirty_write(tab2, {tab2, foo, bar})),
+           ok = ?ON(N3, mria:dirty_write(tab3, {tab3, foo, bar})),
+           %% Stop nodes in order:
+           %% Add 200ms delay in between to give time for mnesia DECISION table dump
+           %% so that DOWN nodes are known when they start.
+           ?tp(notice, test_restart_nodes, #{}),
+           [ok = slave:stop(N) || N <- Nodes, ok == timer:sleep(200)],
+           %% Start node in reversed order.
+           [mria_ct:start_slave(mria, CN) || CN <- lists:reverse(Cluster)],
            OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
            ok
        after
