@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -94,21 +94,7 @@ counter(Key, NIter, Delay) ->
     ?tp(info, trans_gen_counter_update_start,
         #{ key => Key
          }),
-    {atomic, Val} =
-        mria:transaction(
-          test_shard,
-          fun() ->
-                  case mria_ct:read(test_tab, Key) of
-                      [] -> V = 0;
-                      [#test_tab{val = V}] -> V
-                  end,
-                  ok = mria_ct:write(#test_tab{key = Key, val = V + 1}),
-                  V
-          end),
-    ?tp(info, trans_gen_counter_update,
-        #{ key => Key
-         , value => Val
-         }),
+    do_incr_counter(Key, 10),
     timer:sleep(Delay),
     receive
         {'EXIT', From, Reason} ->
@@ -116,6 +102,29 @@ counter(Key, NIter, Delay) ->
     after 0 ->
             counter(Key, NIter - 1, Delay)
     end.
+
+do_incr_counter(Key, Retries) ->
+  Result = mria:transaction(
+                 test_shard,
+                 fun() ->
+                         case mria_ct:read(test_tab, Key) of
+                             [] -> V = 0;
+                             [#test_tab{val = V}] -> V
+                         end,
+                         ok = mria_ct:write(#test_tab{key = Key, val = V + 1}),
+                         V
+                 end),
+    case Result of
+        {atomic, Val} ->
+            ?tp(info, trans_gen_counter_update,
+                #{ key => Key
+                 , value => Val
+                 });
+        {aborted, {unknown_shard, _}} when Retries > 0 ->
+            timer:sleep(100),
+            do_incr_counter(Key, Retries - 1)
+    end.
+
 
 %% Test that behavior of mria_mnesia is the same when transacion aborts:
 abort(Backend, AbortKind) ->

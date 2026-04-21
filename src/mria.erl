@@ -23,7 +23,7 @@
         ]).
 
 %% Info
--export([info/0, info/1, rocksdb_backend_available/0]).
+-export([info/0, info/1, rocksdb_backend_available/0, merge_shard_upstream_status/2]).
 
 %% Cluster API
 -export([ join/1
@@ -165,6 +165,18 @@ info() ->
 -spec rocksdb_backend_available() -> boolean().
 rocksdb_backend_available() ->
     mria_config:rocksdb_backend_available().
+
+%% @doc Get sync status for a given upstream node in relation to the merge shard.
+%%
+%% Note: this API only makes sense for merge shards.
+-spec merge_shard_upstream_status(mria_rlog:shard(), node()) -> down | syncing | ready.
+merge_shard_upstream_status(Shard, Node) ->
+    case mria_status:get_upstream_status(Shard, Node) of
+        down ->
+            down;
+        {Status, _Pid} ->
+            Status
+    end.
 
 %% @doc Cluster nodes.
 -spec cluster_nodes(all | running | stopped | cores) -> [node()].

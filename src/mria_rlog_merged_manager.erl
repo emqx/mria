@@ -46,6 +46,7 @@ init([Shard]) ->
     process_flag(trap_exit, true),
     %% TODO: self is not an agent. How is this pid used?
     mria_status:notify_shard_up(Shard, self()),
+    mria_status:notify_upstream_status(Shard, node(), {ready, self()}),
     pg:join(?mria_pg_scope, #merged_pg_group{s = Shard}, [self()]),
     {Ref, _} = pg:monitor(?mria_pg_scope, #merged_pg_group{s = Shard}),
     %% Periodically poll, in addition to events:
@@ -73,6 +74,7 @@ handle_info(_Info, S) ->
 terminate(_Reason, #s{shard = Shard}) ->
     pg:leave(?mria_pg_scope, #merged_pg_group{s = Shard}, [self()]),
     mria_status:notify_shard_down(Shard),
+    mria_status:notify_upstream_status(Shard, node(), down),
     ok.
 
 %%================================================================================

@@ -1741,7 +1741,7 @@ t_merge_table_metadata(_) ->
     ?check_trace(
        #{timetrap => 30_000},
        try
-           Nodes = [_N1, _N2] = mria_ct:start_cluster(mria, Cluster),
+           Nodes = mria_ct:start_cluster(mria, Cluster),
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab1,
@@ -1765,12 +1765,15 @@ t_merge_table_metadata(_) ->
            ok = mria_mnesia_test_util:wait_tables(Tables, Nodes),
            %% Wait until nodes discover each other:
            [?block_until(
-               #{ ?snk_kind := mria_merged_start_downstream
+               #{ ?snk_kind := mria_upstream_status
                 , shard := Shard
-                , ?snk_meta := #{node := N}
-                , ?snk_span := {complete, {ok, _}}
+                , status := {ready, _}
+                , upstream := J
+                , ?snk_meta := #{node := I}
                 })
-            || N <- Nodes],
+            || I <- Nodes,
+               J <- Nodes,
+               I =/= J],
            %% Shard is considered merged:
            [?assertMatch(
                {ok, true},
@@ -1810,7 +1813,22 @@ t_merge_table_metadata(_) ->
             || N <- Nodes],
            %% Autoclean:
            [?assert(?ON(N, mria_schema:get_merged_table_auto_clean(Tab1))) || N <- Nodes],
-           [?assertNot(?ON(N, mria_schema:get_merged_table_auto_clean(Tab2))) || N <- Nodes]
+           [?assertNot(?ON(N, mria_schema:get_merged_table_auto_clean(Tab2))) || N <- Nodes],
+           %% Upstream status:
+           [?assertEqual(
+               ready,
+               ?ON(I, mria:merge_shard_upstream_status(Shard, J)))
+            || I <- Nodes,
+               J <- Nodes],
+           [?assertMatch(
+               {ready, _},
+               ?ON(I, mria_status:get_upstream_status(Shard, J)))
+            || I <- Nodes,
+               J <- Nodes],
+           [?assertEqual(
+               down,
+               ?ON(I, mria_status:get_upstream_status(Shard, 'fake@node')))
+            || I <- Nodes]
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
@@ -2087,6 +2105,12 @@ t_merge_table_bootstrap(_) ->
            %% Stop one core and one replicant:
            mria_ct:stop_slave(N2),
            mria_ct:stop_slave(N4),
+           %% Verify that upstream status for these nodes changed to down:
+           [?assertEqual(
+               down,
+               ?ON(I, mria:merge_shard_upstream_status(Shard, J)))
+            || I <- [N1, N3],
+               J <- [N2, N4]],
            %% Write some data on the remaining nodes:
            [?assertMatch(
                {atomic, _},
@@ -2125,6 +2149,12 @@ t_merge_table_bootstrap(_) ->
                   dump_table(Tab2, N),
                   #{on => N}))
             || N <- Nodes],
+           %% Verify that upstreams are now reported as ready:
+           [?assertEqual(
+               ready,
+               ?ON(I, mria:merge_shard_upstream_status(Shard, J)))
+            || I <- Nodes,
+               J <- Nodes],
            ok
        after
            ok = mria_ct:teardown_cluster(Cluster)
