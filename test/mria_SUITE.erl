@@ -1629,6 +1629,19 @@ t_merge_table_schema(_) ->
                                         , {node_pattern, {'_', '$1'}}
                                         ])))
            || N <- Nodes],
+           %% Try to create a table with invalid node pattern:
+           [?assertMatch(
+               {aborted, #{reason := invalid_node_pattern}},
+               ?ON(N, mria:create_table(merge_table6,
+                                        [ {merge_table, true}
+                                        , {node_pattern, Pattern}
+                                        , {rlog_shard, MergeShard}
+                                        ])))
+            || N <- Nodes,
+               Pattern <- [ {'_', '_'}               %% No node variable
+                          , {'_', '$1', {'_', '$1'}} %% More than one node variable
+                          , {'_', [['$1']], {{'_', {'$1'}, '_'}}}
+                          ]],
            %% Verify schema cache in persistent term:
            mria_mnesia_test_util:wait_tables(
              [ normal_table1, normal_table2
