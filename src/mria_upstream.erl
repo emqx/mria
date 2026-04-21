@@ -29,6 +29,7 @@
         , sync_dummy_wrapper/2
         , dirty_wrapper/4
         , dirty_write_sync/2
+        , verify_merge_table_record/2
         ]).
 
 -export_type([]).
@@ -90,6 +91,20 @@ dirty_wrapper(Module, Function, Table, Args) ->
             {EC, Err}
     end.
 
+-spec verify_merge_table_record(mria:table(), tuple()) -> boolean().
+verify_merge_table_record(Table, Record) ->
+    case mria_schema:get_merged_table_check_spec(Table) of
+        {ok, MatchSpec} ->
+            case ets:match_spec_run([Record], MatchSpec) of
+                [true] ->
+                    true;
+                _ ->
+                    false
+            end;
+        _ ->
+            true
+    end.
+
 %%================================================================================
 %% Internal functions
 %%================================================================================
@@ -118,16 +133,11 @@ ensure_no_ops_outside_node_for_merged_table(TxStore, Shard) ->
 
 verify_merge_table_update({{Table, _Key}, Record, Op} = Entry, Acc) when Op =:= write;
                                                                          Op =:= delete_object ->
-    case mria_schema:get_merged_table_check_spec(Table) of
-        {ok, MatchSpec} ->
-            case ets:match_spec_run([Record], MatchSpec) of
-                [true] ->
-                    Acc;
-                _ ->
-                    [Entry | Acc]
-            end;
-        _ ->
-            Acc
+    case verify_merge_table_record(Table, Record) of
+        true ->
+            Acc;
+        false ->
+            [Entry | Acc]
     end;
 verify_merge_table_update(_Op, Acc) ->
     %% TODO: deletions and other operations are more tricky.

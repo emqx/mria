@@ -488,6 +488,8 @@ dirty_write(Record) ->
 
 -spec dirty_write(mria:table(), tuple()) -> ok.
 dirty_write(Tab, Record) ->
+    mria_upstream:verify_merge_table_record(Tab, Record) orelse
+        error({bad_record_node, Tab, Record}),
     call_backend_rw_dirty(dirty_write, Tab, [Record]).
 
 -spec dirty_write_sync(tuple()) -> ok.
@@ -496,6 +498,8 @@ dirty_write_sync(Record) ->
 
 -spec dirty_write_sync(mria:table(), tuple()) -> ok.
 dirty_write_sync(Tab, Record) ->
+    mria_upstream:verify_merge_table_record(Tab, Record) orelse
+        error({bad_record_node, Tab, Record}),
     Shard = mria_config:shard_rlookup(Tab),
     call_backend_rw(Shard, mria_upstream, dirty_write_sync, [Tab, Record]).
 
@@ -517,6 +521,8 @@ dirty_delete({Tab, Key}) ->
 
 -spec dirty_delete_object(mria:table(), tuple()) -> ok.
 dirty_delete_object(Tab, Record) ->
+    mria_upstream:verify_merge_table_record(Tab, Record) orelse
+        error({bad_record_node, Tab, Record}),
     call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
 
 -spec dirty_delete_object(tuple()) -> ok.
