@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2024 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -109,7 +109,8 @@ shard_config(Shard) ->
 
 -spec backend() -> mria:backend().
 backend() ->
-    persistent_term:get(?mria(db_backend), mnesia).
+    %% Note: always `rlog' since `db_backend' is not set.
+    persistent_term:get(?mria(db_backend), rlog).
 
 -spec role() -> mria_rlog:role().
 role() ->
@@ -163,7 +164,6 @@ load_config() ->
     copy_from_env(rlog_rpc_module),
     copy_from_env(core_rpc_retries),
     copy_from_env(core_rpc_cooldown),
-    copy_from_env(db_backend),
     copy_from_env(node_role),
     copy_from_env(strict_mode),
     copy_from_env(replay_batch_size),

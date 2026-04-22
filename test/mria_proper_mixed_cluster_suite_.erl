@@ -33,7 +33,7 @@ t_import_transactions_mixed_cluster(Config0) when is_list(Config0) ->
                          timeout  => 100000
                         }} | Config0],
     ClusterConfig = [ core
-                    , {core, [{mria, db_backend, mnesia}]}
+                    , core
                     , replicant
                     ],
     ?run_prop(Config, mria_proper_utils:prop(ClusterConfig, ?MODULE)).
