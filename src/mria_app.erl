@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2019-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@
 %%================================================================================
 
 start(_Type, _Args) ->
-    ?tp(notice, "Starting mria", #{}),
+    ?tp(notice, "Starting mria", #{env => application:get_all_env(mria)}),
     mria_config:load_config(),
     mria_rlog:init(),
     ?tp(notice, "Starting mnesia", #{}),

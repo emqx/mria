@@ -22,16 +22,6 @@ This allows to improve write throughput of the cluster without sacrificing read 
 
 ![](doc/logo.jpg "Mriya logo")
 
-## Modes of operation
-
-Mria works in two modes:
-
-1. As a thin wrapper for Mnesia
-1. In a so called `RLOG` mode (Replication LOG)
-
-RLOG feature is disabled by default.
-It can be enabled by setting `mria.db_backend` application environment variable to `rlog`.
-
 ## Node roles
 
 When RLOG is enabled, each node assumes one of the two roles: `core` or `replicant`.

@@ -54,7 +54,7 @@ init([Shard]) ->
     S = #s{ shard = Shard
           , pg_ref = Ref
           },
-    {ok, S}.
+    {ok, manage_workers(S)}.
 
 handle_call(_Call, _From, S) ->
     {reply, {error, unknown_call}, S}.

@@ -1066,9 +1066,9 @@ t_mnesia_post_commit_hook(_) ->
                ok
        end).
 
-t_replicant_receives_commits_from_pure_mnesia(_) ->
+t_replicant_receives_commits_from_remote_node(_) ->
     Cluster = mria_ct:cluster( [ core
-                               , {core, [{mria, db_backend, mnesia}]}
+                               , core
                                , replicant
                                , replicant
                                ]
@@ -1078,7 +1078,6 @@ t_replicant_receives_commits_from_pure_mnesia(_) ->
        #{timetrap => 30000},
        try
            Nodes = [_N1, N2, _N3, _N4] = mria_ct:start_cluster(mria, Cluster),
-           ?assertEqual({ok, mnesia}, erpc:call(N2, application, get_env, [mria, db_backend])),
            %% generate operations in the pure mnesia node
            %% 1. transaction
            ?assertEqual(
