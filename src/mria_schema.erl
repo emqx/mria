@@ -391,6 +391,16 @@ verify_merge_table(#?schema{mnesia_table = Table, shard = Shard, config = Conf, 
                           , merge_table => MergeTab
                           , merge_shard => MergeShard
                           });
+        {true, {ok, Pattern}, true} ->
+            case check_node_pattern(Pattern) of
+                true ->
+                    ok;
+                false ->
+                    mnesia:abort(#{ reason => invalid_node_pattern
+                                  , table => Table
+                                  , node_pattern => Pattern
+                                  })
+            end;
         _ ->
             ok
     end.
@@ -569,3 +579,22 @@ entry_get_node_pattern(#?schema{config = Conf}) ->
         none ->
             undefined
     end.
+
+check_node_pattern(Patterns) ->
+    lists:all(fun is_node_pattern/1, Patterns).
+
+is_node_pattern('$1') ->
+    true;
+is_node_pattern(T) when is_tuple(T) ->
+    is_node_pattern(tuple_to_list(T));
+is_node_pattern(L) when is_list(L) ->
+    case [1 || I <- L, is_node_pattern(I)] of
+        [_] ->
+            true;
+        _ ->
+            %% Having more than one '$1' in the match pattern in not
+            %% allowed.
+            false
+    end;
+is_node_pattern(_) ->
+    false.
