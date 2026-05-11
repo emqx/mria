@@ -200,7 +200,7 @@ assert_replicant_bootstrapped(R, C, Trace) ->
 %% Verify that mria callbacks have been executed during heal
 prop_callbacks(Trace0) ->
     {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
-    {_, [HealEvent|AfterHeal]} = ?split_trace_at(#{?snk_kind := "Rebooting minority"}, Trace),
+    {_, [HealEvent|AfterHeal]} = ?split_trace_at(#{?snk_kind := "Rebooting partitions"}, Trace),
     #{nodes := Minority} = HealEvent,
     %% Check that all minority nodes have been restarted:
     [?assert(

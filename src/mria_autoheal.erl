@@ -25,12 +25,14 @@
 -record(autoheal, {delay, role, proc, timer}).
 
 -type autoheal() :: #autoheal{}.
+-type cluster_view() :: {node(), [node()], [node()]}.
 
 -export_type([autoheal/0]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
 
 -define(DEFAULT_DELAY, 15000).
+-define(CLUSTER_RPC_TIMEOUT, 5000).
 -define(LOG(Level, Format, Args),
         logger:Level("Mria(Autoheal): " ++ Format, Args)).
 
@@ -77,24 +79,12 @@ handle_msg({report_partition, Node}, Autoheal = #autoheal{delay = Delay, timer =
 handle_msg(Msg = {create_splitview, Node}, Autoheal = #autoheal{delay = Delay, timer = TRef})
   when Node =:= node() ->
     ensure_cancel_timer(TRef),
-    case is_majority_alive() of
+    Nodes = mria_mnesia:db_nodes(),
+    ClusterViews = collect_cluster_views(Nodes),
+    HasMajority = length(ClusterViews) > length(Nodes) div 2,
+    case HasMajority of
         true ->
-            Nodes = mria_mnesia:db_nodes(),
-            RPCResult = erpc:multicall(Nodes, mria_mnesia, running_nodes, []),
-            SplitView = lists:foldl(fun({N, Result}, Acc) ->
-                                            case Result of
-                                                {ok, Peers} ->
-                                                    Acc #{N => Peers};
-                                                _ ->
-                                                    %% Ignore unreachable nodes:
-                                                    Acc
-                                            end
-                                    end,
-                                    #{},
-                                    lists:zip(Nodes, RPCResult)),
-            Cliques = lists:sort(fun compare_cliques/2,
-                                 mria_lib:find_clusters(SplitView)),
-            mria_node_monitor:cast(coordinator(Cliques), {heal_partition, Cliques}),
+            apply_heal_plan(ClusterViews),
             Autoheal#autoheal{timer = undefined};
         false ->
             Autoheal#autoheal{timer = mria_node_monitor:run_after(Delay, {autoheal, Msg})}
@@ -118,38 +108,107 @@ handle_msg({heal_partition, Cliques}, Autoheal= #autoheal{proc = _Proc}) ->
 
 handle_msg({'EXIT', Pid, normal}, Autoheal = #autoheal{proc = Pid}) ->
     Autoheal#autoheal{proc = undefined};
-handle_msg({'EXIT', Pid, Reason}, Autoheal = #autoheal{proc = Pid}) ->
-    ?LOG(critical, "Autoheal process crashed: ~s", [Reason]),
+handle_msg({'EXIT', Pid, Reason}, Autoheal = #autoheal{delay = Delay, proc = Pid}) ->
+    ?LOG(critical, "Autoheal process crashed: ~p", [Reason]),
+    mria_node_monitor:run_after(Delay, confirm_partition),
     Autoheal#autoheal{proc = undefined};
 
 handle_msg(Msg, Autoheal) ->
     ?LOG(critical, "Unexpected msg: ~p", [Msg, Autoheal]),
     Autoheal.
 
-compare_cliques(Running1, Running2) ->
-    Len1 = length(Running1), Len2 = length(Running2),
-    if
-        Len1 > Len2  -> true;
-        Len1 == Len2 -> lists:member(node(), Running1);
-        true -> false
+-spec collect_cluster_views([node()]) -> [cluster_view()].
+collect_cluster_views(Nodes) ->
+    RPCResult = erpc:multicall(Nodes, mria_mnesia, cluster_view, [], ?CLUSTER_RPC_TIMEOUT),
+    [ {Node, Running, Stopped}
+      %% Ignore unreachable nodes:
+      || {Node, {ok, {Running, Stopped}}} <- lists:zip(Nodes, RPCResult)].
+
+-spec apply_heal_plan([cluster_view()]) -> ok.
+apply_heal_plan(ClusterViews) ->
+    {Survivors, Victims, SplitView} = find_split_view(ClusterViews),
+    Coordinator = case Survivors of
+        [_ | _] -> coordinator(Survivors);
+        []      -> node()
+    end,
+    case SplitView of
+        [] -> ok;
+        _  -> ?tp(info, mria_autoheal_plan, #{ survivors   => Survivors
+                                             , victims     => Victims
+                                             , split_view  => SplitView
+                                             , coordinator => Coordinator
+                                             })
+    end,
+    case Victims of
+        [_ | _] ->
+            mria_node_monitor:cast(Coordinator,
+                                   {heal_partition, [Survivors, Victims]});
+        false ->
+            ok
     end.
 
--spec coordinator([[node()]]) -> node().
-coordinator([Majority | _]) ->
-    mria_membership:coordinator(Majority).
+find_split_view(ClusterViews) ->
+    ClusterViewsSorted = lists:sort(fun compare_cluster_view/2, ClusterViews),
+    SplitView = compute_split_view(ClusterViewsSorted),
+    {Survivors, Partitioned} = compute_heal_plan(SplitView),
+    Victims = [N || N <- Partitioned, lists:keymember(N, 1, ClusterViews)],
+    {Survivors, Victims, SplitView}.
+
+compare_cluster_view({_N1, Running1, _Partitioned1}, {_N2, Running2, _Partitioned2}) ->
+    Len1 = length(Running1), Len2 = length(Running2),
+    if
+        %% Prefer partitions with higher number of surviving nodes.
+        Len1 > Len2 -> true;
+        Len1 < Len2 -> false;
+        %% If number of nodes is the same, sort by list of running nodes.
+        true -> Running1 < Running2
+    end.
+
+compute_split_view([{_Node, _Running, []} | Views]) ->
+    %% Node observes no partitions, ignore.
+    compute_split_view(Views);
+compute_split_view([{Node, Running, Partitioned} | Views]) ->
+    %% Node observes some nodes as partitioned from it.
+    %% These nodes need to be rebooted, and as such they should not be part of the split view.
+    ViewsPartitioned = [PV || PV = {PN, _, _} <- Views, lists:member(PN, Partitioned)],
+    ViewsRest = Views -- ViewsPartitioned,
+    %% Taints are nodes connected to the partitioned nodes that should also be rebooted:
+    %% these nodes could have replicated writes from partitioned nodes that were not seen by
+    %% other nodes.
+    Taints = lists:append([PRunning || {_, PRunning, _} <- ViewsPartitioned]),
+    ViewTainted = {Node, Running -- Taints, lists:usort(Partitioned ++ Taints)},
+    [ViewTainted | compute_split_view(ViewsRest)];
+compute_split_view([]) ->
+    [].
+
+compute_heal_plan(SplitView) ->
+    %% If we have more than one parition in split view, we need to reboot _all_ of the nodes
+    %% in each view's partition (i.e. ⋃(Partitioned)). Then we need to find candidates to do
+    %% it, as ⋃(Running) ∖ ⋃(Partitioned).
+    {_Nodes, Rs, Ps} = lists:unzip3(SplitView),
+    URunning = ordsets:union([ordsets:from_list(R) || R <- Rs]),
+    UPartitioned = ordsets:union([ordsets:from_list(P) || P <- Ps]),
+    {ordsets:subtract(URunning, UPartitioned), UPartitioned}.
+
+-spec coordinator([node()]) -> node().
+coordinator(Candidates) ->
+    case lists:member(node(), Candidates) of
+        true -> node();
+        false -> mria_membership:coordinator(Candidates)
+    end.
 
 -spec heal_partition([[node()]]) -> ok.
 heal_partition([[_Majority]]) ->
     %% There are no partitions:
     ok;
 heal_partition([Majority|Minorities]) ->
-    Result = reboot_minority(lists:append(Minorities)),
+    Result = reboot_partitioned(lists:append(Minorities)),
     mria_lib:exec_callback(heal_partition, {Majority, Minorities}),
     Result.
 
-reboot_minority(Minority) ->
-    ?tp(info, "Rebooting minority", #{nodes => Minority}),
-    lists:foreach(fun rejoin/1, Minority).
+reboot_partitioned(Nodes) ->
+    ?tp(info, "Rebooting partitions", #{nodes => Nodes}),
+    lists:foreach(fun rejoin/1, Nodes).
 
 rejoin(Node) ->
     Ret = rpc:call(Node, mria, join, [node(), heal]),
@@ -163,7 +222,67 @@ ensure_cancel_timer(undefined) ->
 ensure_cancel_timer(TRef) ->
     catch erlang:cancel_timer(TRef).
 
-is_majority_alive() ->
-    All = mria_mnesia:cluster_nodes(all),
-    NotAliveLen = length(All -- [node() | nodes()]),
-    NotAliveLen < (length(All) div 2).
+%%================================================================================
+%% Unit tests
+%%================================================================================
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+split_view_no_partition_test_() ->
+    ?_assertMatch({_, [], []},
+                  find_split_view([ {1, [1, 2, 3], []}
+                                  , {2, [1, 2, 3], []}
+                                  , {3, [1, 2, 3], []}
+                                  ])).
+
+split_view_symmetric_partition_test_() ->
+    [ ?_assertMatch({[2, 3], [1], _},
+                    find_split_view([ {1, [1, 2, 3], []}
+                                    , {2, [2, 3], [1]}
+                                    , {3, [2, 3], [1]}
+                                    ]))
+    , ?_assertMatch({[1, 2], [3, 4], _},
+                    find_split_view([ {1, [1, 2], [3, 4]}
+                                    , {2, [1, 2], [3, 4]}
+                                    , {3, [3, 4], [1, 2]}
+                                    , {4, [3, 4], [1, 2]}
+                                    ]))
+    , ?_assertMatch({[1, 2, 3], [4, 5, 6], _},
+                    find_split_view([ {1, [1, 2, 3], [4, 5, 6]}
+                                    , {2, [1, 2, 3], [4, 5, 6]}
+                                    , {3, [1, 2, 3], [4, 5, 6]}
+                                    , {4, [4, 5], [1, 2, 3, 6]}
+                                    , {5, [4, 5], [1, 2, 3, 6]}
+                                    , {6, [4, 5, 6], [1, 2, 3]}
+                                    ]))
+    ].
+
+split_view_full_split_test_() ->
+    ?_assertMatch({[1], [2, 3, 4], _},
+                  find_split_view([ {1, [1], [2, 3, 4]}
+                                  , {2, [2], [1, 3, 4]}
+                                  , {3, [3], [1, 2, 4]}
+                                  , {4, [4], [1, 2, 3]}
+                                  ])).
+
+split_view_overlapping_partition_test_() ->
+    [ ?_assertMatch({[], [1, 2, 3, 4], _},
+                    find_split_view([ {1, [1, 4], [2, 3]}
+                                    , {2, [2, 3], [1, 4]}
+                                    , {3, [2, 3, 4], [1]}
+                                    , {4, [1, 3, 4], [2]}]))
+    , ?_assertMatch({[3], [1, 2, 4], _},
+                    find_split_view([ {1, [1, 2, 3, 4], []}
+                                    , {2, [1, 2, 3, 4], []}
+                                    , {3, [1, 2, 3], [4]}
+                                    , {4, [1, 2, 4], [3]}]))
+    ].
+
+split_view_unreachable_node_test_() ->
+    ?_assertMatch({_, [], _},
+                  find_split_view([ {1, [1, 2, 3, 4], [5]}
+                                  , {2, [1, 2, 3, 4], [5]}
+                                  , {3, [1, 2, 3, 4], [5]}
+                                  , {4, [1, 2, 3, 4], [5]}])).
+
+-endif.
