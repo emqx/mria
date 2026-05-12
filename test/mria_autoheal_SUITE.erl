@@ -118,10 +118,10 @@ t_autoheal_overlapping_paritions(Config) when is_list(Config) ->
        end,
        [ fun ?MODULE:prop_callbacks/1
        , fun([N1, N2, N3, N4], Trace) ->
-             %% Partitioned node N4 tainted N1 and N2, all of them should be restarted:
-             ?assertMatch( [#{survivors := [N3], victims := [N1, N2, N4]}]
+             %% Both N3 and N4 are potentially inconsistent and should be restarted:
+             ?assertMatch( [#{survivors := [N1, N2], victims := [N3, N4]}]
                          , ?of_kind(mria_autoheal_plan, Trace)),
-             ?assertMatch( [#{nodes := [N1, N2, N4]}]
+             ?assertMatch( [#{nodes := [N3, N4]}]
                          , ?of_kind("Rebooting partitions", Trace))
          end
        ]).

@@ -44,6 +44,7 @@
         , unwrap_exception/1
 
         , find_clusters/1
+        , find_cliques/1
         ]).
 
 -export_type([ subscriber/0
@@ -156,6 +157,19 @@ rpc_cast(Destination, Module, Function, Args) ->
 -spec find_clusters(cluster_view()) -> [[node()]].
 find_clusters(ClusterView) ->
     find_clusters(maps:keys(ClusterView), ClusterView, []).
+
+%% Enumerate cliques in the graph.
+%% Graph is undirected, edge is considered to exist if 2 vertices have each other in
+%% adjacency lists.
+-spec find_cliques(#{V => [V]}) -> [[V]].
+find_cliques(G0) ->
+    G = maps:map(fun(V, _) -> mutuals(V, G0) end, G0),
+    Vs = ordsets:from_list(maps:keys(G)),
+    DegreeOrder = lists:sort(
+        fun(V1, V2) -> length(maps:get(V1, G)) >= length(maps:get(V2, G)) end,
+        Vs
+    ),
+    bron_kerbosch(G, DegreeOrder, _R = [], Vs, _X = [], []).
 
 %%================================================================================
 %% Misc functions
@@ -283,12 +297,50 @@ find_clusters([Node|Rest], NodeInfo, Acc) ->
     Cluster = lists:usort([Node|MutualConnections]),
     find_clusters(Rest -- MutualConnections, NodeInfo, [Cluster|Acc]).
 
+%% Returns set of vertices in `G' mutually connected to `V'.
+mutuals(V, G) ->
+    Ns = ordsets:from_list(maps:get(V, G) -- [V]),
+    ordsets:filter(fun(Vn) -> lists:member(V, maps:get(Vn, G)) end, Ns).
+
+%% Enumerates cliques in the given graph recursively.
+%% Refer to Bron-Kerbosh algorithm for details.
+bron_kerbosch(_G, _Order, R, [], [], Acc) ->
+    [R | Acc];
+bron_kerbosch(G, Order, R0, P0, X0, Acc0) ->
+    {value, VPivot} = lists:search(
+        fun(V) -> ordsets:is_element(V, P0) orelse ordsets:is_element(V, X0) end,
+        Order
+    ),
+    Vs = ordsets:subtract(P0, maps:get(VPivot, G)), 
+    {_, _, Acc} = lists:foldl(
+        fun(V, {P1, X1, Acc1}) ->
+            Nv = maps:get(V, G),
+            Acc = bron_kerbosch( G
+                               , Order
+                               , ordsets:union(R0, [V])
+                               , ordsets:intersection(P1, Nv)
+                               , ordsets:intersection(X1, Nv)
+                               , Acc1),
+            P = ordsets:subtract(P1, [V]),
+            X = ordsets:union(X1, [V]),
+            {P, X, Acc}
+        end,
+        {P0, X0, Acc0},
+        Vs
+    ),
+    Acc.
+
 %%================================================================================
 %% Unit tests
 %%================================================================================
 
 -ifdef(TEST).
+
 -include_lib("eunit/include/eunit.hrl").
+-undef(LET).
+
+-include_lib("proper/include/proper_common.hrl").
+-include_lib("snabbkaffe/include/test_macros.hrl").
 
 find_clusters_test_() ->
     [ ?_assertMatch( [[1, 2, 3]]
@@ -313,4 +365,56 @@ find_clusters_test_() ->
                                                }))
                    )
     ].
+
+find_cliques_test_() ->
+    [ 
+      ?_assertMatch( [[1, 2, 3]]
+                   , lists:sort(find_cliques(#{ 1 => [1, 2, 3]
+                                              , 2 => [2, 1, 3]
+                                              , 3 => [2, 3, 1]
+                                              }))
+                   )
+    , ?_assertMatch( [[1], [2, 3]]
+                   , lists:sort(find_cliques(#{ 1 => [1, 2, 3]
+                                              , 2 => [2, 3]
+                                              , 3 => [3, 2]
+                                              }))
+                   )
+    , ?_assertMatch( [[1, 2, 3], [4, 5], [6]]
+                   , lists:sort(find_cliques(#{ 1 => [1, 2, 3]
+                                              , 2 => [1, 2, 3]
+                                              , 3 => [3, 2, 1]
+                                              , 4 => [4, 5]
+                                              , 5 => [4, 5]
+                                              , 6 => [6, 4, 5]
+                                              }))
+                   )
+    %% Overlapping cliques:
+    , ?_assertMatch( [[1, 2, 3], [1, 2, 4]]
+                   , lists:sort(find_cliques(#{ 1 => [1, 2, 3, 4]
+                                              , 2 => [1, 2, 3, 4]
+                                              , 3 => [1, 2, 3]
+                                              , 4 => [1, 2, 4]
+                                              }))
+                   )
+    , ?_assertMatch( [[1, 4], [2, 3], [3, 4]]
+                   , lists:sort(find_cliques(#{1 => [1, 4]
+                                             , 2 => [2, 3]
+                                             , 3 => [2, 3, 4]
+                                             , 4 => [1, 3, 4]
+                                             }))
+                   )
+    ].
+
+prop_test_() ->
+    Config = [{proper, #{numtests => 100, max_size => 300, timeout => 30000}}],
+    {timeout, 30, ?_test(?run_prop(Config, ?FORALL(G, t_graph(), is_list(find_cliques(G)))))}.
+
+t_graph() ->
+    ?LET(N, proper_types:non_neg_integer(),
+        ?LET(L, [ {I, ?LET(Vs, proper_types:list(proper_types:range(1, N)), lists:usort(Vs))}
+                  || I <- lists:seq(1, N)
+                ],
+            maps:from_list(L))).
+
 -endif. %% TEST
