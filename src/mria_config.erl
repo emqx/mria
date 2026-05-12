@@ -73,6 +73,7 @@
 -type callback() :: start
                   | stop
                   | {start | stop, mria_rlog:shard()}
+                  | heal_partition
                   | core_node_discovery
                   | lb_custom_info
                   | lb_custom_info_check.

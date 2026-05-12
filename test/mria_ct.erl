@@ -80,6 +80,7 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
             , env    => [ {mria, core_nodes, CoreNodes}
                         , {mria, node_role, Role}
                         , {mria, rlog_replica_reconnect_interval, 100} % For faster response times
+                        , {mria, {callback, heal_partition}, fun heal_callback/1}
                         , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
                         , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
                         | Env]
@@ -272,6 +273,12 @@ get_txid() ->
         {_, TID, _} ->
             TID
     end.
+
+heal_callback({Majority, Minority}) ->
+    ?tp(mria_ct_heal_partition,
+        #{ majority => Majority
+         , minority => Minority
+         }).
 
 -if(?OTP_RELEASE >= 25).
 start_dist() ->

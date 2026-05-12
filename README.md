@@ -171,5 +171,6 @@ They can be registered using `mria:register_callback/2` function.
 
 - `stop`: This callback is executed when the DB stops or restarts.
 - `start`: This callback is executed when the DB starts or restarts.
+- `heal_partition`: This callback is executed after mria heals a network partition by rebooting the losing nodes
 
 Note that the DB restarts when the node joins the cluster.
