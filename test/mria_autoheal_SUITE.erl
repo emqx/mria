@@ -38,6 +38,7 @@ t_autoheal(Config) when is_list(Config) ->
            ?assertMatch({[N3], [N1, N2, N4]}, view(N3)),
            ?assertMatch({[N4], [N1, N2, N3]}, view(N4)),
            %% Wait for autoheal, it should happen automatically:
+           ?block_until(#{?snk_kind := mria_ct_heal_partition}),
            ?retry(1000, 20,
                   begin
                       ?assertMatch({Nodes, []}, view(N1)),
@@ -209,7 +210,7 @@ prop_callbacks(Trace0) ->
                          ))
      || N <- Minority],
     %% Check that ONLY the minority nodes have been restarted:
-    Restarted = lists:usort([Node || #{?snk_kind := mria_exec_callback, ?snk_meta := #{node := Node}} <- AfterHeal]),
+    Restarted = lists:usort([Node || #{?snk_kind := mria_exec_callback, type := stop, ?snk_meta := #{node := Node}} <- AfterHeal]),
     ?assertEqual(lists:sort(Minority),
                  Restarted),
     true.
