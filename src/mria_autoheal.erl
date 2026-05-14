@@ -146,35 +146,61 @@ apply_heal_plan(ClusterViews) ->
             ok
     end.
 
-find_split_view(ClusterViews) ->
-    Cluster = maps:from_list([{N, Connected} || {N, Connected, _} <- ClusterViews]),
-    Cliques = mria_lib:find_cliques(Cluster),
-    compute_split_view(Cliques).
+%% Purpose of this function is to find the largest set of nodes to survive the
+%% partition heal. As these nodes will seed all restarting nodes, they should
+%% contain consistent set of Mria data, i.e. they should have replicated the
+%% same set of transactions.
+%% 
+%% These survivor nodes are chosen according to reachability matrix:
+%% 1. Each node starts with a bit vector containing only itself.
+%% 2. For every reported running node `RN' by node `N', RN's reachability
+%%    vector is updated. This means each final vector represents the set of
+%%    nodes that reported the corresponding node as running (reachable).
+%% 3. The largest set of nodes that agrees on their reachability vectors is
+%%    chosen as survivors. All other sets of nodes are considered victims.
+%%
+%% If there are several equally large such sets, the one that compares lower is
+%% preferred, according to Erlang term order.
+%%
+%% Set of survivors nodes is returned in the head of resulting list, while tail
+%% contains sets of victim nodes, potentially separated into disagreeing
+%% partitions.
+-spec find_split_view([{node(), _Running :: [node()], _Partitioned :: [node()]}]) ->
+    [_Survivors :: [node()] | _Victims :: [[node()]]].
+find_split_view(ClusterViews = [_ | _]) ->
+    Cluster = lists:sort([N || {N, _, _} <- ClusterViews]),
+    Vectors0 = maps:from_list(lists:zipwith(
+        fun(N, Idx) -> {N, 1 bsl Idx} end,
+        Cluster,
+        lists:seq(0, length(Cluster) - 1)
+    )),
+    Vectors = lists:foldl(
+        fun({N, Running, _Stopped}, Vectors1) ->
+            Flag = maps:get(N, Vectors0),
+            lists:foldl(
+                fun(RN, Vectors) ->
+                    case maps:is_key(RN, Vectors) of
+                        true  -> maps:update_with(RN, fun(V) -> V bor Flag end, Vectors);
+                        false -> Vectors
+                    end
+                end,
+                Vectors1,
+                Running)
+        end,
+        Vectors0,
+        ClusterViews),
+    Components = maps:values(
+        maps:groups_from_list( fun({_, V}) -> V end
+                             , fun({N, _}) -> N end
+                             , maps:to_list(Vectors))),
+    lists:sort( fun compare_components/2
+              , [lists:sort(C) || C <- Components]);
+find_split_view([]) ->
+    [].
 
-compute_split_view([]) ->
-    [];
-compute_split_view(Cliques0) ->
-    %% Find if there are overlaps involving largest clique.
-    %% If there is, split the overlap and repeat.
-    Cliques1 = [C0 | Rest] = lists:sort(fun compare_clique/2, Cliques0),
-    case isolate_overlaps(C0, Rest, []) of
-        no_overlaps -> Cliques1;
-        Cliques     -> compute_split_view(Cliques)
-    end.
-
-isolate_overlaps(C0, [C1 | Cs], Acc) ->
-    case ordsets:intersection(C0, C1) of
-        [] -> isolate_overlaps(C0, Cs, [C1 | Acc]);
-        CX ->
-            %% If C0 overlaps C1, replace them with [C0 ∩ C1, C0 \ C1, C1 \ C0].
-            CD0 = ordsets:subtract(C0, C1),
-            CD1 = ordsets:subtract(C1, C0),
-            [CX] ++ [CD0 || CD0 =/= []] ++ [CD1 || CD1 =/= []] ++ Acc ++ Cs
-    end;
-isolate_overlaps(_C0, [], _Acc) ->
-    no_overlaps.
-
-compare_clique(C0, C1) ->
+%% Compares connected components by size of set of universals.
+%% Orders component with larger set of universals before smaller.
+compare_components(C0, C1) ->
     case length(C0) - length(C1) of
         0 -> C0 =< C1;
         N -> N > 0
@@ -217,7 +243,14 @@ ensure_cancel_timer(TRef) ->
 %%================================================================================
 
 -ifdef(TEST).
+
+-include_lib("proper/include/proper_common.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("snabbkaffe/include/test_macros.hrl").
+
+split_view_empty_test_() ->
+    ?_assertMatch([], find_split_view([])).
+
 split_view_no_partition_test_() ->
     ?_assertMatch([[1, 2, 3]],
                   find_split_view([ {1, [1, 2, 3], []}
@@ -227,7 +260,7 @@ split_view_no_partition_test_() ->
 
 split_view_symmetric_partition_test_() ->
     [ ?_assertMatch([[2, 3], [1]],
-                    find_split_view([ {1, [1, 2, 3], []}
+                    find_split_view([ {1, [1], [2, 3]}
                                     , {2, [2, 3], [1]}
                                     , {3, [2, 3], [1]}
                                     ]))
@@ -261,6 +294,11 @@ split_view_overlapping_partition_test_() ->
                                     , {2, [2, 3], [1, 4]}
                                     , {3, [2, 3, 4], [1]}
                                     , {4, [1, 3, 4], [2]}]))
+    , ?_assertMatch([[1], [2], [3], [4]],
+                    find_split_view([ {1, [4, 1, 2], [3]}
+                                    , {2, [1, 2, 3], [4]}
+                                    , {3, [2, 3, 4], [1]}
+                                    , {4, [3, 4, 1], [2]}]))
     , ?_assertMatch([[1, 2, 3], [4], [5]],
                     find_split_view([ {1, [1, 2, 3, 4, 5], []}
                                     , {2, [1, 2, 3, 4, 5], []}
@@ -274,6 +312,95 @@ split_view_overlapping_partition_test_() ->
                                     , {4, [3, 4, 5, 6], [1, 2]}
                                     , {5, [3, 4, 5], [1, 2, 6]}
                                     , {6, [3, 4, 6], [1, 2, 5]}]))
+
+    , ?_assertMatch([[1], [2], [3], [4], [5]],
+                    find_split_view([ {1, [1, 2, 3, 4, 5], []}
+                                    , {2, [1, 2, 3, 4], [5]}
+                                    , {3, [1, 2, 3, 5], [4]}
+                                    , {4, [1, 2, 4, 5], [3]}
+                                    , {5, [1, 3, 4, 5], [2]}]))
     ].
+
+split_view_asymm_partition_test_() ->
+    ?_assertMatch([[1, 2], [3], [4]],
+                  find_split_view([ {1, [1, 2, 4], [3]}
+                                  , {2, [1, 2, 4], [3]}
+                                  , {3, [3, 4], [1, 2]}
+                                  , {4, [1, 2, 4], [3]}
+                                  ])).
+
+split_view_single_component_overlapping_test_() ->
+    [ ?_assertMatch([[1, 2, 3], [6, 7], [4], [5]],
+                    find_split_view([ {1, [1, 2, 3, 4, 5], [6, 7]}
+                                    , {2, [1, 2, 3, 4, 5], [6, 7]}
+                                    , {3, [1, 2, 3, 4, 5], [6, 7]}
+                                    , {4, [1, 2, 3, 4, 6, 7], [5]}
+                                    , {5, [1, 2, 3, 5, 6, 7], [4]}
+                                    , {6, [4, 5, 6, 7], [1, 2, 3]}
+                                    , {7, [4, 5, 6, 7], [1, 2, 3]}]))
+    , ?_assertMatch([[2, 3], [4, 5], [1], [6]],
+                    find_split_view([ {1, [1, 6, 2, 3], [4, 5]}
+                                    , {2, [2, 1, 3], [4, 5, 6]}
+                                    , {3, [3, 1, 2], [4, 5, 6]}
+                                    , {4, [4, 5, 6], [1, 2, 3]}
+                                    , {5, [5, 4, 6], [1, 2, 3]}
+                                    , {6, [6, 1, 4, 5], [2, 3]}
+                                    ]))
+    ].
+
+prop_split_view_complete_test_() ->
+    Config = [{proper, #{numtests => 100, max_size => 300, timeout => 15000}}],
+    {timeout, 20, ?_test(?run_prop(Config,
+        ?FORALL(ClusterViews, t_cluster_views(),
+            case find_split_view(ClusterViews) of
+                [] -> true;
+                [Survivors | Rest] ->
+                    ClusterNodes = lists:sort([Node || {Node, _, _} <- ClusterViews]),
+                    Victims = lists:append(Rest),
+                    {conjunction, [
+                        {survivors_victims_disjoint,
+                            proper:equals(Survivors, Survivors -- Victims)},
+                        {no_missed_nodes,
+                            proper:equals(lists:sort(Survivors), ClusterNodes -- Victims)}
+                    ]}
+            end)))}.
+
+prop_split_view_nonempty_survivors_test_() ->
+    Config = [{proper, #{numtests => 100, max_size => 300, timeout => 15000}}],
+    {timeout, 20, ?_test(?run_prop(Config,
+        ?FORALL(ClusterViews, t_nonempty_cluster_views(),
+            case find_split_view(ClusterViews) of
+                [] -> false;
+                [Survivors | _] -> Survivors =/= []
+            end)))}.
+
+t_nonempty_cluster_views() ->
+    ?SUCHTHAT(X, t_cluster_views(), X =/= []).
+
+t_cluster_views() ->
+    ?LET(NNodes, ?SIZED(S, S),
+    ?LET(NPartitions, proper_types:oneof([0, 0, 0, 0, 1, 2, 3, 4]),
+    ?LET(LBoundaries, [proper_types:range(1, NNodes) || _ <- lists:seq(1, NPartitions)],
+    ?LET(NBrokenLinks, proper_types:non_neg_integer(),
+    ?LET(LBrokenLinks, [ {proper_types:range(1, NNodes), proper_types:range(1, NNodes)}
+                         || _ <- lists:seq(1, NBrokenLinks)],
+        begin
+            Cluster = lists:seq(1, NNodes),
+            Boundaries = lists:usort([1, NNodes + 1 | LBoundaries]),
+            Partitions = lists:zipwith( fun(N1, N2) -> lists:seq(N1, N2 - 1) end
+                                      , Boundaries
+                                      , tl(Boundaries)
+                                      , trim),
+            BrokenLinks = sets:from_list(LBrokenLinks, [{version, 2}]),
+            IsBrokenLink = fun
+                (N1, N1) -> false;
+                (N1, N2) -> sets:is_element({N1, N2}, BrokenLinks) orelse
+                            sets:is_element({N2, N1}, BrokenLinks)
+            end,
+            lists:append([ [ {Node, [N || N <- Nodes, not IsBrokenLink(N, Node)],
+                                    [N || N <- Nodes, IsBrokenLink(N, Node)] ++ (Cluster -- Nodes)}
+                             || Node <- Nodes]
+                           || Nodes <- Partitions])
+        end))))).
 
 -endif.
