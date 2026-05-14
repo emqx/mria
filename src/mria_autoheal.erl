@@ -207,11 +207,8 @@ compare_components(C0, C1) ->
     end.
 
 -spec coordinator([node()]) -> node().
-coordinator(Candidates) ->
-    case lists:member(node(), Candidates) of
-        true -> node();
-        false -> mria_membership:coordinator(Candidates)
-    end.
+coordinator(Survivors) ->
+    mria_membership:coordinator(Survivors).
 
 -spec heal_partition([[node()]]) -> ok.
 heal_partition([[_Majority]]) ->
