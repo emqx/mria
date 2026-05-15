@@ -88,6 +88,84 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
        end,
        [fun ?MODULE:prop_callbacks/1]).
 
+t_autoheal_overlapping_parition(Config) when is_list(Config) ->
+    Cluster = mria_ct:cluster([core, core, core, core],
+                              [{mria, cluster_autoheal, 200}],
+                              [{beam_args, "-kernel prevent_overlapping_partitions false"}]),
+    ?check_trace(
+       #{timetrap => 25000},
+       try
+           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           %% Simulate netsplit:
+           true = rpc:cast(N4, erlang, disconnect_node, [N3]),
+           ok = timer:sleep(1000),
+           %% Nodes report overlapping partitions:
+           ?assertMatch({[N1, N2, N3, N4], []}, view(N1)),
+           ?assertMatch({[N1, N2, N3, N4], []}, view(N2)),
+           ?assertMatch({[N1, N2, N3], [N4]}, view(N3)),
+           ?assertMatch({[N1, N2, N4], [N3]}, view(N4)),
+           %% Wait for autoheal, it should happen automatically:
+           ?retry(1000, 20,
+                  begin
+                      ?assertMatch({Nodes, []}, view(N1)),
+                      ?assertMatch({Nodes, []}, view(N2)),
+                      ?assertMatch({Nodes, []}, view(N3)),
+                      ?assertMatch({Nodes, []}, view(N4))
+                  end),
+           Nodes
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun ?MODULE:prop_callbacks/1
+       , fun([N1, N2, N3, N4], Trace) ->
+             %% Both N3 and N4 are potentially inconsistent and should be restarted:
+             ?assertMatch( [#{survivors := [N1, N2], victims := [N3, N4]}]
+                         , ?of_kind(mria_autoheal_plan, Trace)),
+             ?assertMatch( [#{nodes := [N3, N4]}]
+                         , ?of_kind("Rebooting partitions", Trace))
+         end
+       ]).
+
+t_autoheal_complex_overlapping_paritions(Config) when is_list(Config) ->
+    Cluster = mria_ct:cluster([core, core, core, core],
+                              [{mria, cluster_autoheal, 200}],
+                              [{beam_args, "-kernel prevent_overlapping_partitions false"}]),
+    ?check_trace(
+       #{timetrap => 25000},
+       try
+           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+           %% Simulate netsplit:
+           true = rpc:cast(N1, erlang, disconnect_node, [N2]),
+           true = rpc:cast(N1, erlang, disconnect_node, [N3]),
+           true = rpc:cast(N2, erlang, disconnect_node, [N4]),
+           ok = timer:sleep(1000),
+           %% Nodes report overlapping partitions:
+           ?assertMatch({[N1, N4], [N2, N3]}, view(N1)),
+           ?assertMatch({[N2, N3], [N1, N4]}, view(N2)),
+           ?assertMatch({[N2, N3, N4], [N1]}, view(N3)),
+           ?assertMatch({[N1, N3, N4], [N2]}, view(N4)),
+           %% Wait for autoheal, it should happen automatically:
+           ?retry(1000, 20,
+                  begin
+                      ?assertMatch({Nodes, []}, view(N1)),
+                      ?assertMatch({Nodes, []}, view(N2)),
+                      ?assertMatch({Nodes, []}, view(N3)),
+                      ?assertMatch({Nodes, []}, view(N4))
+                  end),
+           Nodes
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun ?MODULE:prop_callbacks/1
+       , fun([N1, N2, N3, N4], Trace) ->
+             %% All but one node are potentially inconsistent and should be restarted:
+             ?assertMatch( [#{survivors := [N1], victims := [N2, N3, N4]}]
+                         , ?of_kind(mria_autoheal_plan, Trace)),
+             ?assertMatch( [#{nodes := [N2, N3, N4]}]
+                         , ?of_kind("Rebooting partitions", Trace))
+         end
+       ]).
+
 t_autoheal_majority_reachable(Config) when is_list(Config) ->
     Cluster = mria_ct:cluster([core, core, core, core, core], [{mria, cluster_autoheal, 200}]),
     ?check_trace(
@@ -200,7 +278,7 @@ assert_replicant_bootstrapped(R, C, Trace) ->
 %% Verify that mria callbacks have been executed during heal
 prop_callbacks(Trace0) ->
     {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
-    {_, [HealEvent|AfterHeal]} = ?split_trace_at(#{?snk_kind := "Rebooting minority"}, Trace),
+    {_, [HealEvent|AfterHeal]} = ?split_trace_at(#{?snk_kind := "Rebooting partitions"}, Trace),
     #{nodes := Minority} = HealEvent,
     %% Check that all minority nodes have been restarted:
     [?assert(

@@ -87,6 +87,7 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
             , number => Number
             , role   => Role
             , code_paths => CodePaths
+            , beam_args => proplists:get_value(beam_args, ClusterOpts, "")
             , cover => Cover
             }
      || #{role := Role, name := Name, env := Env, code_paths := CodePaths, num := Number, cover := Cover} <- Specs].
@@ -103,10 +104,11 @@ start_cluster(mria_async, Specs) ->
     spawn(fun() -> [start_mria(I) || I <- Specs] end),
     Ret.
 
-start_slave(node, #{name := Name, env := Env, code_paths := CodePaths, cover := Cover}) ->
+start_slave(node, #{name := Name, env := Env, code_paths := CodePaths, cover := Cover} = Spec) ->
     CommonBeamOpts = "+S 1:1 " % We want VMs to only occupy a single core
         "-kernel inet_dist_listen_min 3000 " % Avoid collisions with gen_rpc ports
-        "-kernel inet_dist_listen_max 3050 ",
+        "-kernel inet_dist_listen_max 3050 "
+        ++ maps:get(beam_args, Spec, "") ++ " ",
     Node = do_start_slave(Name, CommonBeamOpts),
     Self = filename:dirname(code:which(?MODULE)),
     [rpc:call(Node, code, add_patha, [Path]) || Path <- [Self|CodePaths]],
