@@ -1,4 +1,5 @@
 -ifndef(MRIA_HRL).
+-define(MRIA_HRL, true).
 
 -type(cluster() :: atom()).
 
