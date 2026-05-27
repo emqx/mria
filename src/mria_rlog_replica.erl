@@ -205,10 +205,11 @@ push_tlog_entry(?TRANSPORT_GEN_RPC, Shard, {Node, Pid}, TLOGEntry) ->
     ok.
 
 create_tabs() ->
-    ets:new(?replica_events_tab, [named_table, public, ordered_set]).
+    ets:new(?replica_events_tab, [named_table, public, ordered_set]),
+    ok.
 
 -spec subscribe_status_events(mria_rlog:shard(), pid()) -> ok.
-subscribe_status_events(Shard, Pid) ->
+subscribe_status_events(Shard, Pid) when is_pid(Pid) ->
     ets:insert(?replica_events_tab, {{Shard, Pid}}),
     ok.
 

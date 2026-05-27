@@ -2337,7 +2337,7 @@ t_replica_state_events(_) ->
                     ok = mria:wait_for_tables([Table])
                 end)
                || I <- [C1, R1]],
-           %% This should created series of events:
+           %% This should create series of events:
            ct:sleep(100),
            ?assertEqual(
               [ #mria_replica_status_update{shard = t_replica_state_events, status = disconnected}
