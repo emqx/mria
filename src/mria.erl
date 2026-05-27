@@ -31,6 +31,7 @@
         , leave/0
         , force_leave/1
 
+        , is_peer_alive/1
         , running_nodes/0
         , cluster_nodes/1
         , cluster_status/1
@@ -211,6 +212,22 @@ cluster_status(Node) ->
 -spec is_node_in_cluster(node()) -> boolean().
 is_node_in_cluster(Node) ->
     lists:member(Node, cluster_nodes(all)).
+
+%% @doc Check (synchronously) if any of the alive peers considers a peer node alive.
+%%
+%% WARNING:
+%%
+%% 1. This is a heavy operation involving RPC
+%% 2. It may report false positives when called immediately after `nodedown' event:
+%%    other nodes may react to `nodedown' with a delay.
+%%
+%% Because of 2, it may be necessary to retry this operation.
+-spec is_peer_alive(node()) -> {ok, boolean()} | {aborted, _}.
+is_peer_alive(Node) ->
+    maybe
+        {atomic, Result} = transaction(?mria_meta_shard, fun is_peer_alive_trans/1, [Node]),
+        {ok, Result}
+    end.
 
 %% @doc Running nodes.
 %% This function should be used with care, as it may not return the most up-to-date
@@ -811,4 +828,27 @@ rem_time(Timeout, T0, T1) ->
     if is_integer(Timeout) andalso is_integer(T0) andalso is_integer(T1) ->
             max(0, Timeout - (T1 - T0));
        true -> infinity
+    end.
+
+-spec is_peer_alive_trans(node()) -> boolean().
+is_peer_alive_trans(Node) ->
+    PeerCores = mria_mnesia:running_nodes(),
+    %% Is it a core?
+    case lists:member(Node, PeerCores) of
+        true ->
+            true;
+        false ->
+            %% Could be a replicant?
+            Responses = erpc:multicall(PeerCores, mria_membership, running_replicant_nodelist, [], 5_000),
+            lists:any(
+              fun(Resp) ->
+                      case Resp of
+                          {ok, Replicants} ->
+                              lists:member(Node, Replicants);
+                          _ ->
+                              %% RPC error, default to `true'.
+                              true
+                      end
+              end,
+              Responses)
     end.

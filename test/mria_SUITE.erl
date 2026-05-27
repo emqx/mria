@@ -2146,7 +2146,7 @@ t_merge_table_bootstrap(_) ->
                 , ?snk_span := {complete, _}
                 })
             || I <- Nodes, J <- Nodes, I =/= J],
-           ct:sleep(1000),
+           ct:sleep(5000),
            %% Verify that data on all nodes is consistent:
            [?defer_assert(
                ?assertEqual(
@@ -2264,6 +2264,53 @@ t_merge_table_autoclean(_) ->
        end,
        []).
 
+t_is_peer_alive(_) ->
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:stabilize(1000),
+           %% All peers should be alive initially
+           [?assertEqual(
+               {ok, true},
+               rpc:call(I, mria, is_peer_alive, [J]),
+               #{on => J, target => I})
+            || I <- Nodes,
+               J <- Nodes],
+           %% Non-existent node should be reported as not alive
+           [?assertEqual(
+               {ok, false},
+               rpc:call(I, mria, is_peer_alive, ['nonexistent@127.0.0.1']),
+               #{on => I})
+            || I <- Nodes],
+           %% Restart nodes one by one and verify that peers report state correctly
+           [begin
+                ok = ?tp_span(notice, test_stopping_node, #{node => I},
+                              slave:stop(I)),
+                ct:sleep(1000),
+                [?assertEqual(
+                    {ok, false},
+                    rpc:call(J, mria, is_peer_alive, [I]),
+                    #{on => J, target => I})
+                 || J <- Nodes,
+                    I =/= J],
+                %% Restart:
+                I = ?tp_span(notice, test_restarting_node, #{node => I},
+                             mria_ct:start_slave(mria, Spec)),
+                ct:sleep(1000),
+                %% Verify that the node is reported as up again:
+                [?assertEqual(
+                    {ok, true},
+                    rpc:call(J, mria, is_peer_alive, [I]),
+                    #{on => J, target => I})
+                 || J <- Nodes]
+            end
+            || {I, Spec} <- lists:zip(Nodes, Cluster)]
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
 
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
