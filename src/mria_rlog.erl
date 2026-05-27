@@ -246,7 +246,8 @@ do_detect_shard({{Tab, _Key}, _Value, _Operation}) ->
 
 -spec init() -> ok.
 init() ->
-    mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2).
+    mnesia_hook:register_hook(post_commit, fun ?MODULE:intercept_trans/2),
+    mria_rlog_replica:create_tabs().
 
 cleanup() ->
     case mria_config:whoami() of

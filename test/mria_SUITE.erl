@@ -2312,6 +2312,67 @@ t_is_peer_alive(_) ->
        end,
        []).
 
+t_replica_state_events(_) ->
+    Shard = Table = ?FUNCTION_NAME,
+    Cluster = [S1, _S2] = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           %% Prepare:
+           Self = self(),
+           [C1, R1] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:stabilize(1000),
+           %% Verify that core cannot subscribe to replica events:
+           ?assertEqual(
+              {error, invalid_role},
+              ?ON(C1, mria:subscribe_replica_events(Shard, Self))),
+           %% Subscribe to events for a new shard:
+           ?assertEqual(
+              ok,
+              ?ON(R1, mria:subscribe_replica_events(Shard, Self))),
+           %% Create a table in new shard:
+           [?ON(I,
+                begin
+                    ok = mria:create_table(Table, [{rlog_shard, Shard}]),
+                    ok = mria:wait_for_tables([Table])
+                end)
+               || I <- [C1, R1]],
+           %% This should created series of events:
+           ct:sleep(100),
+           ?assertEqual(
+              [ #mria_replica_status_update{shard = t_replica_state_events, status = disconnected}
+              , #mria_replica_status_update{shard = t_replica_state_events, status = bootstrap}
+              , #mria_replica_status_update{shard = t_replica_state_events, status = local_replay}
+              , #mria_replica_status_update{shard = t_replica_state_events, status = normal}
+              ],
+              mria_ct:mailbox()),
+           %% Shut down core node, replicant should react:
+           slave:stop(C1),
+           ct:sleep(1000),
+           ?assertEqual(
+              [ #mria_replica_status_update{shard = t_replica_state_events, status = disconnected}
+              ],
+              mria_ct:mailbox()),
+           %% Restart core:
+           C1 = mria_ct:start_slave(mria, S1),
+           ok = ?ON(C1, mria:create_table(Table, [{rlog_shard, Shard}])),
+           ok = ?ON(C1, mria:wait_for_tables([Table])),
+           ct:sleep(5_000),
+           ?assertEqual(
+              [ #mria_replica_status_update{shard = t_replica_state_events, status = bootstrap}
+              , #mria_replica_status_update{shard = t_replica_state_events, status = local_replay}
+              , #mria_replica_status_update{shard = t_replica_state_events, status = normal}
+              ],
+              mria_ct:mailbox()),
+           ?assertEqual(
+              ok,
+              ?ON(R1, mria:unsubscribe_replica_events(Shard, Self))),
+           ok
+       after
+           ok = mria_ct:teardown_cluster(Cluster)
+       end,
+       []).
+
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
         begin

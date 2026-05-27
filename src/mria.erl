@@ -79,6 +79,11 @@
         , wait_for_tables/1
         ]).
 
+%% Misc. API:
+-export([ subscribe_replica_events/2
+        , unsubscribe_replica_events/2
+        ]).
+
 -type info_key() :: members | running_nodes | stopped_nodes | partitions | rlog.
 
 -type infos() :: #{members          := list(member()),
@@ -545,6 +550,29 @@ dirty_delete_object(Tab, Record) ->
 -spec dirty_delete_object(tuple()) -> ok.
 dirty_delete_object(Record) ->
     dirty_delete_object(element(1, Record), Record).
+
+%% @doc Subscribe a process to replica events for a given shard.
+%%
+%% These events are only emitted on replicant nodes,
+%% when the local replica changes the state.
+%%
+%% Events are delivered as `#mria_replica_status_update' records.
+%%
+%% WARNING: this is an unstable API.
+%% It may be broken without notice.
+-spec subscribe_replica_events(mria_rlog:shard(), pid()) -> ok | {error, _}.
+subscribe_replica_events(Shard, Pid) ->
+    case mria_rlog:role() of
+        replicant ->
+            mria_rlog_replica:subscribe_status_events(Shard, Pid);
+        _Role ->
+            {error, invalid_role}
+    end.
+
+%% @doc Unsubscribe pid from replica status change events.
+-spec unsubscribe_replica_events(mria_rlog:shard(), pid()) -> ok.
+unsubscribe_replica_events(Shard, Pid) ->
+    mria_rlog_replica:unsubscribe_status_events(Shard, Pid).
 
 %%================================================================================
 %% Internal functions

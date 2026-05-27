@@ -28,9 +28,11 @@
 
 %% Internal exports:
 -export([do_push_tlog_entry/2, push_tlog_entry/4]).
+-export([create_tabs/0, subscribe_status_events/2, unsubscribe_status_events/2]).
 
--export_type([upstream/0]).
+-export_type([upstream/0, state/0]).
 
+-include_lib("mria.hrl").
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 
@@ -75,6 +77,8 @@
 
 -define(name(SHARD, UPSTREAM), {n, l, {?MODULE, SHARD, UPSTREAM}}).
 -define(via(SHARD, UPSTREAM), {via, gproc, ?name(SHARD, UPSTREAM)}).
+
+-define(replica_events_tab, mria_replica_events_tab).
 
 %%================================================================================
 %% API funcions
@@ -198,6 +202,19 @@ push_tlog_entry(?TRANSPORT_ERL_DISTR, _Shard, {_Node, Pid}, TLOGEntry) ->
     ok;
 push_tlog_entry(?TRANSPORT_GEN_RPC, Shard, {Node, Pid}, TLOGEntry) ->
     gen_rpc:ordered_cast({Node, Shard}, ?MODULE, do_push_tlog_entry, [Pid, TLOGEntry]),
+    ok.
+
+create_tabs() ->
+    ets:new(?replica_events_tab, [named_table, public, ordered_set]).
+
+-spec subscribe_status_events(mria_rlog:shard(), pid()) -> ok.
+subscribe_status_events(Shard, Pid) ->
+    ets:insert(?replica_events_tab, {{Shard, Pid}}),
+    ok.
+
+-spec unsubscribe_status_events(mria_rlog:shard(), pid()) -> ok.
+unsubscribe_status_events(Shard, Pid) ->
+    ets:delete(?replica_events_tab, {Shard, Pid}),
     ok.
 
 %%================================================================================
@@ -509,6 +526,7 @@ handle_state_trans(OldState, State, #d{shard = Shard, is_merge_shard = IsMerge, 
         false ->
             mria_status:notify_replicant_state(Shard, State)
     end,
+    broadcast_status_event(Shard, State),
     keep_state_and_data.
 
 -spec do_push_tlog_entry(pid(), mria_rlog:entry()) -> ok.
@@ -558,3 +576,22 @@ perform_autoclean(Shard, Upstream) ->
      || Table <- mria_schema:tables_of_shard(Shard),
         mria_schema:get_merged_table_auto_clean(Table)],
     ok.
+
+-spec broadcast_status_event(mria_rlog:shard(), state()) -> ok.
+broadcast_status_event(Shard, Status) ->
+    try
+        MS = {{{Shard, '$1'}}, [], ['$1']},
+        Pids = ets:select(?replica_events_tab, [MS]),
+        Event = #mria_replica_status_update{ shard = Shard
+                                           , status = Status
+                                           },
+        [I ! Event || I <- Pids],
+        ok
+    catch
+        EC:Err:Stack ->
+            ?tp(warning, mria_failed_to_broadcast_replica_event,
+                #{ EC => Err
+                 , stacktrace => Stack
+                 }),
+            ok
+    end.
