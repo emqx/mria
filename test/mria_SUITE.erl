@@ -2265,35 +2265,48 @@ t_merge_table_autoclean(_) ->
        []).
 
 t_is_peer_alive(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
        try
-           [N1, N2, Replicant] = mria_ct:start_cluster(mria, Cluster),
+           Nodes = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:stabilize(1000),
            %% All peers should be alive initially
-           ?assertEqual({ok, true},  rpc:call(N1, mria, is_peer_alive, [N1])),
-           ?assertEqual({ok, true},  rpc:call(N1, mria, is_peer_alive, [N2])),
-           ?assertEqual({ok, true},  rpc:call(N1, mria, is_peer_alive, [Replicant])),
-           ?assertEqual({ok, true},  rpc:call(Replicant, mria, is_peer_alive, [N1])),
-           ?assertEqual({ok, true},  rpc:call(Replicant, mria, is_peer_alive, [N2])),
-           ?assertEqual({ok, true},  rpc:call(Replicant, mria, is_peer_alive, [Replicant])),
+           [?assertEqual(
+               {ok, true},
+               rpc:call(I, mria, is_peer_alive, [J]),
+               #{on => J, target => I})
+            || I <- Nodes,
+               J <- Nodes],
            %% Non-existent node should be reported as not alive
-           ?assertEqual({ok, false}, rpc:call(N1, mria, is_peer_alive, ['nonexistent@127.0.0.1'])),
-           %% Stop a core node and verify it is reported as not alive
-           mria_ct:stop_slave(N2),
-           timer:sleep(5000),
-           ?assertEqual({ok, true},  rpc:call(N1, mria, is_peer_alive, [N1])),
-           ?assertEqual({ok, true},  rpc:call(N1, mria, is_peer_alive, [Replicant])),
-           ?assertEqual({ok, false}, rpc:call(N1, mria, is_peer_alive, [N2])),
-           %% Restart the stopped node and verify it is alive again
-           N2SpecTuple = lists:keyfind(N2, 1,
-                  lists:map(fun(S) -> {maps:get(node, S), S} end, Cluster)),
-           ?assert(N2SpecTuple =/= false),
-           {_, N2Spec} = N2SpecTuple,
-           mria_ct:start_cluster(mria, [N2Spec]),
-           mria_mnesia_test_util:stabilize(5000),
-           ?assertEqual({ok, true}, rpc:call(N1, mria, is_peer_alive, [N2]))
+           [?assertEqual(
+               {ok, false},
+               rpc:call(I, mria, is_peer_alive, ['nonexistent@127.0.0.1']),
+               #{on => I})
+            || I <- Nodes],
+           %% Restart nodes one by one and verify that peers report state correctly
+           [begin
+                ok = ?tp_span(notice, test_stopping_node, #{node => I},
+                              slave:stop(I)),
+                ct:sleep(1000),
+                [?assertEqual(
+                    {ok, false},
+                    rpc:call(J, mria, is_peer_alive, [I]),
+                    #{on => J, target => I})
+                 || J <- Nodes,
+                    I =/= J],
+                %% Restart:
+                I = ?tp_span(notice, test_restarting_node, #{node => I},
+                             mria_ct:start_slave(mria, Spec)),
+                ct:sleep(1000),
+                %% Verify that the node is reported as up again:
+                [?assertEqual(
+                    {ok, true},
+                    rpc:call(J, mria, is_peer_alive, [I]),
+                    #{on => J, target => I})
+                 || J <- Nodes]
+            end
+            || {I, Spec} <- lists:zip(Nodes, Cluster)]
        after
            ok = mria_ct:teardown_cluster(Cluster)
        end,
