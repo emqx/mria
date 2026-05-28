@@ -1,3 +1,6 @@
+-ifndef(MRIA_HRL).
+-define(MRIA_HRL, true).
+
 -type(cluster() :: atom()).
 
 -type(member_status() :: joining | up | healing | leaving | down).
@@ -19,3 +22,10 @@
 -type(member() :: #member{}).
 
 -define(JOIN_LOCK_ID(REQUESTER), {mria_sync_join, REQUESTER}).
+
+-record(mria_replica_status_update,
+        { shard :: mria_rlog:shard()
+        , status :: mria_rlog_replica:state()
+        }).
+
+-endif.
