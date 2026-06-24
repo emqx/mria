@@ -183,7 +183,8 @@ do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
     maybe_report_netsplit(OldCoreNodes, Clusters),
     {IsChanged, NewCoreNodes} = find_best_cluster(OldCoreNodes, Clusters),
     %% Update shards:
-    ShardBadness = shard_badness(maps:with(NewCoreNodes, NodeInfo)),
+    {ShardBadness, IncompatNodesInfo} = shard_badness(maps:with(NewCoreNodes, NodeInfo)),
+    _ = maybe_report_incompatibility(ShardBadness, IncompatNodesInfo),
     maps:map(fun(Shard, {Node, _Badness}) ->
                      mria_status:notify_core_node_up(Shard, Node)
              end,
@@ -202,6 +203,13 @@ do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
     ping_new_nodes(NewCoreNodes, DiscoveredReplicants),
     State#s{core_nodes = NewCoreNodes, node_info = NodeInfo}.
 
+maybe_report_incompatibility(ShardBadness, IncompatInfo) when ShardBadness =:= #{},
+                                                              IncompatInfo =/= #{} ->
+    ?tp(warning, "No core node in the cluster is compatible with this replicant node",
+        #{nodes_info => IncompatInfo});
+maybe_report_incompatibility(_ShardBadness, _Errs) ->
+    ok.
+
 %% Find fully connected clusters (i.e. cliques of nodes)
 -spec find_clusters(#{node() => node_info()}) -> [[node()]].
 find_clusters(NodeInfo) ->
@@ -211,57 +219,66 @@ find_clusters(NodeInfo) ->
                                     NodeInfo)).
 
 %% Find the preferred core node for each shard:
--spec shard_badness(#{node() => node_info()}) -> #{mria_rlog:shard() => {node(), Badness}}
-              when Badness :: float().
+-spec shard_badness(#{node() => node_info()}) -> {#{mria_rlog:shard() => {node(), Badness}}, #{node() => Reason}}
+              when Badness :: float(), Reason :: term().
 shard_badness(NodeInfo) ->
     maps:fold(
-      fun(Node, LbInfo = #{shard_badness := Shards}, Acc) ->
-           case verify_node_compatibility(LbInfo) of
-               true ->
-                   lists:foldl(
-                     fun({Shard, Badness}, Acc1) ->
-                             maps:update_with(Shard,
-                                              fun({_OldNode, OldBadness}) when OldBadness > Badness ->
-                                                      {Node, Badness};
-                                                 (Old) ->
-                                                      Old
-                                              end,
-                                              {Node, Badness},
-                                              Acc1)
-                     end,
-                     Acc,
-                     Shards);
-               false ->
-                   Acc
-           end
+      fun(Node, LbInfo = #{shard_badness := Shards}, {Acc, IncompatAcc}) ->
+              case verify_node_compatibility(LbInfo) of
+                  true ->
+                      Acc1 = lists:foldl(
+                               fun({Shard, Badness}, Acc1) ->
+                                       maps:update_with(Shard,
+                                                        fun({_OldNode, OldBadness}) when OldBadness > Badness ->
+                                                                {Node, Badness};
+                                                           (Old) ->
+                                                                Old
+                                                        end,
+                                                        {Node, Badness},
+                                                        Acc1)
+                               end,
+                               Acc,
+                               Shards),
+                      {Acc1, IncompatAcc};
+                  {false, Reason} ->
+                      {Acc, IncompatAcc#{Node => Reason}}
+              end
       end,
-      #{},
+      {#{}, #{}},
       NodeInfo).
 
 verify_node_compatibility(LbInfo = #{protocol_version := ProtoVsn}) ->
-    case mria_config:callback(lb_custom_info_check) of
-        {ok, CustomCheckFun} ->
-            ok;
-        undefined ->
-            CustomCheckFun = fun(_) -> true end
-    end,
-    CustomInfo = maps:get(custom_info, LbInfo, undefined),
     MyProtoVersion = mria_rlog:get_protocol_version(),
-    %% Actual check:
-    IsCustomCompat = try
-                         Result = CustomCheckFun(CustomInfo),
-                         is_boolean(Result) orelse
-                             error({non_boolean_result, Result}),
-                         Result
-                     catch
-                         %% TODO: this can get spammy:
-                         EC:Err:Stack ->
-                             ?tp(error, mria_failed_to_check_upstream_compatibility,
-                                 #{lb_info => LbInfo, EC => Err, stacktrace => Stack}),
-                             false
+    case ProtoVsn =:= MyProtoVersion of
+        true ->
+            verify_custom_compatibility(LbInfo);
+        false ->
+            {false, "Mria protocol version doesn't match"}
+    end.
+
+verify_custom_compatibility(LbInfo) ->
+    CustomCheckFun = case mria_config:callback(lb_custom_info_check) of
+                         {ok, Fun} -> Fun;
+                         undefined -> fun(_) -> true end
                      end,
-    ProtoVsn =:= MyProtoVersion andalso
-        IsCustomCompat.
+    CustomInfo = maps:get(custom_info, LbInfo, undefined),
+    try
+        case CustomCheckFun(CustomInfo) of
+            true -> true;
+            %% backward-compatibility for CustomCheckFun that doesn't return
+            %% {false, Reason}
+            false -> {false, undefined};
+            {false, Reason} -> {false, Reason};
+            Other ->
+                error({non_boolean_result, Other})
+        end
+    catch
+        %% TODO: this can get spammy:
+        EC:Err:Stack ->
+            ?tp(error, mria_failed_to_check_upstream_compatibility,
+                #{lb_info => LbInfo, EC => Err, stacktrace => Stack}),
+            {false, undefined}
+    end.
 
 start_timer(LastUpdateTime) ->
     %% Leave at least 100 ms between updates to leave some time to
@@ -494,7 +511,7 @@ find_clusters_test_() ->
 
 shard_badness_test_() ->
     Vsn = mria_rlog:get_protocol_version(),
-    [ ?_assertMatch( #{foo := {n1, 1}, bar := {n2, 2}}
+    [ ?_assertMatch( {#{foo := {n1, 1}, bar := {n2, 2}}, _}
                    , shard_badness(#{ n1 => #{shard_badness => [{foo, 1}], protocol_version => Vsn}
                                     , n2 => #{shard_badness => [{foo, 2}, {bar, 2}], protocol_version => Vsn}
                                     })
