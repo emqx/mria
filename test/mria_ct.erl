@@ -75,6 +75,7 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
                  [First|_] -> #{join_to => First};
                  _         -> #{}
              end,
+    UID = binary:encode_hex(crypto:strong_rand_bytes(16), lowercase),
     [JoinTo#{ name   => Name
             , node   => node_id(Name)
             , env    => [ {mria, core_nodes, CoreNodes}
@@ -83,12 +84,15 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
                         , {mria, {callback, heal_partition}, fun heal_callback/1}
                         , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
                         , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
+                        , {classy, sync_timeout, 100}
+                        , {classy, hook_timeout, 10_000}
                         | Env]
             , number => Number
             , role   => Role
             , code_paths => CodePaths
             , beam_args => proplists:get_value(beam_args, ClusterOpts, "")
             , cover => Cover
+            , uid => UID
             }
      || #{role := Role, name := Name, env := Env, code_paths := CodePaths, num := Number, cover := Cover} <- Specs].
 
@@ -104,7 +108,10 @@ start_cluster(mria_async, Specs) ->
     spawn(fun() -> [start_mria(I) || I <- Specs] end),
     Ret.
 
-start_slave(node, #{name := Name, env := Env, code_paths := CodePaths, cover := Cover} = Spec) ->
+start_slave(node, #{name := Name, env := Env0, code_paths := CodePaths, cover := Cover, uid := UID} = Spec) ->
+    ClassyDir = filename:absname(filename:join([UID, Name, classy])),
+    ok = filelib:ensure_path(ClassyDir),
+    Env = [{classy, table_dir, ClassyDir} | Env0],
     CommonBeamOpts = "+S 1:1 " % We want VMs to only occupy a single core
         "-kernel inet_dist_listen_min 3000 " % Avoid collisions with gen_rpc ports
         "-kernel inet_dist_listen_max 3050 "

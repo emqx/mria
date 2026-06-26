@@ -30,6 +30,8 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{env => application:get_all_env(mria)}),
     mria_config:load_config(),
     mria_rlog:init(),
+    install_hooks(1000),
+
     ?tp(notice, "Starting mnesia", #{}),
     maybe_perform_disaster_recovery(),
     mria_mnesia:ensure_schema(),
@@ -64,3 +66,12 @@ perform_disaster_recovery(MasterNodes) ->
     logger:critical("Disaster recovery procedures have been enacted. "
                     "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
     mnesia:set_master_nodes(MasterNodes).
+
+install_hooks(Prio) ->
+    %% Info:
+    classy:enrich_site_info(fun mria:enrich_site_info/1, -Prio),
+    %% Clustering:
+    classy:pre_join(fun mria:pre_join/4, Prio),
+    classy:post_join(fun mria:post_join/4, Prio),
+    classy:post_kick(fun mria:post_kick/3, Prio),
+    classy:on_node_classify(fun mria:on_node_classify/1, Prio).

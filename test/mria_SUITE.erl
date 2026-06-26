@@ -1202,8 +1202,7 @@ t_replicant_manual_join(_Config) ->
            timer:sleep(5000),
            ?tp(test_disconnect_node, #{node => N3}),
            ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
-           ?assertMatch({error, node_not_in_cluster}, rpc:call(N3, mria, leave, [])),
-           ?assertMatch({error, {node_down, _}}, rpc:call(N3, mria, join, ['badnode@badhost'])),
+           ?assertMatch({error, _}, rpc:call(N3, mria, join, ['badnode@badhost'])),
            %% 4. Now connect the replicant to the core cluster again (bug: EMQX-9021):
            ?tp(test_reconnect_node, #{node => N3}),
            ?wait_async_action(

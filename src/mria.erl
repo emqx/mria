@@ -44,6 +44,15 @@
 -export([ register_callback/2
         ]).
 
+%% Classy hooks
+-export([ pre_join/4
+        , post_join/4
+        , post_kick/3
+        , enrich_site_info/1
+        , on_node_classify/1
+        , on_membership_change/4
+        ]).
+
 %% Database API
 -export([ ro_transaction/2
         , transaction/3
@@ -83,6 +92,10 @@
 -export([ subscribe_replica_events/2
         , unsubscribe_replica_events/2
         ]).
+
+-deprecated([ {leave, 0, "use classy:kick_node instead"}
+            , {join, 2, "use classy:join_node instead"}
+            ]).
 
 -type info_key() :: members | running_nodes | stopped_nodes | partitions | rlog.
 
@@ -187,20 +200,14 @@ merge_shard_upstream_status(Shard, Node) ->
 %% @doc Cluster nodes.
 -spec cluster_nodes(all | running | stopped | cores) -> [node()].
 cluster_nodes(all) ->
-    Running = running_nodes(),
-    %% Note: stopped replicant nodes won't appear in the list
-    lists:usort(Running ++ db_nodes_maybe_rpc());
+    %% Note: previously, stopped replicant nodes didn't appear in the list, now they do:
+    classy:nodes(all);
 cluster_nodes(running) ->
-    running_nodes();
+    classy:nodes(connected);
 cluster_nodes(stopped) ->
-    cluster_nodes(all) -- cluster_nodes(running);
+    classy:nodes(disconnected);
 cluster_nodes(cores) ->
-    case mria_rlog:role() of
-        core ->
-            mria_mnesia:db_nodes();
-        replicant ->
-            mria_lb:core_nodes()
-    end.
+    classy:nodes(core).
 
 %% @doc Cluster status of the node
 -spec(cluster_status(node()) -> running | stopped | false).
@@ -246,16 +253,7 @@ is_peer_alive(Node) ->
 %%   now each nodes shows the other one as running.
 -spec running_nodes() -> list(node()).
 running_nodes() ->
-    CoreNodes = case mria_rlog:role() of
-                    core -> mria_mnesia:running_nodes();
-                    replicant ->
-                        %% Can be used on core node as well, eliminating this
-                        %% case statement, but mria_mnesia:running_nodes/0
-                        %% must be more accurate than mria_membership:nodelist/0...
-                        mria_membership:running_core_nodelist()
-                end,
-    Replicants = mria_membership:running_replicant_nodelist(),
-    lists:usort(CoreNodes ++ Replicants).
+    classy:nodes(connected).
 
 %%--------------------------------------------------------------------
 %% Cluster API
@@ -268,41 +266,86 @@ join(Node) ->
 
 %% @doc Join the cluster
 -spec join(node(), join_reason()) -> ok | ignore | {error, term()}.
-join(Node, _) when Node =:= node() ->
-    ignore;
 join(Node, Reason) when is_atom(Node) ->
-    %% NOTE
-    %%
-    %% If two nodes are trying to join each other simultaneously,
-    %% one of them must be blocked waiting for a lock.
-    %% Once lock is released, it is expected to be already in the
-    %% cluster (if the other node joined it successfully).
-    %%
-    %% Additionally, avoid conducting concurrent join operations
-    %% by specifying current process PID as the lock requester.
-    %% Otherwise, concurrent joins can ruin each other's lives and
-    %% make any further cluster operations impossible.
-    %% This can happen, for example, when a concurrent join stops the
-    %% entire `mnesia` system while another join is running schema
-    %% transactions.
-    LockId = ?JOIN_LOCK_ID(self()),
-    global:trans(LockId, fun() -> join1(Node, Reason) end, [node(), Node]).
+    classy:join_node(Node, Reason).
+
+-spec pre_join(classy:cluster_id(), classy:site(), node(), term()) -> ok | {error, _}.
+pre_join(_Cluster, _RemoteSite, Node, Intent) when is_atom(Node) ->
+    %% When `Intent =:= heal' the node should rejoin regardless of
+    %% what mnesia thinks:
+    IsInCluster = is_node_in_cluster(Node) andalso Intent =/= heal,
+    case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
+        {false, true, core} ->
+            ok;
+        {_, false, _} ->
+            {error, {node_down, Node}};
+        {true, _, _} ->
+            {error, {already_in_cluster, Node}};
+        {_, _, replicant} ->
+            {error, {cannot_join_to_replicant, Node}};
+        {_, IsRunning, Role} ->
+            {error, #{ reason => illegal_target
+                     , target_node => Node
+                     , in_cluster => IsInCluster
+                     , is_running => IsRunning
+                     , target_role => Role
+                     }}
+    end;
+pre_join(_, _, Node, _) ->
+    {error, {bad_node, Node}}.
+
+-spec post_join(classy:cluster_id(), classy:site(), node(), term()) -> ok.
+post_join(_Cluster, _Local, Node, Intent) ->
+    %% FIXME: reading role via `mria_config' may be unsafe
+    %% when the app is not running, since it defaults to core.
+    %% Replicant may try to join the cluster as a core and wreak
+    %% havok
+    Role = application:get_env(mria, node_role, core),
+    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+    classy:at_lower_level(
+      stopped,
+      fun() ->
+              [catch mria_membership:announce(Intent) || Role =:= core],
+              case Role of
+                  core      -> mria_mnesia:join_cluster(Node);
+                  replicant -> ok
+              end
+      end),
+    ?tp(notice, "Mria has joined the cluster",
+        #{ seed   => Node
+         }).
+
+
+-spec enrich_site_info(map()) -> map().
+enrich_site_info(I) ->
+    I#{mria => #{ role => mria_rlog:role()
+                , vsn => mria_rlog:get_protocol_version()
+                }}.
+
+-spec on_node_classify(map()) -> map().
+on_node_classify(#{mria := #{role := Role, vsn := Vsn}}) ->
+    [ Role
+    | case mria_rlog:get_protocol_version() of
+          Vsn -> [mria_compatible];
+          _   -> []
+      end
+    ];
+on_node_classify(#{}) ->
+    [].
 
 %% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.
 leave() ->
-    case running_nodes() -- [node()] of
-        [_|_] ->
-            prep_restart(leave),
-            ok = case mria_config:whoami() of
-                     replicant ->
-                         mria_lb:leave_cluster();
-                     _ ->
-                         mria_mnesia:leave_cluster()
-                 end,
-            start();
-        [] ->
-            {error, node_not_in_cluster}
+    classy:kick_node(node(), leave).
+
+%% @private When done via classy
+-spec post_kick(classy:cluster_id(), classy:site(), term()) -> ok.
+post_kick(_Cluster, _Site, _Intent) ->
+    case mria_config:whoami() of
+        core ->
+            mria_mnesia:leave_cluster();
+        replicant ->
+            ok
     end.
 
 %% @doc Force a node leave from cluster.
@@ -310,16 +353,22 @@ leave() ->
 force_leave(Node) when Node =:= node() ->
     ignore;
 force_leave(Node) ->
-    case {is_node_in_cluster(Node), mria_mnesia:is_running_db_node(Node)} of
-        {true, true} ->
-            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, leave, []));
-        {true, false} ->
+    classy:kick_node(Node, leave).
+
+on_membership_change(_Cluster, Local, Remote, false) when Local =/= Remote ->
+    %% Remote got kicked:
+    case mria_rlog:role() of
+        core ->
+            Node = classy:node_of_site(Remote, false),
             mria_membership:announce({force_leave, Node}),
             mnesia_lib:del(extra_db_nodes, Node),
             mria_lib:ensure_ok(mria_mnesia:del_schema_copy(Node));
-        {false, _} ->
-            {error, node_not_in_cluster}
-    end.
+        replicant ->
+            ok
+    end;
+on_membership_change(_Cluster, _Local, _Remote, true) ->
+    %% A new member joined:
+    ok.
 
 -spec enable_core_node_discovery() -> ok.
 enable_core_node_discovery() ->
@@ -670,48 +719,6 @@ find_upstream_node(Shard) ->
                  Node
              end).
 
-join1(Node, Reason) when is_atom(Node) ->
-    %% When `Reason =:= heal' the node should rejoin regardless of
-    %% what mnesia thinks:
-    IsInCluster = is_node_in_cluster(Node) andalso Reason =/= heal,
-    case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
-        {false, true, core} ->
-            %% FIXME: reading role via `mria_config' may be unsafe
-            %% when the app is not running, since it defaults to core.
-            %% Replicant may try to join the cluster as a core and wreak
-            %% havok
-            Role = application:get_env(mria, node_role, core),
-            do_join(Role, Node, Reason);
-        {_, false, _} ->
-            {error, {node_down, Node}};
-        {true, _, _} ->
-            {error, {already_in_cluster, Node}};
-        {_, _, replicant} ->
-            {error, {cannot_join_to_replicant, Node}};
-        {_, IsRunning, Role} ->
-            {error, #{ reason => illegal_target
-                     , target_node => Node
-                     , in_cluster => IsInCluster
-                     , is_running => IsRunning
-                     , target_role => Role
-                     }}
-    end.
-
--spec do_join(mria_rlog:role(), node(), join_reason()) -> ok.
-do_join(Role, Node, Reason) ->
-    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    [catch mria_membership:announce(Reason) || Role =:= core],
-    prep_restart(Reason),
-    case Role of
-        core      -> mria_mnesia:join_cluster(Node);
-        replicant -> mria_lb:join_cluster(Node)
-    end,
-    start(),
-    ?tp(notice, "Mria has joined the cluster",
-        #{ seed   => Node
-         , status => info()
-         }).
-
 -spec ro_transaction(fun(() -> A)) -> A.
 ro_transaction(Fun) ->
     Ret = Fun(),
@@ -730,31 +737,6 @@ do_assert_ro_trans() ->
     case ets:match(Ets, {'_', '_', '_'}) of
         []  -> ok;
         Ops -> error({transaction_is_not_readonly, Ops})
-    end.
-
-%% Stop the application and reload the basic config from scratch.
--spec prep_restart(stop_reason()) -> ok.
-prep_restart(Reason) ->
-    stop(Reason),
-    mria_config:load_config().
-
-%% TODO: Remove this function and cache the results.
-db_nodes_maybe_rpc() ->
-    case mria_rlog:role() of
-        core ->
-            mria_mnesia:db_nodes();
-        replicant ->
-            case mria_status:shards_up() of
-                [Shard|_] ->
-                    {ok, CoreNode} = mria_status:rpc_target(Shard, 5_000),
-                    case mria_lib:rpc_call_nothrow(CoreNode, mnesia, system_info, [db_nodes]) of
-                        {badrpc, _} -> [];
-                        {badtcp, _} -> [];
-                        Result      -> Result
-                    end;
-                [] ->
-                    []
-            end
     end.
 
 %% Macro is used instead of a function helper to keep ref trick optimization,
