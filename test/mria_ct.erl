@@ -84,8 +84,9 @@ cluster(Specs0, CommonEnv, ClusterOpts) ->
                         , {mria, {callback, heal_partition}, fun heal_callback/1}
                         , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
                         , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
-                        , {classy, sync_timeout, 100}
+                        , {classy, sync_timeout, 1000}
                         , {classy, hook_timeout, 10_000}
+                        , {classy, table_dir, atom_to_list(Name)}
                         | Env]
             , number => Number
             , role   => Role
