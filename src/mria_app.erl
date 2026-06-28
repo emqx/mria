@@ -30,22 +30,26 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{env => application:get_all_env(mria)}),
     mria_config:load_config(),
     mria_rlog:init(),
-    install_hooks(1000),
+    Hooks = install_hooks(1000),
 
     ?tp(notice, "Starting mnesia", #{}),
     maybe_perform_disaster_recovery(),
     mria_mnesia:ensure_schema(),
     mria_mnesia:ensure_started(),
     ?tp(notice, "Starting shards", #{}),
-    mria_sup:start_link().
+    maybe
+        {ok, Pid} ?= mria_sup:start_link(),
+        {ok, Pid, Hooks}
+    end.
 
 prep_stop(State) ->
     ?tp(debug, "Mria is preparing to stop", #{}),
     mria_rlog:cleanup(),
     State.
 
-stop(_State) ->
+stop(Hooks) ->
     mria_config:erase_all_config(),
+    [classy_hook:unhook(I) || I <- Hooks],
     ?tp(notice, "Mria is stopped", #{}).
 
 %%================================================================================
@@ -68,10 +72,11 @@ perform_disaster_recovery(MasterNodes) ->
     mnesia:set_master_nodes(MasterNodes).
 
 install_hooks(Prio) ->
-    %% Info:
-    classy:enrich_site_info(fun mria:enrich_site_info/1, -Prio),
-    %% Clustering:
-    classy:pre_join(fun mria:pre_join/4, Prio),
-    classy:post_join(fun mria:post_join/4, Prio),
-    classy:post_kick(fun mria:post_kick/3, Prio),
-    classy:on_node_classify(fun mria:on_node_classify/1, Prio).
+    [ %% Info:
+      classy:enrich_site_info(fun mria:enrich_site_info/1, -Prio)
+      %% Clustering:
+    , classy:pre_join(fun mria:pre_join/4, Prio)
+    , classy:post_join(fun mria:post_join/4, Prio)
+    , classy:post_kick(fun mria:post_kick/3, Prio)
+    , classy:on_node_classify(fun mria:on_node_classify/1, Prio)
+    ].
