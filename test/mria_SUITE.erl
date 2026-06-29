@@ -45,11 +45,42 @@ end_per_suite(_Config) ->
 
 init_per_testcase(TestCase, Config) ->
     logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
+    Fixtures = [ {familiar_snabbkaffe, #{}}
+               , {familiar_app,
+                  #{ app => gen_rpc
+                   , env => fun(_Site, Node, _State) ->
+                                    %% gen_rpc listens on a single IP address:
+                                    [_ | Host] = string:tokens(atom_to_list(Node), "@"),
+                                    {ok, Addr} = inet:parse_address(string:trim(Host)),
+                                    #{socket_ip => Addr}
+                            end}}
+               , {familiar_app,
+                  #{ app => classy
+                   , env => fun(Site, _Node, _State) ->
+                                    #{ setup_hooks => {?MODULE, setup_init_hooks, [Site]}
+                                     , cleanup_check_interval => 100
+                                     , vote_retry_interval => 100
+                                     , rpc_timeout => 100
+                                     , discovery_interval => 100
+                                     }
+                            end}}
+               ],
+    ok = familiar:start_link_cluster(
+           #{ id => TestCase
+            , fixtures => familiar:default_fixtures() ++ Fixtures
+            , peer => #{args => ["-kernel", "prevent_overlapping_partitions", "false"]}
+            }),
+    put(classy_SUITE_cluster, {ok, TestCase}),
     Config.
 
 end_per_testcase(TestCase, Config) ->
     logger:notice(asciiart:visible($%, "Complete ~p", [TestCase])),
     mria_ct:cleanup(TestCase),
+    Success = case proplists:get_value(tc_status, Config) of
+                  ok -> true;
+                  _  -> false
+              end,
+    _ = familiar:stop_cluster(TestCase, Success),
     snabbkaffe:stop(),
     Config.
 
@@ -443,12 +474,15 @@ t_sync_transaction_on_replicant(_) ->
 
 %% Check that behavior on error and exception is the same for both backends
 t_abort(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    %% Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
-       #{timetrap => 30000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_tables(Nodes),
+       #{timetrap => 15000},
+       begin
+           {ok, _S1, N1} = create_start_node(<<"c1">>, core, undefined),
+           {ok, _S2, N2} = create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2],
+           mria_mnesia_test_util:wait_tables([N1, N2]),
+           ?tp(notice, test_go, #{}),
            [begin
                 RetMnesia = rpc:call(Node, mria_transaction_gen, abort, [mnesia, AbortKind]),
                 RetMria = rpc:call(Node, mria_transaction_gen, abort, [mria_mnesia, AbortKind]),
@@ -457,13 +491,13 @@ t_abort(_) ->
                     {A, A} -> ok
                 end
             end
-            || Node <- Nodes, AbortKind <- [abort, error, exit, throw]],
+            || Node <- [N1, N2], AbortKind <- [abort, error, exit, throw]],
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
-       fun(Trace) ->
+       fun(Trace0) ->
+               %% Verify that no transactions were imported (except for the schema):
+               {_, Trace} = ?split_trace_at(#{?snk_kind := test_go}, Trace0),
                ?assertMatch([], ?of_kind(rlog_import_trans, Trace)),
                mria_rlog_props:no_unexpected_events(Trace)
        end).
@@ -2555,3 +2589,40 @@ common_checks() ->
 dump_table(Tab, Node) ->
     ?ON(Node,
         mnesia:dirty_select(Tab, [{'_', [], ['$_']}])).
+
+create_start_node(SiteId, Role, JoinTo) ->
+    create_node(SiteId, Role, #{}, JoinTo, #{start => true}).
+
+create_node(SiteId, Role, MriaOpts, JoinTo, Opts) ->
+    Fixtures = [ {familiar_app,
+                  #{ app => mria
+                   , env => MriaOpts#{ strict_mode => true
+                                     , lb_poll_interval => 100
+                                     , node_role => Role
+                                     }}}
+               , {mria_join_fixture, JoinTo}
+               ],
+    familiar:create_site(
+      get_cluster(),
+      SiteId,
+      Opts#{ fixtures => Fixtures
+           }).
+
+get_cluster() ->
+  {ok, Cluster} = get(classy_SUITE_cluster),
+  Cluster.
+
+setup_init_hooks({_Cluster, Site}) ->
+    %% Use deterministic site IDsÖ
+    classy:on_node_init(fun() ->
+                                classy_node:maybe_init_the_site(Site)
+                        end,
+                        0),
+    %% Imitate business applications:
+    classy:run_level(
+      fun(single, cluster) ->
+              mria_transaction_gen:init();
+         (_, _) ->
+              ok
+      end,
+      0).
