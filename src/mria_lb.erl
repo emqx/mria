@@ -356,7 +356,6 @@ lb_callback() ->
 discover_nodes() ->
     Cores = classy:nodes(core),
     Compat = classy:nodes(mria_compatible),
-    ?tp(debug, lb_discovered_nodes, #{cores => Cores, compat => Compat, s => classy:sites()}),
     ordsets:intersection(Cores, Compat).
 
 -spec discover_replicants([node()]) -> [node()].

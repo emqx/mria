@@ -20,7 +20,7 @@
 
 -export([start/2, prep_stop/1, stop/1]).
 
--export([on_run_level/2]).
+-export([on_run_level/2, on_node_init/0]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
 
@@ -32,25 +32,21 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting mria", #{env => application:get_all_env(mria)}),
     mria_config:load_config(),
     mria_rlog:init(),
-    Hooks = install_hooks(1000),
     ?tp(notice, "Starting mnesia", #{}),
     maybe_perform_disaster_recovery(),
     mria_mnesia:ensure_schema(),
     mria_mnesia:ensure_started(),
     ?tp(notice, "Starting shards", #{}),
-    maybe
-        {ok, Pid} ?= mria_sup:start_link(),
-        {ok, Pid, Hooks}
-    end.
+    mria_sup:start_link().
 
 prep_stop(State) ->
     ?tp(debug, "Mria is preparing to stop", #{}),
     mria_rlog:cleanup(),
     State.
 
-stop(Hooks) ->
-    mria_config:erase_all_config(),
-    [classy_hook:unhook(I) || I <- Hooks],
+stop(_Hooks) ->
+    %%mria_config:erase_all_config(),
+    %%[classy_hook:unhook(I) || I <- Hooks],
     ?tp(notice, "Mria is stopped", #{}).
 
 on_run_level(stopped, single) ->
@@ -78,6 +74,10 @@ perform_disaster_recovery(MasterNodes) ->
     logger:critical("Disaster recovery procedures have been enacted. "
                     "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
     mnesia:set_master_nodes(MasterNodes).
+
+on_node_init() ->
+    _ = install_hooks(9999),
+    ok.
 
 install_hooks(Prio) ->
     [ %% Info:

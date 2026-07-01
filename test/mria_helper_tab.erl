@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2023, 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@
 -record(?TABLE, {key, val}).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 init() ->
     ok = mria:create_table(?TABLE, [{type, ordered_set},
@@ -42,18 +43,27 @@ wait_full_replication(Cluster) ->
 
 %% Emit a special transaction and wait until all replicants consume it.
 wait_full_replication(Cluster, Timeout) ->
+    Cores = [I || I <- Cluster, mria_rlog:role(I) =:= core],
+    Replicants = [I || I <- Cluster, mria_rlog:role(I) =:= replicant],
+    ?assertEqual(
+       length(Cluster),
+       length(Cores) + length(Replicants),
+       #{ all => Cluster
+        , cores => Cores
+        , replicants => Replicants
+        }),
     %% Wait until all nodes are healthy:
-    [rpc:call(Node, mria_rlog, wait_for_shards, [[test_shard], infinity])
-     || #{node := Node} <- Cluster],
+    [rpc:call(Node, mria, wait_for_tables, [[?TABLE]])
+     || Node <- Cluster],
     %% Emit a transaction and wait for replication:
-    [CoreNode|_] = [N || #{node := N, role := core} <- Cluster],
+    [CoreNode|_] = Cores,
     Ref = make_ref(),
     emit_last_transaction(CoreNode, Ref),
     [{ok, _} = ?block_until(#{ ?snk_kind := rlog_import_trans
                              , ops       := [{write, ?TABLE, #?TABLE{key = '$seal', val = Ref}}]
                              , ?snk_meta := #{node := N}
                              }, Timeout, infinity)
-     || #{node := N, role := replicant} <- Cluster],
+     || N <- Replicants],
     ok.
 
 %% We use this transaction to indicate the end of the testcase.

@@ -383,7 +383,7 @@ handle_cast({ping, Member = #member{node = Node}}, State) ->
             {noreply, State1}
     end;
 
-handle_cast({pong, Member}, State) ->
+handle_cast({pong, Member}, State) when is_record(Member, member) ->
     ?tp(mria_membership_pong, #{member => Member}),
     {Member1, State1} = monitor_if_replicant(Member, State),
     insert(Member1),
