@@ -62,6 +62,7 @@ init_per_testcase(TestCase, Config) ->
                                      , vote_retry_interval => 100
                                      , rpc_timeout => 100
                                      , discovery_interval => 100
+                                     , sync_timeout => 100
                                      }
                             end}}
                ],
@@ -101,40 +102,46 @@ t_create_del_table(_) ->
     end.
 
 t_disc_table(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
-    try
-        Nodes = mria_ct:start_cluster(mria, Cluster),
-        Fun = fun() ->
-                      ok = mria:create_table(kv_tab1,
-                                             [{storage, disc_copies},
-                                              {rlog_shard, test_shard},
-                                              {record_name, kv_tab},
-                                              {attributes, record_info(fields, kv_tab)}
-                                             ]),
-                      ok = mria:create_table(kv_tab2,
-                                             [{storage, disc_only_copies},
-                                              {rlog_shard, test_shard},
-                                              {record_name, kv_tab},
-                                              {attributes, record_info(fields, kv_tab)}
-                                             ]),
-                      ?assertMatch([], mnesia:dirty_all_keys(kv_tab1)),
-                      ?assertMatch([], mnesia:dirty_all_keys(kv_tab2))
-              end,
-        [ok = mria_ct:run_on(N, Fun) || N <- Nodes]
-    after
-        ok = mria_ct:teardown_cluster(Cluster)
-    end.
+    ?check_trace(
+       #{timetrap => 15_000},
+       begin
+           {ok, _, N1} = create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           Fun = fun() ->
+                         ok = ?tp_span(warning, create_kv_tab, #{node => node()},
+                                       mria:create_table(kv_tab1,
+                                                [{storage, disc_copies},
+                                                 {rlog_shard, test_shard},
+                                                 {record_name, kv_tab},
+                                                 {attributes, record_info(fields, kv_tab)}
+                                                ])),
+                         ok = mria:create_table(kv_tab2,
+                                                [{storage, disc_only_copies},
+                                                 {rlog_shard, test_shard},
+                                                 {record_name, kv_tab},
+                                                 {attributes, record_info(fields, kv_tab)}
+                                                ]),
+                         ?assertMatch([], mnesia:dirty_all_keys(kv_tab1)),
+                         ?assertMatch([], mnesia:dirty_all_keys(kv_tab2))
+                 end,
+           [ok = mria_ct:run_on(N, Fun) || N <- Nodes]
+       end,
+       []).
 
 t_bootstrap(_) ->
     Parameters = [{Storage, Type} || Storage <- [ram_copies, disc_copies, disc_only_copies, rocksdb_copies]
                                    , Type    <- [set, ordered_set, bag]
                                    , not (Storage =:= disc_only_copies andalso Type =:= ordered_set)],
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NRecords = 4321,
     ?check_trace(
        #{timetrap => 30_000},
-        try
-            Nodes = [Core, Replicant] = mria_ct:start_cluster(mria, Cluster),
+        begin
+            {ok, _, Core} = create_start_node(<<"c1">>, core, undefined),
+            {ok, _, Replicant} = create_start_node(<<"r1">>, replicant, Core),
+            Nodes = [Core, Replicant],
             mria_mnesia_test_util:stabilize(1000),
             %% Init tables and data:
             Init =
@@ -153,7 +160,8 @@ t_bootstrap(_) ->
                 end,
             Tables = [mria_ct:run_on(Core, Init, [I]) || I <- Parameters],
             ?tp(notice, "Waiting for full replication", #{}),
-            mria_mnesia_test_util:wait_full_replication(Cluster),
+            ct:sleep(1000),
+            %%mria_mnesia_test_util:wait_full_replication(Cluster),
             %% Restart the replicant so it bootstraps again:
             ?tp(warning, "Restarting replicant!", #{}),
             ?wait_async_action(
@@ -166,8 +174,6 @@ t_bootstrap(_) ->
             %% Compare contents of all tables
             ?tp(notice, "Compare contents", #{}),
             [mria_mnesia_test_util:compare_table_contents(Tab, Nodes) || Tab <- Tables]
-        after
-            ok = mria_ct:teardown_cluster(Cluster)
         end,
        [ fun mria_rlog_props:no_unexpected_events/1
        , fun mria_rlog_props:graceful_stop/1
@@ -2597,7 +2603,7 @@ create_node(SiteId, Role, MriaOpts, JoinTo, Opts) ->
     Fixtures = [ {familiar_app,
                   #{ app => mria
                    , env => MriaOpts#{ strict_mode => true
-                                     , lb_poll_interval => 100
+                                     , rlog_lb_update_interval => 100
                                      , node_role => Role
                                      }}}
                , {mria_join_fixture, JoinTo}
@@ -2619,10 +2625,12 @@ setup_init_hooks({_Cluster, Site}) ->
                         end,
                         0),
     %% Imitate business applications:
-    classy:run_level(
-      fun(single, cluster) ->
-              mria_transaction_gen:init();
-         (_, _) ->
-              ok
-      end,
-      0).
+    classy:run_level(fun ?MODULE:on_run_level/2, 0).
+
+%% on_run_level(stopped, single) ->
+%%     application:ensure_all_started(mria);
+on_run_level(single, cluster) ->
+    ?tp_span(warning, initializing_run_level, #{node => node()},
+             mria_transaction_gen:init());
+on_run_level(_, _) ->
+    ok.

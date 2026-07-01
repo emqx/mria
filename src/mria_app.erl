@@ -20,6 +20,8 @@
 
 -export([start/2, prep_stop/1, stop/1]).
 
+-export([on_run_level/2]).
+
 -include_lib("snabbkaffe/include/trace.hrl").
 
 %%================================================================================
@@ -31,7 +33,6 @@ start(_Type, _Args) ->
     mria_config:load_config(),
     mria_rlog:init(),
     Hooks = install_hooks(1000),
-
     ?tp(notice, "Starting mnesia", #{}),
     maybe_perform_disaster_recovery(),
     mria_mnesia:ensure_schema(),
@@ -51,6 +52,13 @@ stop(Hooks) ->
     mria_config:erase_all_config(),
     [classy_hook:unhook(I) || I <- Hooks],
     ?tp(notice, "Mria is stopped", #{}).
+
+on_run_level(stopped, single) ->
+    mria:start();
+on_run_level(single, stopped) ->
+    mria:stop();
+on_run_level(_, _) ->
+    ok.
 
 %%================================================================================
 %% Internal functions
@@ -79,4 +87,6 @@ install_hooks(Prio) ->
     , classy:post_join(fun mria:post_join/4, Prio)
     , classy:post_kick(fun mria:post_kick/3, Prio)
     , classy:on_node_classify(fun mria:on_node_classify/1, Prio)
+      %% Run level:
+    , classy:run_level(fun ?MODULE:on_run_level/2, Prio)
     ].

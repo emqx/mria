@@ -110,8 +110,7 @@ shard_config(Shard) ->
 
 -spec backend() -> mria:backend().
 backend() ->
-    %% Note: always `rlog' since `db_backend' is not set.
-    persistent_term:get(?mria(db_backend), rlog).
+    rlog.
 
 -spec role() -> mria_rlog:role().
 role() ->
@@ -280,10 +279,6 @@ consistency_check() ->
         ?TRANSPORT_GEN_RPC -> ok
     end,
     case {backend(), role(), otp_is_compatible()} of
-        {mnesia, replicant, _} ->
-            ?LOG(critical, "Configuration error: cannot use mnesia DB "
-                           "backend on the replicant node", []),
-            error(unsupported_backend);
         {rlog, _, false} ->
             ?LOG(critical, "Configuration error: cannot use mria DB "
                            "backend with this version of Erlang/OTP", []),
@@ -308,8 +303,11 @@ consistency_check() ->
 -spec copy_from_env(atom()) -> ok.
 copy_from_env(Key) ->
     case application:get_env(mria, Key) of
-        {ok, Val} -> persistent_term:put(?mria(Key), Val);
-        undefined -> ok
+        {ok, Val} ->
+            ?tp(warning, copy_from_env, #{k => Key, v => Val}),
+            persistent_term:put(?mria(Key), Val);
+        undefined ->
+            ok
     end.
 
 %% Create a reverse lookup table for finding shard of the table

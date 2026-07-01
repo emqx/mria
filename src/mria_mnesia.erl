@@ -147,12 +147,12 @@ join_cluster(Node) when Node =/= node() ->
     case {mria_config:role(), mria_rlog:role(Node)} of
         {core, core} ->
             %% Stop mnesia and delete schema first
-            mria_lib:ensure_ok(ensure_stopped()),
-            mria_lib:ensure_ok(delete_schema()),
+            ?tp_span(warning, jc1, #{n => node()}, mria_lib:ensure_ok(ensure_stopped())),
+            ?tp_span(warning, jc2, #{n => node()}, mria_lib:ensure_ok(delete_schema())),
             %% Start mnesia and cluster to node
-            mria_lib:ensure_ok(ensure_started()),
-            mria_lib:ensure_ok(connect(Node)),
-            mria_lib:ensure_ok(copy_schema(node()));
+            ?tp_span(warning, jc3, #{n => node()}, mria_lib:ensure_ok(ensure_started())),
+            ?tp_span(warning, jc4, #{n => node()}, mria_lib:ensure_ok(connect(Node))),
+            ?tp_span(warning, jc5, #{n => node()}, mria_lib:ensure_ok(copy_schema(node())));
         _ ->
             ok
     end.
@@ -272,7 +272,7 @@ wait_for_tables(Tables) ->
             ?tp(mria_wait_for_tables_done, #{result => {error, Reason}}),
             {error, Reason};
         {timeout, BadTables} ->
-            logger:warning("~p: still waiting for table(s): ~p", [?MODULE, BadTables]),
+            logger:warning("~p: still waiting for table(s): ~p ~p", [?MODULE, BadTables, node()]),
             catch diagnosis(BadTables),
             %% lets try to force reconnect all the db_nodes to get schema merged,
             %% mnesia_controller is smart enough to not force reconnect the node that is already connected.

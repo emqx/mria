@@ -133,7 +133,7 @@
 
 -type t_result(Res) :: {'atomic', Res} | {'aborted', Reason::term()}.
 
--type backend() :: rlog | mnesia.
+-type backend() :: rlog.
 
 -type table() :: atom().
 
@@ -305,11 +305,15 @@ post_join(_Cluster, _Local, Node, Intent) ->
     classy:at_lower_level(
       stopped,
       fun() ->
-              [catch mria_membership:announce(Intent) || Role =:= core],
-              case Role of
-                  core      -> mria_mnesia:join_cluster(Node);
-                  replicant -> ok
-              end
+              ?tp_span(
+                 warning, restarting_for_join, #{self => node(), node => Node},
+                 begin
+                     [catch mria_membership:announce(Intent) || Role =:= core],
+                     case Role of
+                         core      -> mria_mnesia:join_cluster(Node);
+                         replicant -> ok
+                     end
+                 end)
       end),
     ?tp(notice, "Mria has joined the cluster",
         #{ seed   => Node

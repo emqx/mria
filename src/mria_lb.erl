@@ -85,8 +85,11 @@ core_nodes() ->
 
 init(_) ->
     process_flag(trap_exit, true),
-    logger:set_process_metadata(#{domain => [mria, rlog, lb]}),
+    ?tp(warning, init_lb, #{s => 1}),
+    %%try logger:set_process_metadata(#{domain => [mria, rlog, lb]}) catch _:_ -> ok end,
+    ?tp(warning, init_lb, #{s => 2}),
     start_timer(0),
+    ?tp(warning, init_lb, #{s => 3}),
     mria_membership:monitor(membership, self(), true),
     State = #s{ node_info = #{}
               , core_nodes = []
@@ -353,6 +356,7 @@ lb_callback() ->
 discover_nodes() ->
     Cores = classy:nodes(core),
     Compat = classy:nodes(mria_compatible),
+    ?tp(debug, lb_discovered_nodes, #{cores => Cores, compat => Compat, s => classy:sites()}),
     ordsets:intersection(Cores, Compat).
 
 -spec discover_replicants([node()]) -> [node()].
