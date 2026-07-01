@@ -42,7 +42,6 @@ post_init(Parent) ->
     % ok = mria_rlog:wait_for_shards([?mria_meta_shard], infinity),
     ?tp(notice, "Mria is running", #{}).
 
-
 -spec init(mria:backend()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init(mnesia) ->
     {ok, {#{ strategy => one_for_all

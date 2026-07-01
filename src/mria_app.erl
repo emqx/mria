@@ -18,7 +18,7 @@
 
 -behaviour(application).
 
--export([start/2, prep_stop/1, stop/1]).
+-export([start/2, stop/1]).
 
 -export([on_run_level/2, on_node_init/0]).
 
@@ -39,15 +39,12 @@ start(_Type, _Args) ->
     ?tp(notice, "Starting shards", #{}),
     mria_sup:start_link().
 
-prep_stop(State) ->
-    ?tp(debug, "Mria is preparing to stop", #{}),
-    mria_rlog:cleanup(),
-    State.
-
 stop(_Hooks) ->
+    ?tp(warning, "Pre-stopping mria", #{node => node()}),
     %%mria_config:erase_all_config(),
     %%[classy_hook:unhook(I) || I <- Hooks],
-    ?tp(notice, "Mria is stopped", #{}).
+    %% ?tp(notice, "Mria is stopped", #{}).
+    ok.
 
 on_run_level(stopped, single) ->
     mria:start();

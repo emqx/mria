@@ -158,8 +158,8 @@ stop(Reason) ->
     Reason =:= heal orelse Reason =:= leave andalso
         catch mria_membership:announce(Reason),
     ?tp(warning, "Stopping mria1", #{reason => Reason, node => node()}),
-    %% We cannot run stop callback in `mria_app', since we don't want
-    %% to block application controller:
+    ?tp_span(warning, ping_ac, #{node => node()}, sys:get_state(application_controller)),
+    ?tp(warning, "Stopping mria1.1", #{reason => Reason, node => node()}),
     application:stop(mria),
     ?tp(warning, "Stopping mria2", #{reason => Reason, node => node()}),
     mria_mnesia:ensure_stopped(),
