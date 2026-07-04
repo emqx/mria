@@ -8,7 +8,7 @@
 init_per_node(Site, _Node, JoinTo, Acc) ->
     case JoinTo of
         undefined ->
-            ok;
+            {ok, Acc};
         _ ->
             case is_peer(JoinTo, Site) of
                 false ->
@@ -16,9 +16,9 @@ init_per_node(Site, _Node, JoinTo, Acc) ->
                     ?retry(100, 10, ?assertEqual(true, is_peer(JoinTo, Site)));
                 true ->
                     ok
-            end
-    end,
-    {ok, Acc}.
+            end,
+            {ok, Acc#{cluster_seed => JoinTo}}
+    end.
 
 is_peer(JoinTo, Site) ->
     Peers = familiar:call(Site, classy, nodes, [all]),

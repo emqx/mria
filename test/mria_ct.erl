@@ -34,68 +34,68 @@ cleanup(Testcase) ->
     mria:stop(),
     ok = mnesia:delete_schema([node()]).
 
--type env() :: [{atom(), atom(), term()}].
+%% -type env() :: [{atom(), atom(), term()}].
 
--type start_spec() ::
-        #{ name       := atom()
-         , node       := node()
-         , join_to    => node()
-         , env        := env()
-         , number     := integer()
-         , code_paths := [file:filename_all()]
-         }.
+%% -type start_spec() ::
+%%         #{ name       := atom()
+%%          , node       := node()
+%%          , join_to    => node()
+%%          , env        := env()
+%%          , number     := integer()
+%%          , code_paths := [file:filename_all()]
+%%          }.
 
--type node_spec() :: mria_rlog:role() % name automatically, use default environment
-                   | {mria_rlog:role(), env()} % name automatically, customize env
-                   | #{ role := mria_rlog:role()
-                      , name => atom()
-                      , env => env()
-                      , code_paths => [file:filename_all()]
-                      }.
+%% -type node_spec() :: mria_rlog:role() % name automatically, use default environment
+%%                    | {mria_rlog:role(), env()} % name automatically, customize env
+%%                    | #{ role := mria_rlog:role()
+%%                       , name => atom()
+%%                       , env => env()
+%%                       , code_paths => [file:filename_all()]
+%%                       }.
 
--type cluster_opt() :: {base_gen_rpc_port, non_neg_integer()}. % starting grpc port
+%% -type cluster_opt() :: {base_gen_rpc_port, non_neg_integer()}. % starting grpc port
 
-%% @doc Generate cluster config with all necessary connectivity
-%% options, that should be able to run on the localhost
--spec cluster([node_spec()], env()) -> [start_spec()].
-cluster(Specs, CommonEnv) ->
-    cluster(Specs, CommonEnv, []).
+%% %% @doc Generate cluster config with all necessary connectivity
+%% %% options, that should be able to run on the localhost
+%% -spec cluster([node_spec()], env()) -> [start_spec()].
+%% cluster(Specs, CommonEnv) ->
+%%     cluster(Specs, CommonEnv, []).
 
--spec cluster([node_spec()], env(), [cluster_opt()]) -> [start_spec()].
-cluster(Specs0, CommonEnv, ClusterOpts) ->
-    Specs1 = lists:zip(Specs0, lists:seq(1, length(Specs0))),
-    Specs = expand_node_specs(Specs1, CommonEnv),
-    CoreNodes = [node_id(Name) || #{role := core, name := Name} <- Specs],
-    %% Assign grpc ports:
-    BaseGenRpcPort = proplists:get_value(base_gen_rpc_port, ClusterOpts, 9000),
-    GenRpcPorts = maps:from_list([{node_id(Name), {tcp, BaseGenRpcPort + Num}}
-                                  || #{name := Name, num := Num} <- Specs]),
-    %% Set the default node of the cluster:
-    JoinTo = case CoreNodes of
-                 [First|_] -> #{join_to => First};
-                 _         -> #{}
-             end,
-    UID = binary:encode_hex(crypto:strong_rand_bytes(16), lowercase),
-    [JoinTo#{ name   => Name
-            , node   => node_id(Name)
-            , env    => [ {mria, core_nodes, CoreNodes}
-                        , {mria, node_role, Role}
-                        , {mria, rlog_replica_reconnect_interval, 100} % For faster response times
-                        , {mria, {callback, heal_partition}, fun heal_callback/1}
-                        , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
-                        , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
-                        , {classy, sync_timeout, 1000}
-                        , {classy, hook_timeout, 10_000}
-                        , {classy, table_dir, atom_to_list(Name)}
-                        | Env]
-            , number => Number
-            , role   => Role
-            , code_paths => CodePaths
-            , beam_args => proplists:get_value(beam_args, ClusterOpts, "")
-            , cover => Cover
-            , uid => UID
-            }
-     || #{role := Role, name := Name, env := Env, code_paths := CodePaths, num := Number, cover := Cover} <- Specs].
+%% -spec cluster([node_spec()], env(), [cluster_opt()]) -> [start_spec()].
+%% cluster(Specs0, CommonEnv, ClusterOpts) ->
+%%     Specs1 = lists:zip(Specs0, lists:seq(1, length(Specs0))),
+%%     Specs = expand_node_specs(Specs1, CommonEnv),
+%%     CoreNodes = [node_id(Name) || #{role := core, name := Name} <- Specs],
+%%     %% Assign grpc ports:
+%%     BaseGenRpcPort = proplists:get_value(base_gen_rpc_port, ClusterOpts, 9000),
+%%     GenRpcPorts = maps:from_list([{node_id(Name), {tcp, BaseGenRpcPort + Num}}
+%%                                   || #{name := Name, num := Num} <- Specs]),
+%%     %% Set the default node of the cluster:
+%%     JoinTo = case CoreNodes of
+%%                  [First|_] -> #{join_to => First};
+%%                  _         -> #{}
+%%              end,
+%%     UID = binary:encode_hex(crypto:strong_rand_bytes(16), lowercase),
+%%     [JoinTo#{ name   => Name
+%%             , node   => node_id(Name)
+%%             , env    => [ {mria, core_nodes, CoreNodes}
+%%                         , {mria, node_role, Role}
+%%                         , {mria, rlog_replica_reconnect_interval, 100} % For faster response times
+%%                         , {mria, {callback, heal_partition}, fun heal_callback/1}
+%%                         , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
+%%                         , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
+%%                         , {classy, sync_timeout, 1000}
+%%                         , {classy, hook_timeout, 10_000}
+%%                         , {classy, table_dir, atom_to_list(Name)}
+%%                         | Env]
+%%             , number => Number
+%%             , role   => Role
+%%             , code_paths => CodePaths
+%%             , beam_args => proplists:get_value(beam_args, ClusterOpts, "")
+%%             , cover => Cover
+%%             , uid => UID
+%%             }
+%%      || #{role := Role, name := Name, env := Env, code_paths := CodePaths, num := Number, cover := Cover} <- Specs].
 
 start_cluster(node, Specs) ->
     Nodes = [start_slave(node, I) || I <- Specs],
