@@ -27,30 +27,26 @@ all() ->
     mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
-    mria_ct:start_dist(),
-    snabbkaffe:fix_ct_logging(),
-    Config.
+    mria_ct:init_per_suite(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(TestCase, Config) ->
-    logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
-    ok = snabbkaffe:start_trace(),
-    Config.
+    mria_ct:init_per_testcase(TestCase, Config).
 
 end_per_testcase(TestCase, Config) ->
-    logger:notice(asciiart:visible($%, "Complete ~p", [TestCase])),
-    mria_ct:cleanup(TestCase),
-    snabbkaffe:stop(),
-    Config.
+    mria_ct:end_per_testcase(TestCase, Config).
 
 t_probe(_Config) ->
-    Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
-       try
-           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
+           mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
            ExpectedVersion = rpc:call(N2, mria_rlog, get_protocol_version, []),
            ?tp(test_start, #{}),
            ok = rpc:call(N1, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
@@ -80,8 +76,6 @@ t_probe(_Config) ->
            true = rpc:call(N2, mria_rlog_server, probe, [N1, test_shard]),
            ?tp(test_end, #{}),
            {ExpectedVersion, [N1, N2, N3]}
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        fun({_ExpectedVersion, [_N1, _N2, _N3]}, _Trace0) ->
                %% TODO
@@ -117,17 +111,19 @@ t_probe(_Config) ->
        end).
 
 t_core_node_discovery(_Config) ->
-    Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 60000},
-       try
+       begin
            {[C1, R1, C2], {ok, _}} =
                ?wait_async_action(
                   begin
-                      Nodes = [_, R1, _] = mria_ct:start_cluster(mria, Cluster),
-                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-                      {R1, mria_lb} ! update,
-                      Nodes
+                      N1 = mria_ct:create_start_node(~"c1", core, undefined),
+                      N2 = mria_ct:create_start_node(~"r3", replicant, N1),
+                      N3 = mria_ct:create_start_node(~"c2", core, N1),
+
+                      mria_mnesia_test_util:wait_full_replication([N1, N2, N3], 5000),
+                      {N2, mria_lb} ! update,
+                      [N1, N2, N3]
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                    , node := _
@@ -175,9 +171,8 @@ t_core_node_discovery(_Config) ->
                      ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
              end),
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
-       end, []).
+       end,
+       []).
 
 %% Check that removing a core node from the cluster is handled
 %% correctly by the LB: it prefers the larger cluster.

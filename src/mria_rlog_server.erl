@@ -23,7 +23,7 @@
 
 %% API
 -export([ start_link/2
-        , subscribe/3
+        , subscribe/4
         , bootstrap_me/2
         , probe/2
         , dispatch/3
@@ -84,15 +84,15 @@ probe(Node, Shard) ->
         _           -> false
     end.
 
--spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint()) ->
+-spec subscribe(mria_rlog:shard(), mria_lib:subscriber(), checkpoint(), classy:cluster_id()) ->
           { ok
           , _NeedBootstrap :: boolean()
           , _Agent :: pid()
           , [mria_schema:entry()]
           , integer()
           }.
-subscribe(Shard, Subscriber, Checkpoint) ->
-    gen_server:call(Shard, {subscribe, Subscriber, Checkpoint}, infinity).
+subscribe(Shard, Subscriber, Checkpoint, ClusterId) ->
+    gen_server:call(Shard, {subscribe, Subscriber, Checkpoint, ClusterId}, infinity).
 
 -spec bootstrap_me(node(), mria_rlog:shard()) -> {ok, pid()}
                                                | {error, term()}.
@@ -168,25 +168,31 @@ handle_cast(Cast, St) ->
     ?unexpected_event_tp(#{cast => Cast, state => St}),
     {noreply, St}.
 
-handle_call({subscribe, Subscriber, Checkpoint}, _From, State0) ->
-    #s{ bootstrap_threshold = BootstrapThreshold
-      , tlog_replay         = TlogReplay
-      , shard               = Shard
-      , agent_sup           = AgentSup
-      , agents              = Agents
-      , seqno               = SeqNo
-      } = State0,
-    {NeedBootstrap, ReplaySince} = needs_bootstrap( BootstrapThreshold
-                                                  , TlogReplay
-                                                  , Checkpoint
-                                                  ),
-    Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
-    monitor(process, Pid),
-    mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
-    TableSpecs = mria_schema:table_specs_of_shard(Shard),
-    State = State0#s{ agents = [Pid | Agents]
-                    },
-    {reply, {ok, NeedBootstrap, Pid, TableSpecs, SeqNo}, State};
+handle_call({subscribe, Subscriber, Checkpoint, ClusterId}, _From, State0) ->
+    case classy:the_cluster() of
+        {ok, ClusterId} ->
+            #s{ bootstrap_threshold = BootstrapThreshold
+              , tlog_replay         = TlogReplay
+              , shard               = Shard
+              , agent_sup           = AgentSup
+              , agents              = Agents
+              , seqno               = SeqNo
+              } = State0,
+            {NeedBootstrap, ReplaySince} = needs_bootstrap( BootstrapThreshold
+                                                          , TlogReplay
+                                                          , Checkpoint
+                                                          ),
+            Pid = maybe_start_child(AgentSup, [Subscriber, ReplaySince]),
+            monitor(process, Pid),
+            mria_status:notify_agent_connect(Shard, mria_lib:subscriber_node(Subscriber), Pid),
+            TableSpecs = mria_schema:table_specs_of_shard(Shard),
+            State = State0#s{ agents = [Pid | Agents]
+                            },
+            {reply, {ok, NeedBootstrap, Pid, TableSpecs, SeqNo}, State};
+        My ->
+            Err = {error, {cluster_mismatch, ClusterId, My}},
+            {reply, Err, State0}
+    end;
 handle_call({bootstrap, Subscriber}, _From, State) ->
     Pid = maybe_start_child(State#s.bootstrapper_sup, [Subscriber]),
     {reply, {ok, Pid}, State};

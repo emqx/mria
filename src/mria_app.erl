@@ -83,6 +83,7 @@ install_hooks(Prio) ->
     , classy:pre_join(fun mria:pre_join/4, Prio)
     , classy:post_join(fun mria:post_join/4, Prio)
     , classy:post_kick(fun mria:post_kick/3, Prio)
+    , classy:on_membership_change(fun mria:on_membership_change/4, Prio)
     , classy:on_node_classify(fun mria:on_node_classify/1, Prio)
       %% Run level:
     , classy:run_level(fun ?MODULE:on_run_level/2, Prio)

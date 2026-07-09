@@ -277,10 +277,10 @@ pre_join(_Cluster, _RemoteSite, Node, Intent) when is_atom(Node) ->
     case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
         {false, true, core} ->
             ok;
-        {_, false, _} ->
-            {error, {node_down, Node}};
         {true, _, _} ->
             {error, {already_in_cluster, Node}};
+        {_, false, _} ->
+            {error, {node_down, Node}};
         {_, _, replicant} ->
             {error, {cannot_join_to_replicant, Node}};
         {_, IsRunning, Role} ->
@@ -305,20 +305,17 @@ post_join(_Cluster, _Local, Node, Intent) ->
     classy:at_lower_level(
       stopped,
       fun() ->
-              ?tp_span(
-                 warning, restarting_for_join, #{self => node(), node => Node},
-                 begin
-                     [catch mria_membership:announce(Intent) || Role =:= core],
-                     case Role of
-                         core      -> mria_mnesia:join_cluster(Node);
-                         replicant -> ok
-                     end
-                 end)
+              [catch mria_membership:announce(Intent) || Role =:= core],
+              case Role of
+                  core ->
+                      join_trans(Node);
+                  replicant ->
+                      ok
+              end
       end),
     ?tp(notice, "Mria has joined the cluster",
         #{ seed   => Node
          }).
-
 
 -spec enrich_site_info(map()) -> map().
 enrich_site_info(I) ->
@@ -326,7 +323,7 @@ enrich_site_info(I) ->
                 , vsn => mria_rlog:get_protocol_version()
                 }}.
 
--spec on_node_classify(map()) -> map().
+-spec on_node_classify(map()) -> list().
 on_node_classify(#{mria := #{role := Role, vsn := Vsn}}) ->
     [ Role
     | case mria_rlog:get_protocol_version() of
@@ -347,7 +344,7 @@ leave() ->
 post_kick(_Cluster, _Site, _Intent) ->
     case mria_config:whoami() of
         core ->
-            mria_mnesia:leave_cluster();
+            ok = mria_mnesia:leave_cluster();
         replicant ->
             ok
     end.
@@ -360,18 +357,28 @@ force_leave(Node) ->
     classy:kick_node(Node, leave).
 
 on_membership_change(_Cluster, Local, Remote, false) when Local =/= Remote ->
-    %% Remote got kicked:
+    %% Remote got kicked. Remove it from the cluster:
     case mria_rlog:role() of
         core ->
-            Node = classy:node_of_site(Remote, false),
-            mria_membership:announce({force_leave, Node}),
-            mnesia_lib:del(extra_db_nodes, Node),
-            mria_lib:ensure_ok(mria_mnesia:del_schema_copy(Node));
+            %% NOTE: node_of_site is updated asynchronoulsy.
+            %% Theoretically, node could change the hostname before
+            %% leaving, and this function could misfire (even kick
+            %% another node). Currently mria doesn't support host name
+            %% changes, so this is more of a theoretical thing.
+            maybe
+                {ok, Node} ?= classy:node_of_site(Remote, false),
+                %% mria_membership:announce({force_leave, Node}),
+                mnesia_lib:del(extra_db_nodes, Node),
+                ok ?= mria_mnesia:del_schema_copy(Node),
+                ?tp(info, mria_kicked, #{local => node(), remote => Node})
+            else
+                Err ->
+                    ?tp(error, mria_failed_to_kick_core, #{site => Remote, reason => Err})
+            end;
         replicant ->
             ok
     end;
-on_membership_change(_Cluster, _Local, _Remote, true) ->
-    %% A new member joined:
+on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
     ok.
 
 -spec enable_core_node_discovery() -> ok.
@@ -483,8 +490,6 @@ sync_transaction(Shard, Function, Args, ReplTimeout) ->
     maybe
         {ok, Writes} ?= mria_rlog:shard_writes(Shard),
         case Writes of
-            mnesia ->
-                maybe_middleman(mnesia, transaction, [Function, Args]);
             local ->
                 maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
             remote ->
@@ -507,8 +512,6 @@ transaction(Shard, Function, Args) ->
     maybe
         {ok, Writes} ?= mria_rlog:shard_writes(Shard),
         case Writes of
-            mnesia ->
-                maybe_middleman(mnesia, transaction, [Function, Args]);
             local ->
                 maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
             remote ->
@@ -630,6 +633,29 @@ unsubscribe_replica_events(Shard, Pid) ->
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+join_trans(Node) ->
+    %% NOTE
+    %%
+    %% If two nodes are trying to join each other simultaneously,
+    %% one of them must be blocked waiting for a lock.
+    %% Once lock is released, it is expected to be already in the
+    %% cluster (if the other node joined it successfully).
+    %%
+    %% Additionally, avoid conducting concurrent join operations
+    %% by specifying current process PID as the lock requester.
+    %% Otherwise, concurrent joins can ruin each other's lives and
+    %% make any further cluster operations impossible.
+    %% This can happen, for example, when a concurrent join stops the
+    %% entire `mnesia` system while another join is running schema
+    %% transactions.
+    LockId = ?JOIN_LOCK_ID(self()),
+    ok = global:trans(
+           LockId,
+           fun() ->
+                   mria_mnesia:join_cluster(Node)
+           end,
+           [node(), Node]).
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
 call_backend_rw_dirty(Function, Table, Args) ->

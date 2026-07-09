@@ -117,14 +117,9 @@ role() ->
     persistent_term:get(?mria(node_role), core).
 
 %% Get backend and role:
--spec whoami() -> core | replicant | mnesia.
+-spec whoami() -> core | replicant.
 whoami() ->
-    case backend() of
-        mnesia ->
-            mnesia;
-        rlog ->
-            role()
-    end.
+    role().
 
 -spec rpc_module() -> ?GEN_RPC | ?ERL_RPC.
 rpc_module() ->
@@ -304,7 +299,6 @@ consistency_check() ->
 copy_from_env(Key) ->
     case application:get_env(mria, Key) of
         {ok, Val} ->
-            ?tp(warning, copy_from_env, #{k => Key, v => Val}),
             persistent_term:put(?mria(Key), Val);
         undefined ->
             ok
