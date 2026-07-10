@@ -17,8 +17,7 @@
 -module(mria).
 
 %% Start/Stop
--export([ start/0
-        , stop/1
+-export([ stop/1
         , stop/0
         ]).
 
@@ -134,11 +133,6 @@
 %% Start/Stop
 %%--------------------------------------------------------------------
 
--spec start() -> ok.
-start() ->
-    {ok, _Apps} = application:ensure_all_started(mria),
-    ok.
-
 -spec stop() -> ok | {error, _}.
 stop() ->
     stop(stop).
@@ -148,11 +142,10 @@ stop(Reason) ->
     ?tp(warning, "Stopping mria", #{reason => Reason, node => node()}),
     Reason =:= heal orelse Reason =:= leave andalso
         catch mria_membership:announce(Reason),
-    ?tp(warning, "Stopping mria1", #{reason => Reason, node => node()}),
-    application:stop(mria),
-    ?tp(warning, "Stopping mria2", #{reason => Reason, node => node()}),
-    mria_mnesia:ensure_stopped(),
-    ?tp(warning, "Stopping mria3", #{reason => Reason, node => node()}).
+    maybe
+        ok ?= application:stop(mria),
+        mria_mnesia:ensure_stopped()
+    end.
 
 %%--------------------------------------------------------------------
 %% Info

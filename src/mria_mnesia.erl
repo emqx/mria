@@ -104,8 +104,10 @@
 -spec ensure_schema() -> ok | {error, _}.
 ensure_schema() ->
     ?tp(debug, "Ensure mnesia schema", #{}),
-    mria_lib:ensure_ok(ensure_data_dir()),
-    mria_lib:ensure_ok(init_schema()).
+    maybe
+        ok ?= ensure_data_dir(),
+        init_schema()
+    end.
 
 %% @doc Ensure started
 -dialyzer({nowarn_function, [ensure_started/0]}).
@@ -431,11 +433,11 @@ data_dir() -> mnesia:system_info(directory).
 ensure_data_dir() ->
     case filelib:ensure_dir(data_dir()) of
         ok              -> ok;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} -> {error, {failed_to_create_mnesia_dir, Reason}}
     end.
 
-%% @private
-%% @doc Init mnesia schema or tables.
+%% @private Init mnesia schema or tables.
+-spec init_schema() -> ok | {error, _}.
 init_schema() ->
     IsAlone = case mnesia:system_info(extra_db_nodes) of
                   []    -> true;
@@ -443,9 +445,16 @@ init_schema() ->
               end,
     case (mria_config:role() =:= replicant) orelse IsAlone of
         true ->
-            Ret = mnesia:create_schema([node()]),
-            ?tp(notice, "Creating new mnesia schema", #{result => Ret}),
-            mria_lib:ensure_ok(Ret);
+            case mnesia:create_schema([node()]) of
+                ok ->
+                    ?tp(notice, "Created new mnesia schema", #{}),
+                    SchemaStatus = ok;
+                {error, {Node, {already_exists, Node}}} ->
+                    SchemaStatus = ok;
+                SchemaStatus ->
+                    ?tp(critical, "Failed to create mnesia schema", #{result => SchemaStatus})
+            end,
+            SchemaStatus;
         false ->
             ok
     end.

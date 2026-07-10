@@ -45,10 +45,12 @@ start(_Type, _Args) ->
     mria_rlog:init(),
     ?tp(notice, "Starting mnesia", #{}),
     maybe_perform_disaster_recovery(),
-    mria_mnesia:ensure_schema(),
-    mria_mnesia:ensure_started(),
-    ?tp(notice, "Starting shards", #{}),
-    mria_sup:start_link().
+    maybe
+        ok ?= mria_mnesia:ensure_schema(),
+        ok ?= mria_mnesia:ensure_started(),
+        ?tp(notice, "Starting shards", #{}),
+        mria_sup:start_link()
+    end.
 
 stop(_Hooks) ->
     mria_config:erase_all_config(),
@@ -64,7 +66,8 @@ on_node_init() ->
     ok.
 
 on_run_level(stopped, single) ->
-    mria:start();
+    {ok, _Apps} = application:ensure_all_started(mria),
+    ok;
 on_run_level(single, stopped) ->
     mria:stop();
 on_run_level(_, _) ->

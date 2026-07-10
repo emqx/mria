@@ -229,7 +229,7 @@ t_core_disable_discovery(_Config) ->
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                    , returned_cores := [_, _]
                    }, 10000),
-           %% Disable discovery and kick C2 from the cluster:
+           %% Disable discovery:
            ?wait_async_action(
                   begin
                       erpc:call(C2, fun() ->
