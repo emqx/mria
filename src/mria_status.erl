@@ -99,6 +99,10 @@ check_stopping() ->
             {error, ?stopping}
     end.
 
+%% This function should be called before business logic must restart.
+%%
+%% It sets all waiting optvars to a special value `{error, stopping}',
+%% thus waking up all waiters and letting them terminate gracefully.
 prep_restart() ->
     try gen_server:call(?SERVER, prep_restart, infinity)
     catch
@@ -109,7 +113,7 @@ prep_restart() ->
 %% It is the same node that serves the local replica, but this optvar
 %% is set before local replica goes up fully. WARNING: this `optvar'
 %% is set before local replica becomes consistent.
--spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, restart} | disconnected.
+-spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?stopping} | disconnected.
 rpc_target(Shard, Timeout) ->
     maybe
         ok ?= check_stopping(),

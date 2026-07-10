@@ -571,7 +571,8 @@ rpc_to_core_node(Shard, Module, Function, Args) ->
 
 -spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
 rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
-    Core = find_upstream_node(Shard),
+    {ok, Core} = ?tp_span(find_upstream_node, #{shard => Shard},
+                          mria_status:rpc_target(Shard, infinity)),
     Ret = mria_lib:rpc_call_nothrow({Core, Shard}, Module, Function, Args),
     case should_retry_rpc(Ret) of
         true when Retries > 0 ->
@@ -601,14 +602,6 @@ should_retry_rpc({aborted, {node_not_running, _}}) ->
     true;
 should_retry_rpc(_) ->
     false.
-
--spec find_upstream_node(mria_rlog:shard()) -> node().
-find_upstream_node(Shard) ->
-    ?tp_span(find_upstream_node, #{shard => Shard},
-             begin
-                 {ok, Node} = mria_status:rpc_target(Shard, infinity),
-                 Node
-             end).
 
 -spec ro_transaction(fun(() -> A)) -> A.
 ro_transaction(Fun) ->
