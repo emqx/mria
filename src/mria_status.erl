@@ -270,8 +270,8 @@ wait_for_shards(Shards, Timeout) ->
             #{ shards => Shards
              , result => Ret
              }),
-        ok ?= check_stopping(),
-        Ret
+        ok ?= Ret,
+        check_stopping()
     end.
 
 -spec shards_status() -> [{mria_rlog:shard(), _Status}].

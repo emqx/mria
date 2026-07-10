@@ -319,8 +319,7 @@ wait_for_tables(Tables) ->
         ok ->
             Shards = lists:usort(lists:map(fun mria_config:shard_rlookup/1, Tables))
                         -- [?LOCAL_CONTENT_SHARD],
-            mria_rlog:wait_for_shards(Shards, infinity),
-            ok;
+            mria_rlog:wait_for_shards(Shards, infinity);
         Err ->
             Err
     end.

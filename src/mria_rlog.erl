@@ -153,10 +153,13 @@ core_nodes() ->
 
 -spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]} | {error, stopping}.
 wait_for_shards(Shards, Timeout) ->
-    lists:foreach(fun ensure_shard/1, Shards),
-    %% Note: core node also must wait for shards, to make sure
-    %% the schema has converged, and the shard config is set:
-    mria_status:wait_for_shards(Shards, Timeout).
+    maybe
+        ok ?= mria_status:check_stopping(),
+        lists:foreach(fun ensure_shard/1, Shards),
+        %% Note: core node also must wait for shards, to make sure
+        %% the schema has converged, and the shard config is set:
+        mria_status:wait_for_shards(Shards, Timeout)
+    end.
 
 -spec ensure_shard(shard()) -> ok.
 ensure_shard(?LOCAL_CONTENT_SHARD) ->

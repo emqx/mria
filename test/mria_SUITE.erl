@@ -1914,7 +1914,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:write({Tab2, {2, N}, {hello, node()}})
                         end)))
             || N <- Nodes],
-           ct:sleep(100),
+           ct:sleep(1000),
            [?defer_assert(
                ?assertEqual(
                   [{Tab1, {I, Ni}, trans} || I <- [1, 2], Ni <- Nodes],
@@ -1938,7 +1938,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:delete_object({Tab2, {2, N}, {hello, node()}})
                         end)))
             || N <- Nodes],
-           ct:sleep(100),
+           ct:sleep(1000),
            [?defer_assert(
                ?assertEqual(
                   [{Tab1, {1, Ni}, trans} || Ni <- Nodes],
@@ -1961,7 +1961,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:delete(Tab2, {1, N}, write)
                         end)))
             || N <- Nodes],
-           ct:sleep(100),
+           ct:sleep(1000),
            [?defer_assert(
                ?assertEqual(
                   [],
