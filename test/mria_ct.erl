@@ -65,7 +65,9 @@ init_per_testcase(TestCase, Config) ->
     ok = familiar:start_link_cluster(
            #{ id => TestCase
             , fixtures => familiar:default_fixtures() ++ Fixtures
-            , peer => #{args => ["-kernel", "prevent_overlapping_partitions", "false"]}
+            , peer => #{ args => ["-kernel", "prevent_overlapping_partitions", "false"]
+                       , shutdown => {halt, 5000}
+                       }
             , net => {127, 22, Subnet, 0}
             }),
     put(classy_SUITE_cluster, {ok, TestCase}),
