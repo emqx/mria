@@ -45,7 +45,8 @@
         ]).
 
 %% Classy hooks
--export([ pre_join/4
+-export([ on_create_cluster/2
+        , pre_join/4
         , post_join/4
         , post_kick/3
         , enrich_site_info/1
@@ -269,6 +270,10 @@ join(Node) ->
 join(Node, Reason) when is_atom(Node) ->
     classy:join_node(Node, Reason).
 
+-spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok.
+on_create_cluster(_, _) ->
+    mria_mnesia:ensure_schema().
+
 -spec pre_join(classy:cluster_id(), classy:site(), node(), term()) -> ok | {error, _}.
 pre_join(_Cluster, _RemoteSite, Node, Intent) when is_atom(Node) ->
     %% When `Intent =:= heal' the node should rejoin regardless of
@@ -341,10 +346,33 @@ leave() ->
 
 %% @private When done via classy
 -spec post_kick(classy:cluster_id(), classy:site(), term()) -> ok.
-post_kick(_Cluster, _Site, _Intent) ->
-    case mria_config:whoami() of
+post_kick(Cluster, _Site, Intent) ->
+    case mria_config:role() of
         core ->
-            ok = mria_mnesia:leave_cluster();
+            Result1 = maybe
+                          ok ?= mria_mnesia:ensure_stopped(),
+                          mria_mnesia:leave_cluster()
+                      end,
+            case Result1 of
+                ok ->
+                    ok;
+                Err1 ->
+                    ?tp(critical, mria_failed_to_leave_cluster,
+                        #{ reason => Err1
+                         , intent => Intent
+                         , cluster => Cluster
+                         })
+            end,
+            case mria_mnesia:delete_schema() of
+                ok ->
+                    ok;
+                Err2 ->
+                    ?tp(critical, mria_failed_to_delete_schema,
+                        #{ reason => Err2
+                         , intent => Intent
+                         , cluster => Cluster
+                         })
+            end;
         replicant ->
             ok
     end.

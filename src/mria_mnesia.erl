@@ -148,7 +148,8 @@ join_cluster(Node) when Node =/= node() ->
     case {mria_config:role(), mria_rlog:role(Node)} of
         {core, core} ->
             maybe
-                %% Stop mnesia and delete schema first
+                %% Stop mnesia and delete schema first (strictly, this
+                %% is not necessary since post_kick does the same):
                 ok ?= ensure_stopped(),
                 ok ?= delete_schema(),
                 %% Restart mnesia and cluster to node
@@ -340,7 +341,6 @@ diagnosis_tab(Tab) ->
             %% Most likely schema is not merged with remote.
             io_lib:format("Not able to read table info for ~p ~n", [Tab])
     end.
-
 
 %% @doc Force to delete schema.
 delete_schema() ->

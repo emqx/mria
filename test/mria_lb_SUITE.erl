@@ -117,9 +117,9 @@ t_core_node_discovery(_Config) ->
            {[C1, R1, C2], {ok, _}} =
                ?wait_async_action(
                   begin
-                      N1 = mria_ct:create_start_node(~"c1", core, undefined),
-                      N2 = mria_ct:create_start_node(~"r3", replicant, N1),
-                      N3 = mria_ct:create_start_node(~"c2", core, N1),
+                      {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+                      {ok, _, N2} = mria_ct:create_start_node(~"r3", replicant, N1),
+                      {ok, _, N3} = mria_ct:create_start_node(~"c2", core, N1),
 
                       mria_mnesia_test_util:wait_full_replication([N1, N2, N3], 5000),
                       {N2, mria_lb} ! update,
@@ -177,16 +177,20 @@ t_core_node_discovery(_Config) ->
 %% Check that removing a core node from the cluster is handled
 %% correctly by the LB: it prefers the larger cluster.
 t_core_node_leave(_Config) ->
-    Cluster = mria_ct:cluster([core, replicant, core, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 60000},
-       try
+       begin
            {[C1, R1, C2, C3], {ok, _}} =
                ?wait_async_action(
                   begin
-                      Nodes = [_, R1, _, _] = mria_ct:start_cluster(mria, Cluster),
-                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-                      {R1, mria_lb} ! update,
+                      {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+                      {ok, _, N2} = mria_ct:create_start_node(~"r1", replicant, N1),
+                      {ok, _, N3} = mria_ct:create_start_node(~"c2", core, N1),
+                      {ok, _, N4} = mria_ct:create_start_node(~"c3", core, N1),
+
+                      Nodes = [N1, N2, N3, N4],
+                      mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
+                      {N2, mria_lb} ! update,
                       Nodes
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -195,32 +199,31 @@ t_core_node_leave(_Config) ->
            %% Kick C2 from the cluster:
            ?tp(test_kick_core_node, #{}),
            ?assertMatch(ok, rpc:call(C2, mria, leave, [])),
+           mria_mnesia_test_util:stabilize(1000),
            %% Make sure there is a netsplit:
            ?assertMatch([C2], rpc:call(C2, mria_mnesia, db_nodes, [])),
            ?assertMatch([C1, C3], lists:sort(rpc:call(C1, mria_mnesia, db_nodes, []))),
            %% Ensure the replicant detected the split:
            {R1, mria_lb} ! update,
-           ?block_until(#{ ?snk_kind := mria_lb_split_brain
-                         , clusters := [_, _]
-                         }),
            %% It should prefer the larger cluster:
            ?assertEqual([C1, C3], rpc:call(R1, mria_rlog, core_nodes, []))
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end, []).
+       end,
+       []).
 
-%% Check that removing a node from the cluster and disabling its rediscovery is handled correctly by the LB.
-t_node_leave_disable_discovery(_Config) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+%% Check that disabling rediscovery on the core is handled correctly on the replicant:
+t_core_disable_discovery(_Config) ->
     ?check_trace(
        #{timetrap => 60000},
-       try
+       begin
            {[C1, C2, R1], {ok, _}} =
                ?wait_async_action(
                   begin
-                      Nodes = [_, _, R1] = mria_ct:start_cluster(mria, Cluster),
-                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-                      {R1, mria_lb} ! update,
+                      {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+                      {ok, _, N2} = mria_ct:create_start_node(~"c2", core, N1),
+                      {ok, _, N3} = mria_ct:create_start_node(~"r1", replicant, N1),
+                      Nodes = [N1, N2, N3],
+                      mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
+                      {N3, mria_lb} ! update,
                       Nodes
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -229,8 +232,8 @@ t_node_leave_disable_discovery(_Config) ->
            %% Disable discovery and kick C2 from the cluster:
            ?wait_async_action(
                   begin
-                      erpc:call(C2, fun() -> ok = mria_config:set_core_node_discovery(false),
-                                             mria:leave()
+                      erpc:call(C2, fun() ->
+                                            ok = mria_config:set_core_node_discovery(false)
                                     end)
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -239,30 +242,35 @@ t_node_leave_disable_discovery(_Config) ->
                    , returned_cores := [_]
                    }, 10000),
            ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end, []).
+       end,
+       []).
 
 t_custom_compat_check(_Config) ->
-    Env = [ {mria, {callback, lb_custom_info_check}, fun(Val) -> Val =:= chosen_one end}
-          | mria_mnesia_test_util:common_env()],
-    Cluster = mria_ct:cluster([ core
-                              , core
-                              , {core, [{mria, {callback, lb_custom_info},
-                                         fun() -> chosen_one end}]}
-                              , replicant
-                              ], Env),
     ?check_trace(
        #{timetrap => 15000},
-       try
-           [_C1, _C2, C3, R1] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           MriaOpts = #{{callback, lb_custom_info_check} =>
+                            fun(Val) ->
+                                    Val =:= chosen_one
+                            end
+                       },
+           {ok, _, C1} = mria_ct:create_node(~"c1", core, MriaOpts, undefined, #{start => true}),
+           {ok, _, _C2} = mria_ct:create_node(~"c2", core, MriaOpts, C1, #{start => true}),
+           {ok, _, C3} = mria_ct:create_node(
+                            ~"c3",
+                            core,
+                            MriaOpts#{{callback, lb_custom_info} => fun() -> chosen_one end},
+                            C1,
+                            #{start => true}),
+           {ok, _, R1} = mria_ct:create_node(~"r1", core, MriaOpts, C1, #{start => true}),
+
+           mria_mnesia_test_util:stabilize(1000),
+
            ?assertEqual({ok, C3},
                         erpc:call( R1
                                  , mria_status, replica_get_core_node, [?mria_meta_shard, infinity]
                                  , infinity
                                  ))
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        []).
 

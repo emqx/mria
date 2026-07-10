@@ -80,6 +80,7 @@ install_hooks(Prio) ->
     [ %% Info:
       classy:enrich_site_info(fun mria:enrich_site_info/1, -Prio)
       %% Clustering:
+    , classy:on_create_cluster(fun mria:on_create_cluster/2, Prio)
     , classy:pre_join(fun mria:pre_join/4, Prio)
     , classy:post_join(fun mria:post_join/4, Prio)
     , classy:post_kick(fun mria:post_kick/3, Prio)
