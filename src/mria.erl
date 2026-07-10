@@ -142,10 +142,8 @@ stop(Reason) ->
     ?tp(warning, "Stopping mria", #{reason => Reason, node => node()}),
     Reason =:= heal orelse Reason =:= leave andalso
         catch mria_membership:announce(Reason),
-    maybe
-        ok ?= application:stop(mria),
-        mria_mnesia:ensure_stopped()
-    end.
+    application:stop(mria),
+    mria_mnesia:ensure_stopped().
 
 %%--------------------------------------------------------------------
 %% Info

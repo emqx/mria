@@ -31,6 +31,7 @@
         , enrich_site_info/1
         , on_node_classify/1
         , on_membership_change/4
+        , on_prep_stop/1
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -70,8 +71,6 @@ on_node_init() ->
 on_run_level_high(stopped, single) ->
     {ok, _Apps} = application:ensure_all_started(mria),
     ok;
-on_run_level_high(single, stopped) ->
-    mria_status:prep_restart();
 on_run_level_high(_, _) ->
     ok.
 
@@ -79,6 +78,9 @@ on_run_level_low(single, stopped) ->
     mria:stop();
 on_run_level_low(_, _) ->
     ok.
+
+on_prep_stop(_Reason) ->
+    mria_status:prep_restart().
 
 -spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok.
 on_create_cluster(_, _) ->
@@ -117,7 +119,6 @@ post_join(_Cluster, _Local, Node, Intent) ->
     %% havok
     Role = application:get_env(mria, node_role, core),
     ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    mria_status:prep_restart(),
     classy:at_lower_level(
       stopped,
       fun() ->
@@ -239,6 +240,8 @@ install_hooks(Prio) ->
       %% Run level:
     , classy:run_level(fun ?MODULE:on_run_level_high/2, Prio)
     , classy:run_level(fun ?MODULE:on_run_level_low/2, -Prio)
+      %% Shutdown:
+    , classy:on_prep_stop(fun ?MODULE:on_prep_stop/1, Prio)
     ].
 
 join_trans(Node) ->

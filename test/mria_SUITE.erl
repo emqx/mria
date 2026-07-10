@@ -1432,12 +1432,12 @@ t_join_each_other_simultaneously(_) ->
            ?assertMatch([_, _],
                         lists:sort([rpc:yield(Key1), rpc:yield(Key2)])),
            %% Verify that they created a cluster:
-           mria_mnesia_test_util:stabilize(1000),
-           [begin
-                ?assertEqual([N1, N2], ?ON(I, mria:running_nodes())),
-                ?assertEqual([N1, N2], ?ON(I, lists:sort(mria_mnesia:cluster_nodes(all))))
-            end
-            || I <- [N1, N2]]
+           ?retry(1000, 20,
+                  [begin
+                       ?assertEqual([N1, N2], ?ON(I, mria:running_nodes())),
+                       ?assertEqual([N1, N2], ?ON(I, lists:sort(mria_mnesia:cluster_nodes(all))))
+                   end
+                   || I <- [N1, N2]])
        end,
        []).
 

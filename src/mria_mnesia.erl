@@ -365,7 +365,7 @@ del_schema_copy(Node, N) ->
             ok;
         {aborted, {active, "Mnesia is running", _} = Reason} ->
             %% Signal to leave the cluster may arrive to the remote node later. Retry:
-            ?tp(debug, mria_del_schema_copy_retry, #{node => Node, reason => Reason}),
+            ?tp(warning, mria_del_schema_copy_retry, #{node => Node, local => node(), reason => Reason}),
             timer:sleep(1000),
             del_schema_copy(Node, N - 1);
         {aborted, Reason} ->
