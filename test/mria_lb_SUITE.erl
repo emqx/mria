@@ -256,11 +256,13 @@ t_custom_compat_check(_Config) ->
                        },
            {ok, _, C1} = mria_ct:create_node(~"c1", core, MriaOpts, undefined, #{start => true}),
            {ok, _, _C2} = mria_ct:create_node(~"c2", core, MriaOpts, C1, #{start => true}),
-           {ok, _, C3} = mria_ct:create_node(~"c3", core, C1, #{start => true}),
+           {ok, _, C3} = mria_ct:create_node(~"c3", core, MriaOpts, C1, #{start => true}),
            {ok, _, R1} = mria_ct:create_node(~"r1", core, MriaOpts, C1, #{start => true}),
 
            mria_mnesia_test_util:stabilize(1000),
-           erpc:call(C3, application:set_env(mria, {callback, lb_custom_info}, fun() -> chosen_one end)),
+           erpc:call(
+             C3,
+             fun() -> application:set_env(mria, {callback, lb_custom_info}, fun() -> chosen_one end) end),
            {R1, mria_lb} ! update,
 
            ?assertEqual({ok, C3},

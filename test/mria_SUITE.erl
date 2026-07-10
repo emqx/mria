@@ -1192,7 +1192,7 @@ t_promote_replicant_to_core(_) ->
            ok = mria_mnesia_test_util:wait_tables([N2]),
            %% generate more transactions
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
-           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ok
        end,
