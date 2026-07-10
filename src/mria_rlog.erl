@@ -151,7 +151,7 @@ backend() ->
 core_nodes() ->
     mria_lb:core_nodes().
 
--spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
+-spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]} | {error, stopping}.
 wait_for_shards(Shards, Timeout) ->
     lists:foreach(fun ensure_shard/1, Shards),
     %% Note: core node also must wait for shards, to make sure

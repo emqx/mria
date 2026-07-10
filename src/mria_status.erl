@@ -24,6 +24,7 @@
 
 %% API:
 -export([start_link/0,
+         prep_restart/0,
          notify_rpc_target_up/2, notify_rpc_target_down/1, rpc_target/2,
          notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
          notify_core_node_up/2, notify_core_node_down/1, replica_get_core_node/2,
@@ -86,15 +87,21 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+prep_restart() ->
+    try gen_server:call(?SERVER, prep_restart, infinity)
+    catch
+        exit:{noproc, _} -> ok
+    end.
+
 %% @doc Return name of the core node that can serve as the RPC target.
 %% It is the same node that serves the local replica, but this optvar
 %% is set before local replica goes up fully. WARNING: this `optvar'
 %% is set before local replica becomes consistent.
--spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | disconnected.
+-spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, restart} | disconnected.
 rpc_target(Shard, Timeout) ->
     case optvar:read(?optvar({?rpc_target, Shard}), Timeout) of
-        OK = {ok, _} ->
-            OK;
+        {ok, Result} ->
+            Result;
         timeout ->
             disconnected
     end.
@@ -123,8 +130,9 @@ upstream_node(Shard) ->
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
 upstream(Shard) ->
     case optvar:peek(?optvar({?upstream_pid, Shard})) of
-        {ok, Pid} -> {ok, Pid};
-        undefined -> disconnected
+        {ok, {ok, Pid}}         -> {ok, Pid};
+        {ok, {error, stopping}} -> disconnected;
+        undefined               -> disconnected
     end.
 
 %% @doc WARNING: this optvar is used STRICTLY for interaction between
@@ -132,9 +140,16 @@ upstream(Shard) ->
 %% that serves minimal number of replicants. As such, it must NOT be
 %% used for RPC targeting: all RPCs from the entire cluster will end
 %% up on a single node.
--spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
+-spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, stopping} | timeout.
 replica_get_core_node(Shard, Timeout) ->
-    optvar:read(?optvar({?core_node, Shard}), Timeout).
+    case optvar:read(?optvar({?core_node, Shard}), Timeout) of
+        {ok, {ok, _} = Ok} ->
+            Ok;
+        {ok, {error, stopping} = Err} ->
+            Err;
+        timeout ->
+            timeout
+    end.
 
 -spec notify_core_node_up(mria_rlog:shard(), node()) -> ok.
 notify_core_node_up(Shard, Node) ->
@@ -346,9 +361,14 @@ notify_replicant_bootstrap_import(Shard) ->
 notify_local_table(Table) ->
     do_notify_up(?local_table, Table, true).
 
--spec local_table_present(mria:table()) -> true.
+-spec local_table_present(mria:table()) -> true | {error, stopped}.
 local_table_present(Table) ->
-    optvar:read(?optvar({?local_table, Table})).
+    case optvar:read(?optvar({?local_table, Table})) of
+        {ok, true} ->
+            true;
+        {error, stopped} = Err ->
+            Err
+    end.
 
 -spec waiting_shards() -> [mria_rlog:shard()].
 waiting_shards() ->
@@ -403,6 +423,9 @@ terminate(_Reason, _State) ->
     [optvar:unset(?optvar(K)) || ?optvar(K) <- optvar:list()],
     {exit, normal}.
 
+handle_call(prep_restart, _From, State) ->
+    [optvar:set(?optvar(K), {error, stopping}) || ?optvar(K) <- optvar:list()],
+    {reply, ok, State};
 handle_call(_, _, State) ->
     {reply, {error, unknown_call}, State}.
 
@@ -452,7 +475,7 @@ do_notify_up(Tag, Object, Value) ->
              , value  => Value
              , node   => node()
              }),
-    optvar:set(?optvar(Key), Value).
+    optvar:set(?optvar(Key), {ok, Value}).
 
 -spec do_notify_down(atom(), term()) -> ok.
 do_notify_down(Tag, Object) ->

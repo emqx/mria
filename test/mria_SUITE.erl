@@ -48,20 +48,27 @@ end_per_testcase(TestCase, Config) ->
     mria_ct:end_per_testcase(TestCase, Config).
 
 t_create_del_table(_) ->
-    try
-        mria:start(),
-        ok = mria:create_table(kv_tab, [
-                    {storage, ram_copies},
-                    {rlog_shard, test_shard},
-                    {record_name, kv_tab},
-                    {attributes, record_info(fields, kv_tab)},
-                    {storage_properties, []}]),
-        ok = mria_mnesia:copy_table(kv_tab, disc_copies),
-        ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
-        {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
-    after
-        mria:stop()
-    end.
+    ?check_trace(
+       #{timetrap => 15_000},
+       begin
+           {ok, _, N} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           mria_ct:wait_quorum([N]),
+           ?ON(N,
+               begin
+                   ok = mria:create_table(
+                          kv_tab,
+                          [ {storage, ram_copies}
+                          , {rlog_shard, test_shard}
+                          , {record_name, kv_tab}
+                          , {attributes, record_info(fields, kv_tab)}
+                          , {storage_properties, []}
+                          ]),
+                   ok = mria_mnesia:copy_table(kv_tab, disc_copies),
+                   ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
+                   {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
+               end)
+       end,
+       []).
 
 t_disc_table(_) ->
     ?check_trace(
@@ -1176,12 +1183,12 @@ t_promote_replicant_to_core(_) ->
            ok = erpc:call(N2, fun mria:stop/0),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
            %% restart replicant as a new core
-           ok = erpc:call(
-                  N2,
-                  fun() ->
-                          ok = application:set_env(mria, node_role, core),
-                          ok = mria:start()
-                  end),
+           {ok, _} = erpc:call(
+                       N2,
+                       fun() ->
+                               ok = application:set_env(mria, node_role, core),
+                               application:ensure_all_started(mria)
+                       end),
            ok = mria_mnesia_test_util:wait_tables([N2]),
            %% generate more transactions
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
@@ -1232,9 +1239,11 @@ t_replicant_manual_join(_Config) ->
            ?retry(1000, 10,
                   ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, []))),
            %% 2. Manually connect the replicant to the core cluster:
-           ?wait_async_action(
-              ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-              #{?snk_kind := classy_change_run_level, to := quorum, ?snk_meta := #{node := N3}}),
+           ?tp_span(notice, test_join1, #{},
+                    begin
+                        ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+                        mria_ct:wait_quorum([N3])
+                    end),
            %% Check that meta shard is up:
            ?assertMatch({ok, Pid} when is_pid(Pid), rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% Now after we've manually joined the replicant to the
@@ -1244,14 +1253,14 @@ t_replicant_manual_join(_Config) ->
 
            %% Weird race condition in mnesia:
            timer:sleep(5000),
-           ?tp(test_disconnect_node, #{node => N3}),
+           ?tp(notice, test_disconnect_node, #{node => N3}),
            ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
            ?assertMatch({error, _}, rpc:call(N3, mria, join, ['badnode@badhost'])),
            %% 4. Now connect the replicant to the core cluster again (bug: EMQX-9021):
            ?tp(test_reconnect_node, #{node => N3}),
-           ?wait_async_action(
-              ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-              #{?snk_kind := classy_change_run_level, to := quorum, ?snk_meta := #{node := N3}}),
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           mria_ct:wait_quorum([N3]),
+           %% Re-join to the same node should fail:
            ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N1])),
            ?assertMatch({ok, _}, rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% 5. Do the same to the other core node:
@@ -1263,7 +1272,7 @@ t_replicant_manual_join(_Config) ->
            %%    - Rejoin the cluster
            ?tp(test_reconnect_node, #{node => N2}),
            ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
-           ?retry(500, 10,
+           ?retry(1000, 10,
                   ?assertMatch([N1, N2, N3], lists:sort(rpc:call(N2, mria, running_nodes, [])))),
            Nodes
        end,
@@ -1278,6 +1287,7 @@ t_cluster_nodes(_) ->
            {ok, _, Repl1} = mria_ct:create_start_node(<<"r1">>, replicant, Core1),
            {ok, _, Repl2} = mria_ct:create_start_node(<<"r2">>, replicant, Core1),
            Nodes = [Core1, Core2, Repl1, Repl2],
+           mria_mnesia_test_util:stabilize(1000),
 
            [?assertEqual(Nodes, lists:sort(rpc:call(N1, mria, cluster_nodes, [State])), {N1, State})
             || N1 <- Nodes,

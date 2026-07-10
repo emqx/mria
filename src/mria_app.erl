@@ -21,7 +21,8 @@
 -export([start/2, stop/1]).
 
 %% Classy hooks
--export([ on_run_level/2
+-export([ on_run_level_high/2
+        , on_run_level_low/2
         , on_node_init/0
         , on_create_cluster/2
         , pre_join/4
@@ -63,14 +64,20 @@ stop(_Hooks) ->
 %% @doc This function must be called to enable mria
 on_node_init() ->
     _ = install_hooks(9999),
+    application:set_env(classy, to_cluster_sets, [core]),
     ok.
 
-on_run_level(stopped, single) ->
+on_run_level_high(stopped, single) ->
     {ok, _Apps} = application:ensure_all_started(mria),
     ok;
-on_run_level(single, stopped) ->
+on_run_level_high(single, stopped) ->
+    mria_status:prep_restart();
+on_run_level_high(_, _) ->
+    ok.
+
+on_run_level_low(single, stopped) ->
     mria:stop();
-on_run_level(_, _) ->
+on_run_level_low(_, _) ->
     ok.
 
 -spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok.
@@ -110,6 +117,7 @@ post_join(_Cluster, _Local, Node, Intent) ->
     %% havok
     Role = application:get_env(mria, node_role, core),
     ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+    mria_status:prep_restart(),
     classy:at_lower_level(
       stopped,
       fun() ->
@@ -225,11 +233,12 @@ install_hooks(Prio) ->
     , classy:on_create_cluster(fun ?MODULE:on_create_cluster/2, Prio)
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
     , classy:post_join(fun ?MODULE:post_join/4, Prio)
-    , classy:post_kick(fun ?MODULE:post_kick/3, Prio)
+    , classy:post_kick(fun ?MODULE:post_kick/3, -Prio)
     , classy:on_membership_change(fun ?MODULE:on_membership_change/4, Prio)
     , classy:on_node_classify(fun ?MODULE:on_node_classify/1, Prio)
       %% Run level:
-    , classy:run_level(fun ?MODULE:on_run_level/2, Prio)
+    , classy:run_level(fun ?MODULE:on_run_level_high/2, Prio)
+    , classy:run_level(fun ?MODULE:on_run_level_low/2, -Prio)
     ].
 
 join_trans(Node) ->
