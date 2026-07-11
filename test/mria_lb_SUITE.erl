@@ -121,10 +121,12 @@ t_core_node_split(_Config) ->
                   begin
                       {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
                       {ok, _, N2} = mria_ct:create_start_node(~"r3", replicant, N1),
+                      %% Give replicant time to connect to N1:
+                      ping_lb(N2),
+                      ct:sleep(1000),
                       {ok, _, N3} = mria_ct:create_start_node(~"c2", core, N1),
 
                       mria_mnesia_test_util:wait_full_replication([N1, N2, N3], 5000),
-                      ping_lb(N2),
                       [N1, N2, N3]
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -137,42 +139,22 @@ t_core_node_split(_Config) ->
            ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, [])),
            %% 2. Emulate split brain
            ?tp(test_inject_split_brain, #{}),
-           InexistentNodes = ['inexistent@127.0.0.1'],
-           clear_core_node_list(R1),
-           with_reported_cores(
-             C1, InexistentNodes,
-             fun() ->
-                     {_, {ok, _}} =
-                         ?wait_async_action(
-                            ping_lb(R1),
-                            #{ ?snk_kind := mria_lb_split_brain
-                             , node := R1
-                             , clusters := [_, _]
-                             }, 5000),
-                     %% In case of split brain the replicant will fallback to C2, since it has known it before the split
-                     ?assertEqual([C2], rpc:call(R1, mria_lb, core_nodes, [])),
-                     ?assertEqual([C2], rpc:call(R1, mria_rlog, core_nodes, []))
-             end),
-           %% 3. if a candidate is a replicant, it's excluded from the
-           %% final list.  So the LB now decided to fall back to C1
-           %% partition:
-           clear_core_node_list(R1),
-           ?tp(test_inject_replicant_role, #{}),
-           with_role(
-             C2, replicant,
-             fun() ->
-                     {_, {ok, _}} =
-                         ?wait_async_action(
-                            ping_lb(R1),
-                            #{ ?snk_kind := mria_lb_core_discovery_new_nodes
-                             , node := R1
-                             , previous_cores := _
-                             , returned_cores := [C1]
-                             }, 5000),
-                     ?assertEqual([C1], rpc:call(R1, mria_lb, core_nodes, [])),
-                     ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
-             end),
-           ok
+           [?ON(I,
+                begin
+                    meck:new(mria_mnesia, [no_history, passthrough, no_link]),
+                    meck:expect(mria_mnesia, db_nodes,
+                                fun() -> [node()] end)
+                end)
+            || I <- [C1, C2]],
+           ping_lb(R1),
+           ?block_until(
+              #{ ?snk_kind := mria_lb_split_brain
+               , node := R1
+               , clusters := [_, _]
+               }),
+           %% In case of split brain the replicant will fallback to C2, since it has known it before the split
+           ?assertEqual([C2], rpc:call(R1, mria_lb, core_nodes, [])),
+           ?assertEqual([C2], rpc:call(R1, mria_rlog, core_nodes, []))
        end,
        []).
 
