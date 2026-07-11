@@ -32,9 +32,11 @@ init_per_testcase(TestCase, Config) ->
     logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
     %% Allocate a unique subnet for the testcase:
     {_, Ctr} = proplists:lookup(net_ctr, Config),
-    atomics:add(Ctr, 1, 1),
-    Subnet = atomics:get(Ctr, 1) rem 256,
-    %% Cluster setup:
+    Subnet = atomics:add_get(Ctr, 1, 1) rem 256,
+    ok = create_cluster(TestCase, Subnet),
+    Config.
+
+create_cluster(ClusterId, Subnet) ->
     Fixtures = [ {familiar_snabbkaffe, #{}}
                , {familiar_app,
                   #{ app => gen_rpc
@@ -62,16 +64,15 @@ init_per_testcase(TestCase, Config) ->
                                   end
                  }}
                ],
-    ok = familiar:start_link_cluster(
-           #{ id => TestCase
-            , fixtures => familiar:default_fixtures() ++ Fixtures
-            , peer => #{ args => ["-kernel", "prevent_overlapping_partitions", "false"]
-                       , shutdown => {halt, 5000}
-                       }
-            , net => {127, 22, Subnet, 0}
-            }),
-    put(classy_SUITE_cluster, {ok, TestCase}),
-    Config.
+    put(mria_ct_cluster, {ok, ClusterId}),
+    familiar:start_link_cluster(
+      #{ id => ClusterId
+       , fixtures => familiar:default_fixtures() ++ Fixtures
+       , peer => #{ args => ["-kernel", "prevent_overlapping_partitions", "false"]
+                  , shutdown => {halt, 5000}
+                  }
+       , net => {127, 22, Subnet, 0}
+       }).
 
 end_per_testcase(TestCase, Config) ->
     Success = case proplists:get_value(tc_status, Config) of
@@ -130,7 +131,7 @@ fixtures(Role, MriaOpts, JoinTo) ->
     ].
 
 get_cluster() ->
-  {ok, Cluster} = get(classy_SUITE_cluster),
+  {ok, Cluster} = get(mria_ct_cluster),
   Cluster.
 
 %% @doc Get all the test cases in a CT suite.

@@ -32,12 +32,16 @@ t_import_transactions(Config0) when is_list(Config0) ->
                          numtests => 100,
                          timeout  => 100000
                         }} | Config0],
-    ClusterConfig = [core, replicant],
-    ?run_prop(Config, mria_proper_utils:prop(ClusterConfig, ?MODULE)).
+    ?run_prop(Config, mria_proper_utils:prop(?MODULE)).
 
 %%================================================================================
 %% Proper FSM definition
 %%================================================================================
+
+create_cluster() ->
+    {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+    {ok, _, N2} = mria_ct:create_start_node(~"c2", replicant, N1),
+    [N1, N2].
 
 %% Initial model value at system start. Should be deterministic.
 initial_state() ->

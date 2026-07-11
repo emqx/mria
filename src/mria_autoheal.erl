@@ -150,7 +150,7 @@ apply_heal_plan(ClusterViews) ->
 %% partition heal. As these nodes will seed all restarting nodes, they should
 %% contain consistent set of Mria data, i.e. they should have replicated the
 %% same set of transactions.
-%% 
+%%
 %% These survivor nodes are chosen according to reachability matrix:
 %% 1. Each node starts with a bit vector containing only itself.
 %% 2. For every reported running node `RN' by node `N', RN's reachability

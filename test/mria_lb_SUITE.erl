@@ -23,6 +23,8 @@
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include("mria_rlog.hrl").
 
+-define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
+
 all() ->
     mria_ct:all(?MODULE).
 
@@ -110,7 +112,7 @@ t_probe(_Config) ->
                ok
        end).
 
-t_core_node_discovery(_Config) ->
+t_core_node_split(_Config) ->
     ?check_trace(
        #{timetrap => 60000},
        begin
@@ -122,7 +124,7 @@ t_core_node_discovery(_Config) ->
                       {ok, _, N3} = mria_ct:create_start_node(~"c2", core, N1),
 
                       mria_mnesia_test_util:wait_full_replication([N1, N2, N3], 5000),
-                      {N2, mria_lb} ! update,
+                      ping_lb(N2),
                       [N1, N2, N3]
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -142,7 +144,7 @@ t_core_node_discovery(_Config) ->
              fun() ->
                      {_, {ok, _}} =
                          ?wait_async_action(
-                            {R1, mria_lb} ! update,
+                            ping_lb(R1),
                             #{ ?snk_kind := mria_lb_split_brain
                              , node := R1
                              , clusters := [_, _]
@@ -161,7 +163,7 @@ t_core_node_discovery(_Config) ->
              fun() ->
                      {_, {ok, _}} =
                          ?wait_async_action(
-                            {R1, mria_lb} ! update,
+                            ping_lb(R1),
                             #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                              , node := R1
                              , previous_cores := _
@@ -190,7 +192,7 @@ t_core_node_leave(_Config) ->
 
                       Nodes = [N1, N2, N3, N4],
                       mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
-                      {N2, mria_lb} ! update,
+                      ping_lb(N2),
                       Nodes
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -204,7 +206,7 @@ t_core_node_leave(_Config) ->
            ?assertMatch([C2], rpc:call(C2, mria_mnesia, db_nodes, [])),
            ?assertMatch([C1, C3], lists:sort(rpc:call(C1, mria_mnesia, db_nodes, []))),
            %% Ensure the replicant detected the split:
-           {R1, mria_lb} ! update,
+           ping_lb(R1),
            %% It should prefer the larger cluster:
            ?assertEqual([C1, C3], rpc:call(R1, mria_rlog, core_nodes, []))
        end,
@@ -223,7 +225,7 @@ t_core_disable_discovery(_Config) ->
                       {ok, _, N3} = mria_ct:create_start_node(~"r1", replicant, N1),
                       Nodes = [N1, N2, N3],
                       mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
-                      {N3, mria_lb} ! update,
+                      ping_lb(N3),
                       Nodes
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -231,16 +233,14 @@ t_core_disable_discovery(_Config) ->
                    }, 10000),
            %% Disable discovery:
            ?wait_async_action(
-                  begin
-                      erpc:call(C2, fun() ->
-                                            ok = mria_config:set_core_node_discovery(false)
-                                    end)
-                  end,
-                  #{ ?snk_kind := mria_lb_core_discovery_new_nodes
-                   , node := _
-                   , previous_cores := [_, _]
-                   , returned_cores := [_]
-                   }, 10000),
+              begin
+                  ok = ?ON(C2, mria_config:set_core_node_discovery(false))
+              end,
+              #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+               , node := _
+               , previous_cores := [_, _]
+               , returned_cores := [_]
+               }, 10000),
            ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
        end,
        []).
@@ -257,30 +257,29 @@ t_custom_compat_check(_Config) ->
            {ok, _, C1} = mria_ct:create_node(~"c1", core, MriaOpts, undefined, #{start => true}),
            {ok, _, _C2} = mria_ct:create_node(~"c2", core, MriaOpts, C1, #{start => true}),
            {ok, _, C3} = mria_ct:create_node(~"c3", core, MriaOpts, C1, #{start => true}),
-           {ok, _, R1} = mria_ct:create_node(~"r1", core, MriaOpts, C1, #{start => true}),
+           {ok, _, R1} = mria_ct:create_node(~"r1", replicant, MriaOpts, C1, #{start => true}),
 
            mria_mnesia_test_util:stabilize(1000),
-           erpc:call(
-             C3,
-             fun() -> application:set_env(mria, {callback, lb_custom_info}, fun() -> chosen_one end) end),
-           {R1, mria_lb} ! update,
+           ?ON(C3,
+               mria_config:register_callback(
+                 lb_custom_info,
+                 fun() -> chosen_one end)),
+           ping_lb(R1),
 
-           ?assertEqual({ok, C3},
-                        erpc:call( R1
-                                 , mria_status, replica_get_core_node, [?mria_meta_shard, infinity]
-                                 , infinity
-                                 ))
+           ?assertEqual(
+              {ok, C3},
+              ?ON(R1, mria_status:replica_get_core_node(?mria_meta_shard, infinity)))
        end,
        []).
 
 clear_core_node_list(Replicant) ->
-    MaybeOldCallback = erpc:call(Replicant, mria_config, callback, [core_node_discovery]),
+    MaybeOldCallback = ?ON(Replicant, mria_config:callback(core_node_discovery)),
     try
         {_, {ok, _}} = ?wait_async_action(
                           begin
                               ok = erpc:call(Replicant, mria_config, register_callback,
                                              [core_node_discovery, fun() -> [] end]),
-                              {Replicant, mria_lb} ! update
+                              ping_lb(Replicant)
                           end,
                           #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                            , node := Replicant
@@ -328,3 +327,7 @@ with_role(Node, Role, TestFun) ->
     after
         ok = erpc:call(Node, meck, unload, [mria_config])
     end.
+
+
+ping_lb(Node) ->
+    {Node, mria_lb} ! update.

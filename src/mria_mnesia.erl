@@ -151,7 +151,7 @@ join_cluster(Node) when Node =/= node() ->
         {core, core} ->
             maybe
                 %% Stop mnesia and delete schema first (strictly, this
-                %% is not necessary since post_kick does the same):
+                %% is not necessary since on_leave does the same):
                 ok ?= ensure_stopped(),
                 ok ?= delete_schema(),
                 %% Restart mnesia and cluster to node

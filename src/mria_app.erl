@@ -27,7 +27,8 @@
         , on_create_cluster/2
         , pre_join/4
         , post_join/4
-        , post_kick/3
+        , on_kick_decided/3
+        , on_leave/3
         , enrich_site_info/1
         , on_node_classify/1
         , on_membership_change/4
@@ -134,6 +135,15 @@ post_join(_Cluster, _Local, Node, Intent) ->
         #{ seed   => Node
          }).
 
+-spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
+on_kick_decided(_ClusterId, TargetSite, _Intent) ->
+    %% Notify peers if kicking a third-party:
+    maybe
+        {ok, TargetNode} ?= classy:node_of_site(TargetSite, false),
+        true ?= TargetNode =/= node(),
+        mria_membership:announce({force_leave, TargetNode})
+    end.
+
 -spec enrich_site_info(map()) -> map().
 enrich_site_info(I) ->
     I#{mria => #{ role => mria_rlog:role()
@@ -176,8 +186,8 @@ on_membership_change(_Cluster, Local, Remote, false) when Local =/= Remote ->
 on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
     ok.
 
--spec post_kick(classy:cluster_id(), classy:site(), term()) -> ok.
-post_kick(Cluster, _Site, Intent) ->
+-spec on_leave(classy:cluster_id(), classy:site(), term()) -> ok.
+on_leave(Cluster, _Site, Intent) ->
     case mria_config:role() of
         core ->
             Result1 = maybe
@@ -234,7 +244,8 @@ install_hooks(Prio) ->
     , classy:on_create_cluster(fun ?MODULE:on_create_cluster/2, Prio)
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
     , classy:post_join(fun ?MODULE:post_join/4, Prio)
-    , classy:post_kick(fun ?MODULE:post_kick/3, -Prio)
+    , classy:on_kick_decided(fun ?MODULE:on_kick_decided/3, Prio)
+    , classy:on_leave(fun ?MODULE:on_leave/3, -Prio)
     , classy:on_membership_change(fun ?MODULE:on_membership_change/4, Prio)
     , classy:on_node_classify(fun ?MODULE:on_node_classify/1, Prio)
       %% Run level:

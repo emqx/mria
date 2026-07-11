@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -27,21 +27,23 @@
 %% Properties
 %%================================================================================
 
-prop(ClusterConfig, PropModule) ->
-    Cluster = mria_ct:cluster(ClusterConfig, mria_mnesia_test_util:common_env()),
+prop(PropModule) ->
     snabbkaffe:fix_ct_logging(),
+    Cluster = PropModule,
+    SubnetCtr = atomics:new(1, []),
     ?forall_trace(
        Cmds, commands(PropModule),
        #{timetrap => 20000},
        try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+           ok = mria_ct:create_cluster(Cluster, atomics:add_get(SubnetCtr, 1, 1) rem 256),
+           Nodes = PropModule:create_cluster(),
            ok = mria_mnesia_test_util:wait_tables(Nodes),
            {History, State, Result} = run_commands(PropModule, Cmds),
-           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            [check_state(Cmds, State, Node) || Node <- Nodes],
            {History, State, Result}
        after
-           catch mria_ct:teardown_cluster(Cluster)
+           familiar:stop_cluster(Cluster, true)
        end,
        fun({_History, _State, Result}, _Trace) ->
                ?assertMatch(ok, Result),
@@ -181,7 +183,7 @@ execute(Node, {transaction, Ops}) ->
     Fun = fun() ->
                   lists:foreach(fun execute_op/1, Ops)
           end,
-    {atomic, ok} = rpc:call(Node, mria, transaction, [test_shard, Fun]);
+    {Node, {atomic, ok}} = {Node, rpc:call(Node, mria, transaction, [test_shard, Fun])};
 execute(Node, {dirty, Op}) ->
     ok = rpc:call(Node, ?MODULE, execute_op_dirty, [Op]).
 
