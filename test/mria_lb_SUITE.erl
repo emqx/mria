@@ -312,4 +312,4 @@ with_role(Node, Role, TestFun) ->
 
 
 ping_lb(Node) ->
-    {Node, mria_lb} ! update.
+    {mria_lb, Node} ! update.
