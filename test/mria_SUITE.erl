@@ -1421,6 +1421,7 @@ t_schema_merge(_) ->
 
 t_join_each_other_simultaneously(_) ->
     ?check_trace(
+       #{timetrap => 30_000},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),

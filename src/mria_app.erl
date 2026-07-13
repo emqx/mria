@@ -172,9 +172,12 @@ on_membership_change(_Cluster, Local, Remote, false) when Local =/= Remote ->
             %% changes, so this is more of a theoretical thing.
             maybe
                 {ok, Node} ?= classy:node_of_site(Remote, false),
-                %% mria_membership:announce({force_leave, Node}),
-                mnesia_lib:del(extra_db_nodes, Node),
-                ok ?= mria_mnesia:del_schema_copy(Node),
+                ok ?= mria_mnesia:with_schema_lock(
+                        fun() ->
+                                mnesia_lib:del(extra_db_nodes, Node),
+                                mria_mnesia:del_schema_copy(Node)
+                        end,
+                        [node(), Node]),
                 ?tp(info, mria_kicked, #{local => node(), remote => Node})
             else
                 Err ->
@@ -270,10 +273,8 @@ join_trans(Node) ->
     %% This can happen, for example, when a concurrent join stops the
     %% entire `mnesia` system while another join is running schema
     %% transactions.
-    LockId = ?JOIN_LOCK_ID(self()),
-    ok = global:trans(
-           LockId,
-           fun() ->
-                   mria_mnesia:join_cluster(Node)
-           end,
-           [node(), Node]).
+    mria_mnesia:with_schema_lock(
+      fun() ->
+              mria_mnesia:join_cluster(Node)
+      end,
+      [node(), Node]).

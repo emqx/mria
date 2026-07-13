@@ -31,6 +31,7 @@
           ensure_started/0
         , ensure_stopped/0
         , connect/1
+        , with_schema_lock/2
         ]).
 
 %% Mnesia Cluster API
@@ -139,6 +140,10 @@ connect(Node) ->
         {error, Error} -> {error, {failed_to_connect_node, Node, Error}};
         Error          -> {error, {failed_to_connect_node, Node, Error}}
     end.
+
+-spec with_schema_lock(fun(() -> A), [node()]) -> A.
+with_schema_lock(Fun, Nodes) ->
+    global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes).
 
 %%--------------------------------------------------------------------
 %% Cluster mnesia
@@ -355,7 +360,7 @@ delete_schema() ->
 
 %% @doc Delete schema copy
 del_schema_copy(Node) ->
-    del_schema_copy(Node, 30).
+    del_schema_copy(Node, 10).
 
 del_schema_copy(Node, 0) ->
     {error, {max_retries, Node}};
