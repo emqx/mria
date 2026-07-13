@@ -1993,6 +1993,7 @@ t_merge_table_dirty(_) ->
            {ok, _S3, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
            {ok, _S4, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
            Nodes = [N1, N2, N3, N4],
+           mria_ct:wait_quorum(Nodes),
 
            [?assertMatch(
                ok,
