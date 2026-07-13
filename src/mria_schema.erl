@@ -144,7 +144,7 @@ subscribe_to_shard_schema_updates(Shard) ->
     gen_server:call(?SERVER, {subscribe_to_shard_schema_updates, Shard, self()}).
 
 %% @private Ensure the local mnesia table is ready to accept writes
--spec ensure_local_table(mria:table()) -> true | {error, ?stopping}.
+-spec ensure_local_table(mria:table()) -> true | {error, ?mria_stopping}.
 ensure_local_table(Table) ->
     ?tp_span(debug, ?FUNCTION_NAME, #{table => Table},
              mria_status:local_table_present(Table)).

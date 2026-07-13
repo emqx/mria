@@ -81,8 +81,6 @@
 -define(agent_pid, mria_agent_pid).
 -define(local_table, mria_shard_table).
 
--define(stopping, stopping).
-
 %%================================================================================
 %% API funcions
 %%================================================================================
@@ -90,13 +88,13 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec check_stopping() -> ok | {error, ?stopping}.
+-spec check_stopping() -> ok | {error, ?mria_stopping}.
 check_stopping() ->
-    case optvar:is_set(?optvar(?stopping)) of
+    case optvar:is_set(?optvar(?mria_stopping)) of
         false ->
             ok;
         true ->
-            {error, ?stopping}
+            {error, ?mria_stopping}
     end.
 
 %% This function should be called before business logic must restart.
@@ -113,7 +111,7 @@ prep_restart() ->
 %% It is the same node that serves the local replica, but this optvar
 %% is set before local replica goes up fully. WARNING: this `optvar'
 %% is set before local replica becomes consistent.
--spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?stopping} | disconnected.
+-spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?mria_stopping} | disconnected.
 rpc_target(Shard, Timeout) ->
     maybe
         ok ?= check_stopping(),
@@ -149,9 +147,9 @@ upstream_node(Shard) ->
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
 upstream(Shard) ->
     case optvar:peek(?optvar({?upstream_pid, Shard})) of
-        {ok, {ok, Pid}}          -> {ok, Pid};
-        {ok, {error, ?stopping}} -> disconnected;
-        undefined                -> disconnected
+        {ok, {ok, Pid}}               -> {ok, Pid};
+        {ok, {error, ?mria_stopping}} -> disconnected;
+        undefined                     -> disconnected
     end.
 
 %% @doc WARNING: this optvar is used STRICTLY for interaction between
@@ -159,7 +157,7 @@ upstream(Shard) ->
 %% that serves minimal number of replicants. As such, it must NOT be
 %% used for RPC targeting: all RPCs from the entire cluster will end
 %% up on a single node.
--spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?stopping} | timeout.
+-spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?mria_stopping} | timeout.
 replica_get_core_node(Shard, Timeout) ->
     maybe
         ok ?= check_stopping(),
@@ -250,7 +248,7 @@ get_shard_lag(Shard) ->
             end
     end.
 
--spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]} | {error, ?stopping}.
+-spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]} | {error, ?mria_stopping}.
 wait_for_shards(Shards, Timeout) ->
     maybe
         ok ?= check_stopping(),
@@ -380,7 +378,7 @@ notify_replicant_bootstrap_import(Shard) ->
 notify_local_table(Table) ->
     do_notify_up(?local_table, Table, true).
 
--spec local_table_present(mria:table()) -> true | {error, ?stopping}.
+-spec local_table_present(mria:table()) -> true | {error, ?mria_stopping}.
 local_table_present(Table) ->
     maybe
         ok ?= check_stopping(),
@@ -442,8 +440,8 @@ terminate(_Reason, _State) ->
     {exit, normal}.
 
 handle_call(prep_restart, _From, State) ->
-    optvar:set(?optvar(?stopping), true),
-    [optvar:set(?optvar(K), {error, ?stopping}) || ?optvar(K) <- optvar:list_all()],
+    optvar:set(?optvar(?mria_stopping), true),
+    [optvar:set(?optvar(K), {error, ?mria_stopping}) || ?optvar(K) <- optvar:list_all()],
     {reply, ok, State};
 handle_call(_, _, State) ->
     {reply, {error, unknown_call}, State}.
@@ -455,12 +453,12 @@ handle_cast(_, State) ->
 %% Internal functions
 %%================================================================================
 
--spec optvar_read(term(), timeout()) -> {ok, term()} | {error, ?stopping} | timeout.
+-spec optvar_read(term(), timeout()) -> {ok, term()} | {error, ?mria_stopping} | timeout.
 optvar_read(Var, Timeout) ->
         case optvar:read(?optvar(Var), Timeout) of
             {ok, {ok, _} = Ok} ->
                 Ok;
-            {ok, {error, ?stopping} = Err} ->
+            {ok, {error, ?mria_stopping} = Err} ->
                 Err;
             timeout ->
                 timeout

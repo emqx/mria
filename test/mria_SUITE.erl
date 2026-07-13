@@ -1455,7 +1455,8 @@ t_join_another_node_simultaneously(_) ->
            Key2 = rpc:async_call(N4, mria, join, [N1]),
            _ = rpc:yield(Key1),
            _ = rpc:yield(Key2),
-           mria_mnesia_test_util:stabilize(5000),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_ct:wait_quorum(Nodes),
 
            ?assertEqual({[true, true, true, true], []}, rpc:multicall(Nodes, mria_sup, is_running, [])),
            [?defer_assert(
