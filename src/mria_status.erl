@@ -380,7 +380,7 @@ notify_replicant_bootstrap_import(Shard) ->
 notify_local_table(Table) ->
     do_notify_up(?local_table, Table, true).
 
--spec local_table_present(mria:table()) -> true | {error, stopped}.
+-spec local_table_present(mria:table()) -> true | {error, ?stopping}.
 local_table_present(Table) ->
     maybe
         ok ?= check_stopping(),
