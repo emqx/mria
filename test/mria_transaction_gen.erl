@@ -37,20 +37,19 @@
 
 init() ->
     mria_helper_tab:init(),
-    mria:create_table(test_tab, [{type, ordered_set},
-                                 {rlog_shard, test_shard},
-                                 {storage, ram_copies},
-                                 {record_name, test_tab},
-                                 {attributes, record_info(fields, test_tab)}
-                                ]),
-    mria:create_table(test_bag, [{type, bag},
-                                 {rlog_shard, test_shard},
-                                 {storage, ram_copies},
-                                 {record_name, test_bag},
-                                 {attributes, record_info(fields, test_bag)}
-                                ]),
-    mria_rlog:wait_for_shards([test_shard], infinity),
-    ok.
+    ok = mria:create_table(test_tab, [{type, ordered_set},
+                                      {rlog_shard, test_shard},
+                                      {storage, ram_copies},
+                                      {record_name, test_tab},
+                                      {attributes, record_info(fields, test_tab)}
+                                     ]),
+    ok = mria:create_table(test_bag, [{type, bag},
+                                      {rlog_shard, test_shard},
+                                      {storage, ram_copies},
+                                      {record_name, test_bag},
+                                      {attributes, record_info(fields, test_bag)}
+                                     ]),
+    ok = mria_rlog:wait_for_shards([test_shard], infinity).
 
 verify_trans_sum(N, Delay) ->
     mnesia:wait_for_tables([test_tab], 10000),
