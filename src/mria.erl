@@ -248,9 +248,22 @@ join(Node) ->
 
 %% @doc Join the cluster
 -spec join(node(), join_reason()) -> ok | ignore | {error, term()}.
+join(Node, heal) when is_atom(Node) ->
+    %% Special case used by autoheal logic.
+    mria_status:prep_restart(),
+    Parent = alias([reply]),
+    Ref = make_ref(),
+    classy:at_lower_level(
+      stopped,
+      fun() ->
+              Result = mria_mnesia:join_cluster(Node),
+              Parent ! {Ref, Result}
+      end),
+    receive
+        {Ref, Result} -> Result
+    end;
 join(Node, Reason) when is_atom(Node) ->
     classy:join_node(Node, Reason).
-
 
 %% @doc Leave the cluster
 -spec leave() -> ok | {error, term()}.

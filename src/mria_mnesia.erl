@@ -155,8 +155,9 @@ join_cluster(Node) when Node =/= node() ->
     case {mria_config:role(), mria_rlog:role(Node)} of
         {core, core} ->
             maybe
-                %% Stop mnesia and delete schema first (strictly, this
-                %% is not necessary since on_leave does the same):
+                %% Stop mnesia and delete schema first (note: this is
+                %% needed for heal scenario, where the node doesn't go
+                %% through leave_cluster):
                 ok ?= ensure_stopped(),
                 ok ?= delete_schema(),
                 %% Restart mnesia and cluster to node
@@ -169,10 +170,22 @@ join_cluster(Node) when Node =/= node() ->
     end.
 
 %% @doc This node try leave the cluster
--spec(leave_cluster() -> ok | {error, any()}).
+-spec leave_cluster() -> ok | {error, any()}.
 leave_cluster() ->
-    ?tp_span(warning, mria_delete_schema, #{node => node()},
-             delete_schema()).
+    case running_nodes() -- [node()] of
+        [] ->
+            {error, node_not_in_cluster};
+        Nodes ->
+            case lists:any(fun(Node) ->
+                            case do_leave_cluster(Node) of
+                                ok               -> true;
+                                {error, _Reason} -> false
+                            end
+                          end, Nodes) of
+                true  -> ok;
+                false -> {error, {failed_to_leave, Nodes}}
+            end
+    end.
 
 %% @doc Cluster Info
 -spec(cluster_info() -> map()).
@@ -360,19 +373,12 @@ delete_schema() ->
 
 %% @doc Delete schema copy
 del_schema_copy(Node) ->
-    del_schema_copy(Node, 10).
-
-del_schema_copy(Node, 0) ->
-    {error, {max_retries, Node}};
-del_schema_copy(Node, N) ->
     case mnesia:del_table_copy(schema, Node) of
         {atomic, ok} ->
             ok;
-        {aborted, {active, "Mnesia is running", _} = Reason} ->
+        {aborted, {active, "Mnesia is running", _}} ->
             %% Signal to leave the cluster may arrive to the remote node later. Retry:
-            ?tp(warning, mria_del_schema_copy_retry, #{node => Node, local => node(), reason => Reason}),
-            timer:sleep(1000),
-            del_schema_copy(Node, N - 1);
+            {error, {running, Node}};
         {aborted, Reason} ->
             {error, Reason}
     end.
@@ -484,3 +490,15 @@ wait_for(stop) ->
 %% @doc Is running db node.
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
+
+
+-spec do_leave_cluster(node()) -> ok | {error, any()}.
+do_leave_cluster(Node) when Node =/= node() ->
+    case is_running_db_node(Node) of
+        true ->
+            mria_lib:ensure_ok(ensure_stopped()),
+            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
+            mria_lib:ensure_ok(delete_schema());
+        false ->
+            {error, {node_not_running, Node}}
+    end.

@@ -137,11 +137,23 @@ post_join(_Cluster, _Local, Node, Intent) ->
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_kick_decided(_ClusterId, TargetSite, _Intent) ->
-    %% Notify peers if kicking a third-party:
     maybe
         {ok, TargetNode} ?= classy:node_of_site(TargetSite, false),
         true ?= TargetNode =/= node(),
-        mria_membership:announce({force_leave, TargetNode})
+        %% Notify the peers if kicking a remote node:
+        mria_membership:announce({force_leave, TargetNode}),
+        %% If the remote node is in cluster and it's NOT currently
+        %% running, delete schema on its behalf:
+        true ?= mria_mnesia:is_node_in_cluster(TargetNode),
+        false ?= mria_mnesia:is_running_db_node(TargetNode),
+        mnesia_lib:del(extra_db_nodes, TargetNode),
+        ok ?= mria_mnesia:del_schema_copy(TargetNode),
+        ?tp(info, mria_kicked_remotely, #{local => node(), remote => TargetNode})
+    else
+        Bool when is_boolean(Bool) ->
+            ok;
+        Err ->
+            ?tp(error, mria_failed_to_kick_remote, #{site => TargetSite, node => TargetSite, reason => Err})
     end.
 
 -spec enrich_site_info(map()) -> map().
@@ -161,31 +173,6 @@ on_node_classify(#{mria := #{role := Role, vsn := Vsn}}) ->
 on_node_classify(#{}) ->
     [].
 
-on_membership_change(_Cluster, Local, Remote, false) when Local =/= Remote ->
-    %% Remote got kicked. Remove it from the cluster:
-    case mria_rlog:role() of
-        core ->
-            %% NOTE: node_of_site is updated asynchronoulsy.
-            %% Theoretically, node could change the hostname before
-            %% leaving, and this function could misfire (even kick
-            %% another node). Currently mria doesn't support host name
-            %% changes, so this is more of a theoretical thing.
-            maybe
-                {ok, Node} ?= classy:node_of_site(Remote, false),
-                ok ?= mria_mnesia:with_schema_lock(
-                        fun() ->
-                                mnesia_lib:del(extra_db_nodes, Node),
-                                mria_mnesia:del_schema_copy(Node)
-                        end,
-                        [node(), Node]),
-                ?tp(info, mria_kicked, #{local => node(), remote => Node})
-            else
-                Err ->
-                    ?tp(error, mria_failed_to_kick_core, #{site => Remote, reason => Err})
-            end;
-        replicant ->
-            ok
-    end;
 on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
     ok.
 
@@ -199,6 +186,8 @@ on_leave(Cluster, _Site, Intent) ->
                       end,
             case Result1 of
                 ok ->
+                    ok;
+                {error, node_not_in_cluster} ->
                     ok;
                 Err1 ->
                     ?tp(critical, mria_failed_to_leave_cluster,

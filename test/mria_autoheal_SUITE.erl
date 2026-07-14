@@ -19,27 +19,61 @@
 -compile(nowarn_export_all).
 -compile(export_all).
 
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include_lib("stdlib/include/assert.hrl").
+
 -compile(nowarn_underscore_match).
 
--include_lib("snabbkaffe/include/ct_boilerplate.hrl").
+all() -> mria_ct:all(?MODULE).
+
+init_per_suite(Config) ->
+    mria_ct:init_per_suite(Config).
+
+end_per_suite(_Config) ->
+    ok.
+
+init_per_testcase(TC, Config) ->
+    mria_ct:init_per_testcase(TC, Config).
+
+end_per_testcase(TC, Config) ->
+    mria_ct:end_per_testcase(TC, Config).
 
 t_autoheal(Config) when is_list(Config) ->
-    Cluster = mria_ct:cluster([core, core, core, core], [{mria, cluster_autoheal, 200}]),
+    Spawn = fun(Site, JoinTo) ->
+                    mria_ct:create_node(
+                      Site,
+                      core,
+                      #{cluster_autoheal => 200},
+                      JoinTo,
+                      #{ start => true
+                       , peer => #{args => ["-kernel", "prevent_overlapping_partitions", "true"]}
+                       })
+            end,
     ?check_trace(
        #{timetrap => 25000},
-       try
-           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = Spawn(~"c1", undefined),
+           {ok, _, N2} = Spawn(~"c2", N1),
+           {ok, _, N3} = Spawn(~"c3", N1),
+           {ok, _, N4} = Spawn(~"c4", N1),
+           Nodes = [N1, N2, N3, N4],
+           setup(Nodes),
+           ?force_ordering(
+              #{?snk_kind := test_proceed},
+              #{?snk_kind := K} when K =:= "Rebooting partitions";
+                                     K =:= "Rejoin for autoheal"),
            %% Simulate netsplit
+           ?tp(notice, test_split, #{}),
            true = rpc:cast(N4, erlang, disconnect_node, [N3]),
-           ok = timer:sleep(1000),
+           ok = timer:sleep(100),
            %% SplitView: [[N1,N2], [N3], [N4]]
            ?assertMatch({[N1, N2], [N3, N4]}, view(N1)),
            ?assertMatch({[N1, N2], [N3, N4]}, view(N2)),
            ?assertMatch({[N3], [N1, N2, N4]}, view(N3)),
            ?assertMatch({[N4], [N1, N2, N3]}, view(N4)),
+           ?tp(notice, test_proceed, #{}),
            %% Wait for autoheal, it should happen automatically:
-           ?block_until(#{?snk_kind := mria_ct_heal_partition}),
-           ?retry(1000, 20,
+           ?retry(1000, 10,
                   begin
                       ?assertMatch({Nodes, []}, view(N1)),
                       ?assertMatch({Nodes, []}, view(N2)),
@@ -47,27 +81,20 @@ t_autoheal(Config) when is_list(Config) ->
                       ?assertMatch({Nodes, []}, view(N4))
                   end),
            Nodes
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
-       [fun ?MODULE:prop_callbacks/1]).
+       [fun ?MODULE:prop_reboots/1]).
 
 t_autoheal_with_replicants(Config) when is_list(Config) ->
-    snabbkaffe:fix_ct_logging(),
-    Cluster = mria_ct:cluster([ core
-                              , core
-                              , core
-                              , replicant
-                              , replicant
-                              ],
-                              [ {mria, cluster_autoheal, 200}
-                              | mria_mnesia_test_util:common_env()
-                              ]),
     ?check_trace(
        #{timetrap => 45_000},
-       try
-           Nodes = [N1, N2, N3, N4, N5] = mria_ct:start_cluster(mria, Cluster),
-           ok = mria_mnesia_test_util:wait_tables(Nodes),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(~"c2", core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(~"c3", core, N1),
+           {ok, _, N4} = mria_ct:create_start_node(~"r1", replicant, N1),
+           {ok, _, N5} = mria_ct:create_start_node(~"r2", replicant, N1),
+           Nodes = [N1, N2, N3, N4, N5],
+           setup(Nodes),
            %% Simulate netsplit:
            true = rpc:cast(N1, erlang, disconnect_node, [N2]),
            %% Wait for the split to be detected:
@@ -83,19 +110,20 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
                       ok
                   end),
            Nodes
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
-       [fun ?MODULE:prop_callbacks/1]).
+       [fun ?MODULE:prop_reboots/1]).
 
 t_autoheal_overlapping_parition(Config) when is_list(Config) ->
-    Cluster = mria_ct:cluster([core, core, core, core],
-                              [{mria, cluster_autoheal, 200}],
-                              [{beam_args, "-kernel prevent_overlapping_partitions false"}]),
     ?check_trace(
        #{timetrap => 25000},
-       try
-           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(~"c2", core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(~"c3", core, N1),
+           {ok, _, N4} = mria_ct:create_start_node(~"c4", core, N1),
+           Nodes = [N1, N2, N3, N4],
+           setup(Nodes),
+
            %% Simulate netsplit:
            true = rpc:cast(N4, erlang, disconnect_node, [N3]),
            ok = timer:sleep(1000),
@@ -113,10 +141,8 @@ t_autoheal_overlapping_parition(Config) when is_list(Config) ->
                       ?assertMatch({Nodes, []}, view(N4))
                   end),
            Nodes
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
-       [ fun ?MODULE:prop_callbacks/1
+       [ fun ?MODULE:prop_reboots/1
        , fun([N1, N2, N3, N4], Trace) ->
              %% Both N3 and N4 are potentially inconsistent and should be restarted:
              ?assertMatch( [#{survivors := [N1, N2], victims := [N3, N4]}]
@@ -127,13 +153,16 @@ t_autoheal_overlapping_parition(Config) when is_list(Config) ->
        ]).
 
 t_autoheal_complex_overlapping_paritions(Config) when is_list(Config) ->
-    Cluster = mria_ct:cluster([core, core, core, core],
-                              [{mria, cluster_autoheal, 200}],
-                              [{beam_args, "-kernel prevent_overlapping_partitions false"}]),
     ?check_trace(
        #{timetrap => 25000},
-       try
-           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(~"c2", core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(~"c3", core, N1),
+           {ok, _, N4} = mria_ct:create_start_node(~"c4", core, N1),
+           Nodes = [N1, N2, N3, N4],
+           setup(Nodes),
+
            %% Simulate netsplit:
            true = rpc:cast(N1, erlang, disconnect_node, [N2]),
            true = rpc:cast(N1, erlang, disconnect_node, [N3]),
@@ -153,10 +182,8 @@ t_autoheal_complex_overlapping_paritions(Config) when is_list(Config) ->
                       ?assertMatch({Nodes, []}, view(N4))
                   end),
            Nodes
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
-       [ fun ?MODULE:prop_callbacks/1
+       [ fun ?MODULE:prop_reboots/1
        , fun([N1, N2, N3, N4], Trace) ->
              %% All but one node are potentially inconsistent and should be restarted:
              ?assertMatch( [#{survivors := [N1], victims := [N2, N3, N4]}]
@@ -167,15 +194,21 @@ t_autoheal_complex_overlapping_paritions(Config) when is_list(Config) ->
        ]).
 
 t_autoheal_majority_reachable(Config) when is_list(Config) ->
-    Cluster = mria_ct:cluster([core, core, core, core, core], [{mria, cluster_autoheal, 200}]),
     ?check_trace(
        #{timetrap => 25000},
-       try
-           Nodes = [N1, N2, N3, N4, N5] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(~"c2", core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(~"c3", core, N1),
+           {ok, _, N4} = mria_ct:create_start_node(~"c4", core, N1),
+           {ok, S5, N5} = mria_ct:create_start_node(~"c5", core, N1),
+           Nodes = [N1, N2, N3, N4, N5],
+           setup(Nodes),
+
            %% Simulate netsplit
            true = rpc:cast(N4, erlang, disconnect_node, [N1]),
            true = rpc:cast(N5, erlang, disconnect_node, [N1]),
-           ok = mria_ct:stop_slave(N5),
+           ok = familiar:kill_site(S5),
            ok = timer:sleep(1000),
            AliveMajorityNodes = [N1, N2, N3, N4],
            %% Wait for autoheal, it should happen automatically:
@@ -187,78 +220,8 @@ t_autoheal_majority_reachable(Config) when is_list(Config) ->
                       ?assertMatch({AliveMajorityNodes, [N5]}, view(N4))
                   end),
            Nodes
-       after
-           ok = mria_ct:teardown_cluster(lists:sublist(Cluster, 4))
        end,
-       [fun ?MODULE:prop_callbacks/1]).
-
-todo_t_reboot_rejoin(Config) when is_list(Config) -> %% FIXME: Flaky and somewhat broken, disable for now
-    CommonEnv = [ {mria, cluster_autoheal, 200}
-                , {mria, db_backend, rlog}
-                , {mria, lb_poll_interval, 100}
-                ],
-    Cluster = mria_ct:cluster([core, core, replicant, replicant],
-                              CommonEnv,
-                              [{base_gen_rpc_port, 9001}]),
-    ?check_trace(
-       #{timetrap => 60_000},
-       try
-           AllNodes = [C1, C2, R1, R2] = mria_ct:start_cluster(node, Cluster),
-           [?assertMatch(ok, mria_ct:rpc(N, mria, start, [])) || N <- AllNodes],
-           [?assertMatch(ok, mria_ct:rpc(N, mria_transaction_gen, init, [])) || N <- AllNodes],
-           [mria_ct:rpc(N, mria, join, [C2]) || N <- [R1, R2]],
-           ?tp(about_to_join, #{}),
-           %% performs a full "power cycle" in C2.
-           ?assertMatch(ok, rpc:call(C2, mria, join, [C1])),
-           %% we need to ensure that the rlog server for the shard is
-           %% restarted, since it died during the "power cycle" from
-           %% the join operation.
-           timer:sleep(1000),
-           ?assertMatch(ok, rpc:call(C2, mria_rlog, wait_for_shards, [[test_shard], 5000])),
-           ?tp(notice, test_end, #{}),
-           %% assert there's a single cluster at the end.
-           mria_mnesia_test_util:wait_full_replication(Cluster, infinity),
-           AllNodes
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
-       end,
-       fun([C1, C2, R1, R2], Trace0) ->
-               {_, Trace1} = ?split_trace_at(#{?snk_kind := about_to_join}, Trace0),
-               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace1),
-               TraceC2 = ?of_node(C2, Trace),
-               %% C1 joins C2
-               ?assert(
-                  ?strict_causality( #{ ?snk_kind := "Mria is restarting to join the cluster"
-                                      , seed := C1
-                                      }
-                                   , #{ ?snk_kind := "Starting autoheal"
-                                      }
-                                   , TraceC2
-                                   )),
-               ?assert(
-                  ?strict_causality( #{ ?snk_kind := "Starting autoheal"
-                                      }
-                                   , #{ ?snk_kind := "Mria has joined the cluster"
-                                      , seed := C1
-                                      , status := #{ running_nodes := [_, _]
-                                                   }
-                                      }
-                                   , TraceC2
-                                   )),
-               ?assert(
-                  ?strict_causality( #{ ?snk_kind := "Mria has joined the cluster"
-                                      , status := #{ running_nodes := [_, _]
-                                                   }
-                                      }
-                                   , #{ ?snk_kind := "starting_rlog_shard"
-                                      , shard := test_shard
-                                      }
-                                   , TraceC2
-                                   )),
-               %% Replicants reboot and bootstrap shard data
-               assert_replicant_bootstrapped(R1, C2, Trace),
-               assert_replicant_bootstrapped(R2, C2, Trace)
-       end).
+       [fun ?MODULE:prop_reboots/1]).
 
 assert_replicant_bootstrapped(R, C, Trace) ->
     %% The core that the replicas are connected to is changing
@@ -276,31 +239,25 @@ assert_replicant_bootstrapped(R, C, Trace) ->
     ok.
 
 %% Verify that mria callbacks have been executed during heal
-prop_callbacks(Trace0) ->
+prop_reboots(Trace0) ->
     {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
     {_, [HealEvent|AfterHeal]} = ?split_trace_at(#{?snk_kind := "Rebooting partitions"}, Trace),
     #{nodes := Minority} = HealEvent,
-    %% Check that all minority nodes have been restarted:
-    [?assert(
-        ?strict_causality( #{?snk_kind := mria_exec_callback, type := stop, ?snk_meta := #{node := N}}
-                         , #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N}}
-                         , AfterHeal
-                         ))
-     || N <- Minority],
     %% Check that ONLY the minority nodes have been restarted:
-    Restarted = lists:usort([Node || #{?snk_kind := mria_exec_callback, type := stop, ?snk_meta := #{node := Node}} <- AfterHeal]),
-    ?assertEqual(lists:sort(Minority),
-                 Restarted),
+    ?assertEqual(
+       lists:sort(Minority),
+       lists:sort([Node || #{ ?snk_kind := "Rejoin for autoheal"
+                            , node      := Node
+                            , ?snk_span := {complete,ok}
+                            } <- AfterHeal])),
     true.
 
-init_per_suite(Config) ->
-    mria_ct:start_dist(),
-    Config.
-
-end_per_suite(_Config) ->
-    ok.
-
 view(Node) ->
-    Running = rpc:call(Node, mria, info, [running_nodes]),
-    Stopped = rpc:call(Node, mria, info, [stopped_nodes]),
+    Running = rpc:call(Node, mria_mnesia, running_nodes, []),
+    Stopped = rpc:call(Node, mria_mnesia, cluster_nodes, [stopped]),
     {lists:sort(Running), lists:sort(Stopped)}.
+
+setup(Nodes) ->
+    %% FIXME: create a proper solution preventing classy from restrarting cores before mria autoheal activates
+    [rpc:call(I, application, set_env, [classy, quorum, 100]) || I <- Nodes],
+    ok = mria_mnesia_test_util:wait_tables(Nodes).

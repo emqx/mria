@@ -123,9 +123,10 @@ fixtures(Role, MriaOpts, JoinTo) ->
     [ {familiar_app,
        #{ app => mria
         , start => false
-        , env => MriaOpts#{ strict_mode => true
+        , env => MriaOpts#{ strict_mode             => true
                           , rlog_lb_update_interval => 100
-                          , node_role => Role
+                          , node_role               => Role
+                          , cluster_autoheal        => 200
                           }}}
     , {mria_join_fixture, JoinTo}
     ].
