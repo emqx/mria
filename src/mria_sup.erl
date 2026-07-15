@@ -39,8 +39,10 @@ post_init(Parent) ->
     proc_lib:init_ack(Parent, {ok, self()}),
     %% Exec the start callback, but first make sure the schema is in
     %% sync:
-    % ok = mria_rlog:wait_for_shards([?mria_meta_shard], infinity),
-    ?tp(notice, "Mria is running", #{}).
+    maybe
+        ok ?= mria_rlog:wait_for_shards([?mria_meta_shard], infinity),
+        ?tp(notice, "Mria is running", #{})
+    end.
 
 -spec init(mria:backend()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init(mnesia) ->

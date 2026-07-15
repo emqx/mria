@@ -34,9 +34,15 @@
         , with_schema_lock/2
         ]).
 
+-export([ on_create_site/1
+        , is_in_old_cluster/1
+        , finish_migration/0
+        , pre_autocluster/2
+        ]).
+
 %% Mnesia Cluster API
 -export([ join_cluster/1
-        , leave_cluster/0
+        , leave_cluster/1
         , cluster_info/0
         , cluster_status/1
         , cluster_view/0
@@ -97,6 +103,8 @@
                            , schema_ops => list()
                            }.
 
+-define(migration, mria_migration).
+
 %%--------------------------------------------------------------------
 %% Start and init mnesia
 %%--------------------------------------------------------------------
@@ -145,6 +153,69 @@ connect(Node) ->
 with_schema_lock(Fun, Nodes) ->
     global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes).
 
+on_create_site(_SiteId) ->
+    %% Migration to classy: check if the mnesia schema had already existed:
+    case {mria_config:role_(), filelib:is_dir(data_dir())} of
+        {core, true} ->
+            %% Found old schema.
+            OldNodes = mria_mnesia:db_nodes() -- [node()],
+            case OldNodes of
+                [] ->
+                    ok;
+                _ ->
+                    %% Some old peers are known.
+                    ?tp(notice, mria_cluster_migrating_to_classy, #{node => OldNodes}),
+                    classy_node:global_set(?migration, {0, OldNodes})
+            end;
+        _ ->
+            ok
+    end.
+
+%% If node is in the "old" cluster, some side effects should be disabled:
+-spec is_in_old_cluster(node()) -> boolean().
+is_in_old_cluster(Node) ->
+    case classy_node:global_lookup(?migration) of
+        [{0, OldNodes}] ->
+            lists:member(Node, OldNodes);
+        [] ->
+            false
+    end.
+
+-spec finish_migration() -> ok.
+finish_migration() ->
+    classy_node:global_delete(?migration).
+
+-spec pre_autocluster(_, Discovered) -> Discovered when
+      Discovered :: [{classy:cluster_id(), [node()]}].
+pre_autocluster(_, Discovered0) ->
+    case classy_node:global_lookup(?migration) of
+        [{0, OldNodes}] ->
+            %% If migration is ongoing, then leave only the nodes that
+            %% appear in the list:
+            Results = lists:zip(erpc:multicall(OldNodes, classy, the_cluster, [], 1_000), OldNodes),
+            Clusters =
+                lists:foldl(
+                  fun({MaybeCluster, Node}, Acc) ->
+                          case MaybeCluster of
+                              {ok, {ok, Cluster}} ->
+                                  case Acc of
+                                      #{Cluster := L} ->
+                                          Acc#{Cluster := [Node | L]};
+                                      #{} ->
+                                          Acc#{Cluster => [Node]}
+                                  end;
+                              _ ->
+                                  Acc
+                          end
+                  end,
+                  #{},
+                  Results),
+            %% TODO: sort by length
+            maps:to_list(Clusters);
+        [] ->
+            Discovered0
+    end.
+
 %%--------------------------------------------------------------------
 %% Cluster mnesia
 %%--------------------------------------------------------------------
@@ -155,11 +226,6 @@ join_cluster(Node) when Node =/= node() ->
     case {mria_config:role(), mria_rlog:role(Node)} of
         {core, core} ->
             maybe
-                %% Stop mnesia and delete schema first (note: this is
-                %% needed for heal scenario, where the node doesn't go
-                %% through leave_cluster):
-                ok ?= ensure_stopped(),
-                ok ?= delete_schema(),
                 %% Restart mnesia and cluster to node
                 ok ?= ensure_started(),
                 ok ?= connect(Node),
@@ -170,8 +236,8 @@ join_cluster(Node) when Node =/= node() ->
     end.
 
 %% @doc This node try leave the cluster
--spec leave_cluster() -> ok | {error, any()}.
-leave_cluster() ->
+-spec leave_cluster(classy:kick_intent()) -> ok | {error, any()}.
+leave_cluster(_Intent) ->
     case running_nodes() -- [node()] of
         [] ->
             {error, node_not_in_cluster};
@@ -490,7 +556,6 @@ wait_for(stop) ->
 %% @doc Is running db node.
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
-
 
 -spec do_leave_cluster(node()) -> ok | {error, any()}.
 do_leave_cluster(Node) when Node =/= node() ->

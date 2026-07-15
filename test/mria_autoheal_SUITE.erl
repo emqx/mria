@@ -248,8 +248,18 @@ prop_reboots(Trace0) ->
        lists:sort(Minority),
        lists:sort([Node || #{ ?snk_kind := "Rejoin for autoheal"
                             , node      := Node
-                            , ?snk_span := {complete,ok}
+                            , ?snk_span := {complete, ok}
                             } <- AfterHeal])),
+    ?assert(
+       ?causality(
+          #{ ?snk_kind := "Rejoin for autoheal"
+           , node      := _Node
+           , ?snk_span := {complete, ok}
+           },
+          #{ ?snk_kind := mria_mnesia_copy_schema
+           , node      := _Node
+           },
+          Trace)),
     true.
 
 view(Node) ->

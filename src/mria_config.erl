@@ -18,6 +18,7 @@
 -module(mria_config).
 
 -export([ role/0
+        , role_/0
         , backend/0
         , whoami/0
         , rpc_module/0
@@ -70,9 +71,7 @@
 %% Type declarations
 %%================================================================================
 
--type callback() :: start
-                  | stop
-                  | {start | stop, mria_rlog:shard()}
+-type callback() :: {start | stop, mria_rlog:shard()}
                   | heal_partition
                   | core_node_discovery
                   | lb_custom_info
@@ -115,6 +114,11 @@ backend() ->
 -spec role() -> mria_rlog:role().
 role() ->
     persistent_term:get(?mria(node_role), core).
+
+%% Variant of role that works even when mria application is stopped.
+-spec role_() -> mria_rlog:role().
+role_() ->
+    application:get_env(mria, node_role, core).
 
 %% Get backend and role:
 -spec whoami() -> core | replicant.

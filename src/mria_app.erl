@@ -88,23 +88,17 @@ on_create_cluster(_, _) ->
     mria_mnesia:ensure_schema().
 
 -spec pre_join(classy:cluster_id(), classy:site(), node(), term()) -> ok | {error, _}.
-pre_join(_Cluster, _RemoteSite, Node, Intent) when is_atom(Node) ->
-    %% When `Intent =:= heal' the node should rejoin regardless of
-    %% what mnesia thinks:
-    IsInCluster = mria:is_node_in_cluster(Node) andalso Intent =/= heal,
-    case {IsInCluster, mria_node:is_running(Node), catch mria_rlog:role(Node)} of
-        {false, true, core} ->
+pre_join(_Cluster, _RemoteSite, Node, _Intent) when is_atom(Node) ->
+    case {mria_node:is_running(Node), catch mria_rlog:role(Node)} of
+        {true, core} ->
             ok;
-        {true, _, _} ->
-            {error, {already_in_cluster, Node}};
-        {_, false, _} ->
+        {false, _} ->
             {error, {node_down, Node}};
-        {_, _, replicant} ->
+        {_, replicant} ->
             {error, {cannot_join_to_replicant, Node}};
-        {_, IsRunning, Role} ->
+        {IsRunning, Role} ->
             {error, #{ reason => illegal_target
                      , target_node => Node
-                     , in_cluster => IsInCluster
                      , is_running => IsRunning
                      , target_role => Role
                      }}
@@ -114,26 +108,29 @@ pre_join(_, _, Node, _) ->
 
 -spec post_join(classy:cluster_id(), classy:site(), node(), term()) -> ok.
 post_join(_Cluster, _Local, Node, Intent) ->
-    %% FIXME: reading role via `mria_config' may be unsafe
-    %% when the app is not running, since it defaults to core.
-    %% Replicant may try to join the cluster as a core and wreak
-    %% havok
-    Role = application:get_env(mria, node_role, core),
-    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    classy:at_lower_level(
-      stopped,
-      fun() ->
-              [catch mria_membership:announce(Intent) || Role =:= core],
-              case Role of
-                  core ->
-                      join_trans(Node);
-                  replicant ->
-                      ok
-              end
-      end),
-    ?tp(notice, "Mria has joined the cluster",
-        #{ seed   => Node
-         }).
+    Role = mria_config:role_(),
+    case {Role, mria_mnesia:is_in_old_cluster(Node)} of
+        {core, false} ->
+            ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+            classy:at_lower_level(
+              stopped,
+              fun() ->
+                      try mria_membership:announce(Intent)
+                      catch
+                          _:_ -> ok
+                      end,
+                      join_trans(Node)
+              end),
+            ?tp(notice, "Mria has joined the cluster",
+                #{ seed   => Node
+                 });
+        {core, true} ->
+            %% Migration from cluster management via mnesia schema to classy:
+            ?tp(notice, "Mria: already in cluster (migrated)", #{seed => Node}),
+            mria_mnesia:finish_migration();
+        {replicant, _} ->
+            ok
+    end.
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_kick_decided(_ClusterId, TargetSite, _Intent) ->
@@ -178,11 +175,23 @@ on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
 
 -spec on_leave(classy:cluster_id(), classy:site(), term()) -> ok.
 on_leave(Cluster, _Site, Intent) ->
-    case mria_config:role() of
+    %% Check if migration is in progress. If local is joining the
+    %% remote node that has been part of the mnesia cluster before
+    %% migration to classy, then we should skip changes to the schema.
+    IsMigrating = case Intent of
+                      {join, #{node := Node}} ->
+                          mria_mnesia:is_in_old_cluster(Node);
+                      _ ->
+                          false
+                  end,
+    case mria_config:role_() of
+        core when IsMigrating ->
+            ?tp(notice, mria_leave_migration, #{}),
+            ok;
         core ->
             Result1 = maybe
                           ok ?= mria_mnesia:ensure_stopped(),
-                          mria_mnesia:leave_cluster()
+                          mria_mnesia:leave_cluster(Intent)
                       end,
             case Result1 of
                 ok ->
@@ -206,7 +215,7 @@ on_leave(Cluster, _Site, Intent) ->
                          , cluster => Cluster
                          })
             end;
-        replicant ->
+        _ ->
             ok
     end.
 
@@ -230,8 +239,9 @@ perform_disaster_recovery(MasterNodes) ->
     mnesia:set_master_nodes(MasterNodes).
 
 install_hooks(Prio) ->
-    [ %% Info:
-      classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
+    [ classy:on_create_site(fun mria_mnesia:on_create_site/1, Prio)
+      %% Info:
+    , classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
       %% Clustering:
     , classy:on_create_cluster(fun ?MODULE:on_create_cluster/2, Prio)
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
