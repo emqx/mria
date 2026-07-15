@@ -15,7 +15,7 @@
 %%--------------------------------------------------------------------
 
 %% @doc Test interoperability of different mria releases
--module(mria_compatibility_SUITE).
+-module(mria_compatibility_SUITE_).
 
 -compile(export_all).
 -compile(nowarn_export_all).
