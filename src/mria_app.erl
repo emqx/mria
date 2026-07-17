@@ -112,17 +112,14 @@ post_join(_Cluster, _Local, Node, Intent) ->
     case {Role, mria_mnesia:is_in_old_cluster(Node)} of
         {core, false} ->
             ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-            classy:at_lower_level(
-              stopped,
-              fun() ->
-                      try mria_membership:announce(Intent)
-                      catch
-                          _:_ -> ok
-                      end,
-                      join_trans(Node)
-              end),
+            try mria_membership:announce(Intent)
+            catch
+                _:_ -> ok
+            end,
+            Result = join_trans(Node),
             ?tp(notice, "Mria has joined the cluster",
                 #{ seed   => Node
+                 , result => Result
                  });
         {core, true} ->
             %% Migration from cluster management via mnesia schema to classy:

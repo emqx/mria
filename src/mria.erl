@@ -185,7 +185,7 @@ cluster_nodes(all) ->
     %% Note: previously, stopped replicant nodes didn't appear in the list, now they do:
     classy:nodes(all);
 cluster_nodes(running) ->
-    classy:nodes(connected);
+    running_nodes();
 cluster_nodes(stopped) ->
     classy:nodes(disconnected);
 cluster_nodes(cores) ->
@@ -235,7 +235,16 @@ is_peer_alive(Node) ->
 %%   now each nodes shows the other one as running.
 -spec running_nodes() -> list(node()).
 running_nodes() ->
-    classy:nodes(connected).
+    CoreNodes = case mria_rlog:role() of
+                    core -> mria_mnesia:running_nodes();
+                    replicant ->
+                        %% Can be used on core node as well, eliminating this
+                        %% case statement, but mria_mnesia:running_nodes/0
+                        %% must be more accurate than mria_membership:nodelist/0...
+                        mria_membership:running_core_nodelist()
+                end,
+    Replicants = mria_membership:running_replicant_nodelist(),
+    lists:usort(CoreNodes ++ Replicants).
 
 %%--------------------------------------------------------------------
 %% Cluster API
@@ -250,6 +259,7 @@ join(Node) ->
 -spec join(node(), join_reason()) -> ok | ignore | {error, term()}.
 join(Node, heal) when is_atom(Node) ->
     %% Special case used by autoheal logic.
+    %% TODO: verify that node is in classy cluster
     mria_status:prep_restart(),
     Parent = alias([reply]),
     Ref = make_ref(),

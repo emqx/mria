@@ -223,7 +223,7 @@ pre_autocluster(_, Discovered0) ->
 %% @doc Add the node to the cluster schema
 -spec join_cluster(node()) -> ok.
 join_cluster(Node) when Node =/= node() ->
-    case {mria_config:role(), mria_rlog:role(Node)} of
+    case {mria_config:role_(), mria_rlog:role(Node)} of
         {core, core} ->
             maybe
                 %% Restart mnesia and cluster to node
@@ -231,8 +231,8 @@ join_cluster(Node) when Node =/= node() ->
                 ok ?= connect(Node),
                 ok ?= copy_schema(node())
             end;
-        _ ->
-            ok
+        {Role1, Role2} ->
+            {error, {bad_roles, Role1, Role2}}
     end.
 
 %% @doc This node try leave the cluster

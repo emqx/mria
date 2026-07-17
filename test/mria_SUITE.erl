@@ -1425,20 +1425,22 @@ t_join_each_other_simultaneously(_) ->
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
+           Nodes = [N1, N2],
            mria_mnesia_test_util:stabilize(1000),
 
            Key1 = rpc:async_call(N1, mria, join, [N2]),
            Key2 = rpc:async_call(N2, mria, join, [N1]),
            %% Note: join procedure is async:
-           ?assertMatch([_, _],
-                        lists:sort([rpc:yield(Key1), rpc:yield(Key2)])),
+           _ = rpc:yield(Key1),
+           _ = rpc:yield(Key2),
+           ?block_until(#{?snk_kind := "Mria is restarting to join the cluster"}),
+           mria_ct:wait_quorum(Nodes),
            %% Verify that they created a cluster:
-           ?retry(1000, 20,
-                  [begin
-                       ?assertEqual([N1, N2], ?ON(I, mria:running_nodes())),
-                       ?assertEqual([N1, N2], ?ON(I, lists:sort(mria_mnesia:cluster_nodes(all))))
-                   end
-                   || I <- [N1, N2]])
+           ?retry(1000, 10,
+                  begin
+                      ?assertEqual([Nodes, Nodes], cluster_nodes(Nodes)),
+                      ?assertEqual([Nodes, Nodes], running_nodes(Nodes))
+                  end)
        end,
        []).
 
@@ -1458,11 +1460,16 @@ t_join_another_node_simultaneously(_) ->
            _ = rpc:yield(Key2),
            mria_mnesia_test_util:stabilize(1000),
            mria_ct:wait_quorum(Nodes),
-
            ?assertEqual({[true, true, true, true], []}, rpc:multicall(Nodes, mria_sup, is_running, [])),
-           [?defer_assert(
-               ?assertEqual(Nodes, ?ON(I, mria:running_nodes()), I))
-            || I <- Nodes]
+           ?retry(1000, 10,
+                  begin
+                      ?assertEqual(
+                         [Nodes, Nodes, Nodes, Nodes],
+                         cluster_nodes(Nodes)),
+                      ?assertEqual(
+                         [Nodes, Nodes, Nodes, Nodes],
+                         running_nodes(Nodes))
+                  end)
        end,
        []).
 
@@ -1494,11 +1501,15 @@ t_join_many_nodes_simultaneously(_) ->
                         lists:sort([rpc:yield(K) || K <- [K1, K2, K3]])),
            %% Verify that all nodes are up and running and form a cluster:
            mria_mnesia_test_util:stabilize(1000),
-           ?assertEqual({[true, true, true, true], []},
-                        rpc:multicall(Nodes, mria_sup, is_running, [])),
-           {Results, []} = rpc:multicall(Nodes, mria_mnesia, running_nodes, []),
-           ?assertEqual([Nodes, Nodes, Nodes, Nodes],
-                        lists:map(fun lists:sort/1, Results))
+           ?retry(1000, 10,
+                  begin
+                      ?assertEqual(
+                         {[true, true, true, true], []},
+                         rpc:multicall(Nodes, mria_sup, is_running, [])),
+                      ?assertEqual(
+                         [Nodes, Nodes, Nodes, Nodes],
+                         running_nodes(Nodes))
+                  end)
        end,
       []).
 
@@ -2542,3 +2553,19 @@ common_checks() ->
 dump_table(Tab, Node) ->
     ?ON(Node,
         mnesia:dirty_select(Tab, [{'_', [], ['$_']}])).
+
+cluster_nodes(Nodes) ->
+    Results = erpc:multicall(
+                Nodes,
+                mria_mnesia, cluster_nodes, [all]),
+    [case I of
+         {ok, L} -> lists:sort(L);
+         _       -> I
+     end
+     || I <- Results].
+
+running_nodes(Nodes) ->
+    [case I of
+         {ok, L} -> L;
+         _       -> I
+     end || I <- erpc:multicall(Nodes, mria, running_nodes, [])].
