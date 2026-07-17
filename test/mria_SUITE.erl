@@ -1248,7 +1248,7 @@ t_replicant_manual_join(_Config) ->
            ?assertMatch({ok, Pid} when is_pid(Pid), rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% Now after we've manually joined the replicant to the
            %% core cluster, we should have both core nodes discovered:
-           ?assertMatch({error, {already_in_cluster, N2}}, rpc:call(N3, mria, join, [N2])),
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N2])),
            %% 3. Disconnect the replicant from the cluster and check idempotency of this operation:
 
            %% Weird race condition in mnesia:
@@ -1260,8 +1260,8 @@ t_replicant_manual_join(_Config) ->
            ?tp(test_reconnect_node, #{node => N3}),
            ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
            mria_ct:wait_quorum([N3]),
-           %% Re-join to the same node should fail:
-           ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N1])),
+           %% Re-join to the same node is an idempotent operation:
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
            ?assertMatch({ok, _}, rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% 5. Do the same to the other core node:
            %%    - Disconnect

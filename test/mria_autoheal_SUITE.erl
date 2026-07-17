@@ -73,13 +73,7 @@ t_autoheal(Config) when is_list(Config) ->
            ?assertMatch({[N4], [N1, N2, N3]}, view(N4)),
            ?tp(notice, test_proceed, #{}),
            %% Wait for autoheal, it should happen automatically:
-           ?retry(1000, 10,
-                  begin
-                      ?assertMatch({Nodes, []}, view(N1)),
-                      ?assertMatch({Nodes, []}, view(N2)),
-                      ?assertMatch({Nodes, []}, view(N3)),
-                      ?assertMatch({Nodes, []}, view(N4))
-                  end),
+           verify_cluster_healed(Nodes),
            Nodes
        end,
        [fun ?MODULE:prop_reboots/1]).
@@ -100,15 +94,7 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
            %% Wait for the split to be detected:
            ?block_until(#{?snk_kind := mria_autoheal_partition}),
            %% Wait for autoheal, it should happen automatically:
-           ?retry(1000, 20,
-                  begin
-                      Nodes = rpc:call(N1, mria, info, [running_nodes]),
-                      Nodes = rpc:call(N2, mria, info, [running_nodes]),
-                      Nodes = rpc:call(N3, mria, info, [running_nodes]),
-                      Nodes = rpc:call(N4, mria, info, [running_nodes]),
-                      Nodes = rpc:call(N5, mria, info, [running_nodes]),
-                      ok
-                  end),
+           verify_cluster_healed([N1, N2, N3], Nodes),
            Nodes
        end,
        [fun ?MODULE:prop_reboots/1]).
@@ -133,13 +119,7 @@ t_autoheal_overlapping_parition(Config) when is_list(Config) ->
            ?assertMatch({[N1, N2, N3], [N4]}, view(N3)),
            ?assertMatch({[N1, N2, N4], [N3]}, view(N4)),
            %% Wait for autoheal, it should happen automatically:
-           ?retry(1000, 20,
-                  begin
-                      ?assertMatch({Nodes, []}, view(N1)),
-                      ?assertMatch({Nodes, []}, view(N2)),
-                      ?assertMatch({Nodes, []}, view(N3)),
-                      ?assertMatch({Nodes, []}, view(N4))
-                  end),
+           verify_cluster_healed(Nodes),
            Nodes
        end,
        [ fun ?MODULE:prop_reboots/1
@@ -174,13 +154,7 @@ t_autoheal_complex_overlapping_paritions(Config) when is_list(Config) ->
            ?assertMatch({[N2, N3, N4], [N1]}, view(N3)),
            ?assertMatch({[N1, N3, N4], [N2]}, view(N4)),
            %% Wait for autoheal, it should happen automatically:
-           ?retry(1000, 20,
-                  begin
-                      ?assertMatch({Nodes, []}, view(N1)),
-                      ?assertMatch({Nodes, []}, view(N2)),
-                      ?assertMatch({Nodes, []}, view(N3)),
-                      ?assertMatch({Nodes, []}, view(N4))
-                  end),
+           verify_cluster_healed(Nodes),
            Nodes
        end,
        [ fun ?MODULE:prop_reboots/1
@@ -262,6 +236,19 @@ prop_reboots(Trace0) ->
           Trace)),
     true.
 
+verify_cluster_healed(Cores) ->
+    verify_cluster_healed(Cores, Cores).
+
+verify_cluster_healed(Cores, AllNodes) ->
+    ?retry(1000, 10,
+           begin
+               [?assertEqual({Cores, []}, view(I), I)
+                || I <- Cores],
+               [?assertEqual(AllNodes, rpc:call(I, mria, info, [running_nodes]), I)
+                || I <- AllNodes],
+               ok
+           end).
+
 view(Node) ->
     Running = rpc:call(Node, mria_mnesia, running_nodes, []),
     Stopped = rpc:call(Node, mria_mnesia, cluster_nodes, [stopped]),
@@ -270,4 +257,4 @@ view(Node) ->
 setup(Nodes) ->
     %% FIXME: create a proper solution preventing classy from restrarting cores before mria autoheal activates
     [rpc:call(I, application, set_env, [classy, quorum, 100]) || I <- Nodes],
-    ok = mria_mnesia_test_util:wait_tables(Nodes).
+    ok = mria_mnesia_test_util:wait_full_replication(Nodes, 10_000).
