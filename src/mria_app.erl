@@ -55,7 +55,7 @@ start(_Type, _Args) ->
         mria_sup:start_link()
     end.
 
-stop(_Hooks) ->
+stop(_) ->
     mria_config:erase_all_config(),
     ok.
 
