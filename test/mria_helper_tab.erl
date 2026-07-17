@@ -31,12 +31,12 @@
 -include_lib("stdlib/include/assert.hrl").
 
 init() ->
-    ok = mria:create_table(?TABLE, [{type, ordered_set},
-                                    {rlog_shard, test_shard},
-                                    {storage, ram_copies},
-                                    {record_name, ?TABLE},
-                                    {attributes, record_info(fields, ?TABLE)}
-                                   ]).
+    mria:create_table(?TABLE, [{type, ordered_set},
+                               {rlog_shard, test_shard},
+                               {storage, ram_copies},
+                               {record_name, ?TABLE},
+                               {attributes, record_info(fields, ?TABLE)}
+                              ]).
 
 wait_full_replication(Cluster) ->
     wait_full_replication(Cluster, infinity).

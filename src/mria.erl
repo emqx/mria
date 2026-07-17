@@ -592,25 +592,29 @@ rpc_to_core_node(Shard, Module, Function, Args) ->
 
 -spec rpc_to_core_node(mria_rlog:shard(), module(), atom(), list(), non_neg_integer()) -> term().
 rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
-    {ok, Core} = ?tp_span(find_upstream_node, #{shard => Shard},
-                          mria_status:rpc_target(Shard, infinity)),
-    Ret = mria_lib:rpc_call_nothrow({Core, Shard}, Module, Function, Args),
-    case should_retry_rpc(Ret) of
-        true when Retries > 0 ->
-            ?tp(debug, mria_retry_rpc_to_core,
-                #{ module   => Module
-                 , function => Function
-                 , args     => Args
-                 , reason   => Ret
-                 }),
-            %% RPC to core node failed. Retry the operation after
-            %% giving LB some time to discover the failure:
-            SleepTime = (mria_config:core_rpc_retries() - Retries + 1) *
-                mria_config:core_rpc_cooldown(),
-            timer:sleep(SleepTime),
-            rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
-        _ ->
-            Ret
+    case ?tp_span(find_upstream_node, #{shard => Shard},
+                  mria_status:rpc_target(Shard, infinity)) of
+        {ok, Core} ->
+            Ret = mria_lib:rpc_call_nothrow({Core, Shard}, Module, Function, Args),
+            case should_retry_rpc(Ret) of
+                true when Retries > 0 ->
+                    ?tp(debug, mria_retry_rpc_to_core,
+                        #{ module   => Module
+                         , function => Function
+                         , args     => Args
+                         , reason   => Ret
+                         }),
+                    %% RPC to core node failed. Retry the operation after
+                    %% giving LB some time to discover the failure:
+                    SleepTime = (mria_config:core_rpc_retries() - Retries + 1) *
+                        mria_config:core_rpc_cooldown(),
+                    timer:sleep(SleepTime),
+                    rpc_to_core_node(Shard, Module, Function, Args, Retries - 1);
+                _ ->
+                    Ret
+            end;
+        Err ->
+            error({mria_failed_to_find_upstream, Shard, Err})
     end.
 
 should_retry_rpc({badrpc, _}) ->

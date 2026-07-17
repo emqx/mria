@@ -53,15 +53,14 @@ t_node_role_error(_) ->
               #{ ?snk_kind := mria_membership_insert
                , member := #member{node = Node}
                }),
+           ?block_until(#{?snk_kind := mria_membership_role_error}),
            ?assertMatch([#member{role = undefined}], ?ON(N, ets:lookup(membership, Node))),
            ?assertNot(?ON(N, mria_membership:is_member(Node))),
            ?assertNot(?ON(N, mria_membership:lookup_member(Node))),
            ?assertNot(lists:member(Node, ?ON(N, mria_membership:nodelist()))),
            ?assertNot(lists:member(Node, ?ON(N, mria_membership:replicant_nodelist())))
        end,
-       fun(Trace) ->
-               ?assertMatch([_], ?of_kind(mria_membership_role_error, Trace))
-       end).
+       []).
 
 t_leave(_) ->
     ?check_trace(

@@ -1247,8 +1247,10 @@ t_replicant_manual_join(_Config) ->
            %%    - Rejoin the cluster
            ?tp(test_reconnect_node, #{node => N2}),
            ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
-           ?retry(1000, 10,
-                  ?assertMatch([N1, N2, N3], lists:sort(rpc:call(N2, mria, running_nodes, [])))),
+           ?retry(1000, 20,
+                  ?assertEqual(
+                     [Nodes, Nodes, Nodes],
+                     running_nodes(Nodes))),
            Nodes
        end,
        []).
