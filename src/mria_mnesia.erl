@@ -238,19 +238,13 @@ join_cluster(Node) when Node =/= node() ->
 %% @doc This node try leave the cluster
 -spec leave_cluster(classy:kick_intent()) -> ok | {error, any()}.
 leave_cluster(_Intent) ->
+    no = mnesia:system_info(is_running),
     case running_nodes() -- [node()] of
         [] ->
-            {error, node_not_in_cluster};
+            %% Not in cluster:
+            ok;
         Nodes ->
-            case lists:any(fun(Node) ->
-                            case do_leave_cluster(Node) of
-                                ok               -> true;
-                                {error, _Reason} -> false
-                            end
-                          end, Nodes) of
-                true  -> ok;
-                false -> {error, {failed_to_leave, Nodes}}
-            end
+            do_leave_cluster(Nodes)
     end.
 
 %% @doc Cluster Info
@@ -557,13 +551,23 @@ wait_for(stop) ->
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
 
--spec do_leave_cluster(node()) -> ok | {error, any()}.
-do_leave_cluster(Node) when Node =/= node() ->
-    case is_running_db_node(Node) of
+-spec do_leave_cluster([node()]) -> ok | {error, any()}.
+do_leave_cluster([]) ->
+    {error, {failed_to_leave_cluster, no_running_nodes}};
+do_leave_cluster([Node | Rest]) ->
+    case is_running_db_node(Node) andalso Node =/= node() of
         true ->
-            mria_lib:ensure_ok(ensure_stopped()),
-            mria_lib:ensure_ok(rpc:call(Node, ?MODULE, del_schema_copy, [node()])),
-            mria_lib:ensure_ok(delete_schema());
+            try erpc:call(Node, ?MODULE, del_schema_copy, [node()]) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    ?tp(info, mria_do_leave_fail, #{node => Node, reason => Error}),
+                    do_leave_cluster(Rest)
+            catch
+                EC:Err:Stack ->
+                    ?tp(info, mria_do_leave_fail, #{node => Node, EC => Err, stack => Stack}),
+                    do_leave_cluster(Rest)
+            end;
         false ->
-            {error, {node_not_running, Node}}
+            do_leave_cluster(Rest)
     end.

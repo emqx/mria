@@ -150,7 +150,7 @@ on_kick_decided(_ClusterId, TargetSite, _Intent) ->
         Bool when is_boolean(Bool) ->
             ok;
         Err ->
-            ?tp(error, mria_failed_to_kick_remote, #{site => TargetSite, node => TargetSite, reason => Err})
+            ?tp(error, mria_failed_to_kick_remote, #{site => TargetSite, reason => Err})
     end.
 
 -spec enrich_site_info(map()) -> map().
@@ -195,8 +195,6 @@ on_leave(Cluster, _Site, Intent) ->
                       end,
             case Result1 of
                 ok ->
-                    ok;
-                {error, node_not_in_cluster} ->
                     ok;
                 Err1 ->
                     ?tp(critical, mria_failed_to_leave_cluster,
