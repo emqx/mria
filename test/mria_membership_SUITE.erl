@@ -380,6 +380,7 @@ test_replicant_ping_pong(PingOrPong) ->
                 ok
             end
             || N <- Replicants],
+           ct:sleep(100),
            ok
        end,
        [ fun ?MODULE:assert_replicants_inserted/1

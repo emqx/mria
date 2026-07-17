@@ -26,11 +26,12 @@ eunit: compile
 	$(REBAR) eunit verbose=true
 
 .PHONY: test
-test: smoke-test ct-consistency ct-fault-tolerance cover
+test: smoke-test ct-consistency ct-fault-tolerance
+	rebar3 cover
 
 .PHONY: smoke-test
 smoke-test:
-	$(REBAR) do eunit, ct -v --cover --readable=$(CT_READABLE)
+	$(REBAR) do eunit --cover, ct -v --cover --readable=$(CT_READABLE)
 
 .PHONY: ct-consistency
 ct-consistency:
