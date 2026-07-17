@@ -36,7 +36,7 @@
 -record(test_bag, {key, val}).
 
 init() ->
-    mria_helper_tab:init(),
+    ok = mria_helper_tab:init(),
     ok = mria:create_table(test_tab, [{type, ordered_set},
                                       {rlog_shard, test_shard},
                                       {storage, ram_copies},

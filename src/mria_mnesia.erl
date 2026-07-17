@@ -221,7 +221,7 @@ pre_autocluster(_, Discovered0) ->
 %%--------------------------------------------------------------------
 
 %% @doc Add the node to the cluster schema
--spec join_cluster(node()) -> ok.
+-spec join_cluster(node()) -> ok | {error, _}.
 join_cluster(Node) when Node =/= node() ->
     case {mria_config:role_(), mria_rlog:role(Node)} of
         {core, core} ->
