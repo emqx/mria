@@ -1403,11 +1403,11 @@ t_join_each_other_simultaneously(_) ->
            Nodes = [N1, N2],
            mria_mnesia_test_util:stabilize(1000),
 
-           Key1 = rpc:async_call(N1, mria, join, [N2]),
-           Key2 = rpc:async_call(N2, mria, join, [N1]),
+           Key1 = erpc:send_request(N1, mria, join, [N2]),
+           Key2 = erpc:send_request(N2, mria, join, [N1]),
            %% Note: join procedure is async:
-           _ = rpc:yield(Key1),
-           _ = rpc:yield(Key2),
+           {response, ok} = erpc:wait_response(Key1, 10_000),
+           {response, ok} = erpc:wait_response(Key2, 10_000),
            ?block_until(#{?snk_kind := "Mria is restarting to join the cluster"}),
            mria_ct:wait_quorum(Nodes),
            %% Verify that they created a cluster:
@@ -1421,6 +1421,7 @@ t_join_each_other_simultaneously(_) ->
 
 t_join_another_node_simultaneously(_) ->
     ?check_trace(
+       #{timetrap => 30_000},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
@@ -1429,11 +1430,15 @@ t_join_another_node_simultaneously(_) ->
            Nodes = [N1, N2, N3, N4],
 
            ok = rpc:call(N2, mria, join, [N1]),
-           Key1 = rpc:async_call(N3, mria, join, [N1]),
-           Key2 = rpc:async_call(N4, mria, join, [N1]),
-           _ = rpc:yield(Key1),
-           _ = rpc:yield(Key2),
-           mria_mnesia_test_util:stabilize(1000),
+           {ok, SRef} = snabbkaffe:subscribe(
+                          ?match_event(#{?snk_kind := "Mria is restarting to join the cluster"}),
+                          2,
+                          infinity),
+           Key1 = erpc:send_request(N3, mria, join, [N1]),
+           Key2 = erpc:send_request(N4, mria, join, [N1]),
+           {response, ok} = erpc:wait_response(Key1, 10_000),
+           {response, ok} = erpc:wait_response(Key2, 10_000),
+           {ok, _} = snabbkaffe:receive_events(SRef),
            mria_ct:wait_quorum(Nodes),
            ?assertEqual({[true, true, true, true], []}, rpc:multicall(Nodes, mria_sup, is_running, [])),
            ?retry(1000, 10,
@@ -1472,7 +1477,7 @@ t_join_many_nodes_simultaneously(_) ->
            {ok, _} = snabbkaffe:receive_events(SRef),
            K2 = rpc:async_call(N1, mria, join, [N3]),
            K3 = rpc:async_call(N1, mria, join, [N4]),
-           ?assertMatch([_, _, _],
+           ?assertMatch([ok, ok, ok],
                         lists:sort([rpc:yield(K) || K <- [K1, K2, K3]])),
            %% Verify that all nodes are up and running and form a cluster:
            mria_mnesia_test_util:stabilize(1000),

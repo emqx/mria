@@ -151,7 +151,7 @@ connect(Node) ->
 
 -spec with_schema_lock(fun(() -> A), [node()]) -> A.
 with_schema_lock(Fun, Nodes) ->
-    global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes).
+    global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes, infinity).
 
 on_create_site(_SiteId) ->
     %% Migration to classy: check if the mnesia schema had already existed:

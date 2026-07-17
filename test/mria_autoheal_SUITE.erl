@@ -65,7 +65,7 @@ t_autoheal(Config) when is_list(Config) ->
            %% Simulate netsplit
            ?tp(notice, test_split, #{}),
            true = rpc:cast(N4, erlang, disconnect_node, [N3]),
-           ok = timer:sleep(100),
+           ok = timer:sleep(1000),
            %% SplitView: [[N1,N2], [N3], [N4]]
            ?assertMatch({[N1, N2], [N3, N4]}, view(N1)),
            ?assertMatch({[N1, N2], [N3, N4]}, view(N2)),
