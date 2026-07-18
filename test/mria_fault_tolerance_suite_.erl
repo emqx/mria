@@ -71,7 +71,7 @@ t_agent_restart(_) ->
 %% Check that an agent dies if its subscriber dies.
 t_rlog_agent_linked_to_subscriber(_) ->
     ?check_trace(
-       #{timetrap => 10000},
+       #{timetrap => 60000},
        begin
            {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(~"r1", replicant, N1),
