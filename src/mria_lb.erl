@@ -341,9 +341,9 @@ lb_callback() ->
 
 -spec discover_nodes() -> [node()].
 discover_nodes() ->
-    Cores = classy:nodes(core),
-    Compat = classy:nodes(mria_compatible),
-    ordsets:intersection(Cores, Compat).
+    ordsets:intersection(
+      classy:nodes(core),
+      classy:nodes(mria_compatible)).
 
 -spec discover_replicants([node()]) -> [node()].
 discover_replicants(CoreNodes) ->

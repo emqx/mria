@@ -130,24 +130,28 @@ post_join(_Cluster, _Local, Node, Intent) ->
     end.
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
-on_kick_decided(_ClusterId, TargetSite, _Intent) ->
-    maybe
-        {ok, TargetNode} ?= classy:node_of_site(TargetSite, false),
-        true ?= TargetNode =/= node(),
-        %% Notify the peers if kicking a remote node:
-        mria_membership:announce({force_leave, TargetNode}),
-        %% If the remote node is in cluster and it's NOT currently
-        %% running, delete schema on its behalf:
-        true ?= mria_mnesia:is_node_in_cluster(TargetNode),
-        false ?= mria_mnesia:is_running_db_node(TargetNode),
-        mnesia_lib:del(extra_db_nodes, TargetNode),
-        ok ?= mria_mnesia:del_schema_copy(TargetNode),
-        ?tp(info, mria_kicked_remotely, #{local => node(), remote => TargetNode})
-    else
-        Bool when is_boolean(Bool) ->
-            ok;
-        Err ->
-            ?tp(error, mria_failed_to_kick_remote, #{site => TargetSite, reason => Err})
+on_kick_decided(_ClusterId, TargetSite, Intent) ->
+    case classy:node_of_site(TargetSite, false) of
+        {ok, TargetNode} ->
+            maybe
+                true ?= TargetNode =/= node(),
+                %% Notify the peers if kicking a remote node:
+                mria_membership:announce({force_leave, TargetNode}),
+                %% If the remote node is in cluster and it's NOT currently
+                %% running, delete schema on its behalf:
+                true ?= mria_mnesia:is_node_in_cluster(TargetNode),
+                false ?= mria_mnesia:is_running_db_node(TargetNode),
+                mnesia_lib:del(extra_db_nodes, TargetNode),
+                ok ?= mria_mnesia:del_schema_copy(TargetNode),
+                ?tp(info, mria_kicked_remotely, #{remote => TargetNode, intent => Intent})
+            else
+                Bool when is_boolean(Bool) ->
+                    ok;
+                Err ->
+                    ?tp(critical, mria_failed_to_kick_remote, #{node => TargetNode, reason => Err, intent => Intent})
+            end;
+        Other ->
+            ?tp(critical, mria_failed_to_kick_remote, #{site => TargetSite, reason => Other, intent => Intent})
     end.
 
 -spec enrich_site_info(map()) -> map().

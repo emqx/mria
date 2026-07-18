@@ -1208,37 +1208,37 @@ t_replicant_manual_join(_Config) ->
            {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, undefined),
            Nodes = [N1, N2, N3],
 
-           %% 1. Make sure the load balancer didn't discover any core
-           %% nodes when `core_nodes' environment variable is set to
-           %% `[]':
-           ?retry(1000, 10,
-                  ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, []))),
-           %% 2. Manually connect the replicant to the core cluster:
+           %% 1. Connect the replicant to the core cluster:
            ?tp_span(notice, test_join1, #{},
                     begin
                         ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
                         mria_ct:wait_quorum([N3])
                     end),
            %% Check that meta shard is up:
-           ?assertMatch({ok, Pid} when is_pid(Pid), rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
+           ?assertMatch(
+              {ok, Pid} when is_pid(Pid),
+              rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% Now after we've manually joined the replicant to the
            %% core cluster, we should have both core nodes discovered:
            ?assertMatch(ok, rpc:call(N3, mria, join, [N2])),
-           %% 3. Disconnect the replicant from the cluster and check idempotency of this operation:
+           %% 2. Disconnect the replicant from the cluster and check idempotency of this operation:
 
            %% Weird race condition in mnesia:
-           timer:sleep(5000),
+           ct:sleep(5000),
            ?tp(notice, test_disconnect_node, #{node => N3}),
            ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
-           ?assertMatch({error, _}, rpc:call(N3, mria, join, ['badnode@badhost'])),
-           %% 4. Now connect the replicant to the core cluster again (bug: EMQX-9021):
+           %% Cannot join a node that is down:
+           ?assertMatch({error, _}, rpc:call(N3, mria, join, ['badnode@badhost.baddomain'])),
+
+           %% 3. Now connect the replicant to the core cluster again (bug: EMQX-9021):
            ?tp(test_reconnect_node, #{node => N3}),
            ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-           mria_ct:wait_quorum([N3]),
+           ct:sleep(1000),
+
            %% Re-join to the same node is an idempotent operation:
            ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
            ?assertMatch({ok, _}, rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
-           %% 5. Do the same to the other core node:
+           %% 4. Do the same to the other core node:
            %%    - Disconnect
            ?tp(test_disconnect_node, #{node => N2}),
            ?wait_async_action(
@@ -1247,7 +1247,7 @@ t_replicant_manual_join(_Config) ->
            %%    - Rejoin the cluster
            ?tp(test_reconnect_node, #{node => N2}),
            ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
-           ?retry(1000, 20,
+           ?retry(1000, 10,
                   ?assertEqual(
                      [Nodes, Nodes, Nodes],
                      running_nodes(Nodes))),

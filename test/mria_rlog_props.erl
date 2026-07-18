@@ -200,17 +200,23 @@ check_transaction_replay_sequence(Max, Prev, [Next|_]) ->
 %%                                    } <- Trace]).
 
 check_transaction_replay_sequence_test() ->
-    ?assert(check_transaction_replay_sequence([])),
-    ?assert(check_transaction_replay_sequence([1, 2])),
-    ?assert(check_transaction_replay_sequence([2, 3, 4])),
-    %% Gap:
-    ?assertError(_, check_transaction_replay_sequence([0, 1, 3])),
-    ?assertError(_, check_transaction_replay_sequence([0, 1, 13, 14])),
-    %% Replays:
-    ?assert(check_transaction_replay_sequence([1, 1, 2, 3, 3])),
-    ?assert(check_transaction_replay_sequence([1, 2, 3,   1, 2, 3, 4])),
-    ?assert(check_transaction_replay_sequence([1, 2, 3,   1, 2, 3, 4,   3, 4])),
-    %% Invalid replays:
-    ?assertError(_, check_transaction_replay_sequence([1, 2, 3,   2])),
-    ?assertError(_, check_transaction_replay_sequence([1, 2, 3,   2, 4])),
-    ?assertError(_, check_transaction_replay_sequence([1, 2, 3,   2, 3, 4, 5,   3, 4])).
+    try
+        meck:new(classy_site_metadata, [no_history, passthrough]),
+        meck:expect(classy_site_metadata, set, fun(_, _) -> ok end),
+        ?assert(check_transaction_replay_sequence([])),
+        ?assert(check_transaction_replay_sequence([1, 2])),
+        ?assert(check_transaction_replay_sequence([2, 3, 4])),
+        %% Gap:
+        ?assertError(_, check_transaction_replay_sequence([0, 1, 3])),
+        ?assertError(_, check_transaction_replay_sequence([0, 1, 13, 14])),
+        %% Replays:
+        ?assert(check_transaction_replay_sequence([1, 1, 2, 3, 3])),
+        ?assert(check_transaction_replay_sequence([1, 2, 3,   1, 2, 3, 4])),
+        ?assert(check_transaction_replay_sequence([1, 2, 3,   1, 2, 3, 4,   3, 4])),
+        %% Invalid replays:
+        ?assertError(_, check_transaction_replay_sequence([1, 2, 3,   2])),
+        ?assertError(_, check_transaction_replay_sequence([1, 2, 3,   2, 4])),
+        ?assertError(_, check_transaction_replay_sequence([1, 2, 3,   2, 3, 4, 5,   3, 4]))
+    after
+        meck:unload(classy_site_metadata)
+    end.
