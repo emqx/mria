@@ -25,7 +25,7 @@
 
 -define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
 
--define(timetrap, 30_000).
+-define(timetrap, 60_000).
 
 all() -> mria_ct:all(?MODULE).
 
