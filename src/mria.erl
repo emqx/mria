@@ -261,16 +261,18 @@ join(Node, heal) when is_atom(Node) ->
     %% Special case used by autoheal logic.
     %% TODO: verify that node is in classy cluster
     mria_status:prep_restart(),
-    Parent = alias([reply]),
-    Ref = make_ref(),
-    classy:at_lower_level(
-      stopped,
-      fun() ->
-              Result = mria_mnesia:join_cluster(Node),
-              Parent ! {Ref, Result}
-      end),
-    receive
-        {Ref, Result} -> Result
+    maybe
+        Parent = alias([reply]),
+        Ref = make_ref(),
+        ok ?= classy:at_lower_level(
+                stopped,
+                fun() ->
+                        Result = mria_mnesia:join_cluster(Node),
+                        Parent ! {Ref, Result}
+                end),
+        receive
+            {Ref, Result} -> Result
+        end
     end;
 join(Node, Reason) when is_atom(Node) ->
     classy:join_node(Node, Reason).
