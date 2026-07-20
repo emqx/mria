@@ -440,11 +440,11 @@ handle_reconnect(D0 = #d{shard = Shard, checkpoint = Checkpoint, parent_sup = Pa
 try_connect(Shard, ?any_core, Checkpoint) ->
     Timeout = 4_000, % Don't block FSM forever, allow it to process other messages.
     %% Get the best node according to the LB
-    Nodes = case mria_status:replica_get_core_node(Shard, Timeout) of
-                {ok, N} -> [N];
-                timeout -> []
-            end,
-    try_connect1(Nodes, Shard, Checkpoint);
+    case mria_status:replica_get_core_node(Shard, Timeout) of
+        {ok, Core}       -> try_connect1([Core], Shard, Checkpoint);
+        timeout          -> try_connect1([], Shard, Checkpoint);
+        {error, _} = Err -> Err
+    end;
 try_connect(Shard, Upstream, Checkpoint) ->
     try_connect1([Upstream], Shard, Checkpoint).
 

@@ -44,8 +44,6 @@ wait_tables(Nodes) ->
 
 wait_tables(Tables, Nodes) ->
     ?tp(mria_test_util_waiting_for_tables, #{nodes => Nodes}),
-    [?block_until(#{?snk_kind := mria_ct_cluster_join, node := Node})
-     || Node <- Nodes],
     {Rep, BadNodes} = rpc:multicall(Nodes, mria, wait_for_tables, [Tables], infinity),
     case lists:all(fun(A) -> A =:= ok end, Rep) andalso BadNodes =:= [] of
         true ->

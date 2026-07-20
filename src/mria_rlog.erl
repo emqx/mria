@@ -92,22 +92,19 @@
 %%================================================================================
 
 status() ->
-    Backend = backend(),
-    Role    = role(),
-    Info0 = #{ backend => Backend
+    Role = role(),
+    Info0 = #{ backend => backend()
              , role    => Role
              },
-    case {Backend, Role} of
-        {mnesia, _} ->
-            Info0;
-        {rlog, replicant} ->
+    case Role of
+        replicant ->
             Stats = [{I, mria_status:get_shard_stats(I)}
                      || I <- mria_schema:shards()],
             Info0#{ shards_in_sync => mria_status:shards_up()
                   , shards_down    => mria_status:shards_down()
                   , shard_stats    => maps:from_list(Stats)
                   };
-        {rlog, core} ->
+        core ->
             Info0#{ imbalance => mria_rebalance:plan(mria_rebalance:collect())
                   }
     end.
@@ -127,8 +124,6 @@ role(Node) ->
 -spec shard_writes(shard()) -> {ok, shard_writes()} | {aborted, _}.
 shard_writes(Shard) ->
     case mria_config:whoami() of
-        mnesia ->
-            {ok, mnesia};
         core ->
             {ok, local};
         replicant ->
@@ -156,16 +151,14 @@ backend() ->
 core_nodes() ->
     mria_lb:core_nodes().
 
--spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]}.
+-spec wait_for_shards([shard()], timeout()) -> ok | {timeout, [shard()]} | {error, stopping}.
 wait_for_shards(Shards, Timeout) ->
-    case mria_config:backend() of
-        rlog ->
-            lists:foreach(fun ensure_shard/1, Shards),
-            %% Note: core node also must wait for shards, to make sure
-            %% the schema has converged, and the shard config is set:
-            mria_status:wait_for_shards(Shards, Timeout);
-        mnesia ->
-            ok
+    maybe
+        ok ?= mria_status:check_stopping(),
+        lists:foreach(fun ensure_shard/1, Shards),
+        %% Note: core node also must wait for shards, to make sure
+        %% the schema has converged, and the shard config is set:
+        mria_status:wait_for_shards(Shards, Timeout)
     end.
 
 -spec ensure_shard(shard()) -> ok.
@@ -191,12 +184,14 @@ ensure_shard(Shard) ->
           , [mria_schema:entry()]
           , integer()
           }
-        | {badrpc | badtcp, term()}.
+        | {badrpc | badtcp, term()}
+        | {error, _}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
+    {ok, Cluster} = classy:the_cluster(),
     case mria_rlog_server:probe(RemoteNode, Shard) of
         true ->
             MyNode = node(),
-            Args = [Shard, {MyNode, Subscriber}, Checkpoint],
+            Args = [Shard, {MyNode, Subscriber}, Checkpoint, Cluster],
             mria_lib:rpc_call_nothrow({RemoteNode, Shard}, mria_rlog_server, subscribe, Args);
         false ->
             {badrpc, {probe_failed, Shard}}
@@ -214,7 +209,8 @@ get_protocol_version() ->
     %% 1 -> 2: Add `{clear_table, Tab, Pattern}` op to support
     %% `mnesia:match_delete/2` API extension.
     %% 2 -> 3: Add merge tables
-    3.
+    %% 3 -> 4: Classy. Add cluster ID to the subscribe call.
+    4.
 
 intercept_trans(Tid, Commit) ->
     ?tp(mria_rlog_intercept_trans, Commit#{tid => Tid}),

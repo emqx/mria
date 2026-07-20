@@ -18,6 +18,7 @@
 -module(mria_config).
 
 -export([ role/0
+        , role_/0
         , backend/0
         , whoami/0
         , rpc_module/0
@@ -70,9 +71,7 @@
 %% Type declarations
 %%================================================================================
 
--type callback() :: start
-                  | stop
-                  | {start | stop, mria_rlog:shard()}
+-type callback() :: {start | stop, mria_rlog:shard()}
                   | heal_partition
                   | core_node_discovery
                   | lb_custom_info
@@ -110,22 +109,21 @@ shard_config(Shard) ->
 
 -spec backend() -> mria:backend().
 backend() ->
-    %% Note: always `rlog' since `db_backend' is not set.
-    persistent_term:get(?mria(db_backend), rlog).
+    rlog.
 
 -spec role() -> mria_rlog:role().
 role() ->
     persistent_term:get(?mria(node_role), core).
 
+%% Variant of role that works even when mria application is stopped.
+-spec role_() -> mria_rlog:role().
+role_() ->
+    application:get_env(mria, node_role, core).
+
 %% Get backend and role:
--spec whoami() -> core | replicant | mnesia.
+-spec whoami() -> core | replicant.
 whoami() ->
-    case backend() of
-        mnesia ->
-            mnesia;
-        rlog ->
-            role()
-    end.
+    role().
 
 -spec rpc_module() -> ?GEN_RPC | ?ERL_RPC.
 rpc_module() ->
@@ -172,7 +170,12 @@ load_config() ->
     copy_from_env(max_mql),
     copy_from_env(bootstrap_batch_size),
     copy_from_env(extra_mnesia_diagnostic_checks),
-    consistency_check().
+    consistency_check(),
+    classy_site_metadata:set(
+      mria,
+      #{ role => mria_rlog:role()
+       , vsn => mria_rlog:get_protocol_version()
+       }).
 
 -spec set_dirty_shard(mria_rlog:shard(), boolean()) -> ok.
 set_dirty_shard(Shard, IsDirty) when IsDirty =:= true;
@@ -280,10 +283,6 @@ consistency_check() ->
         ?TRANSPORT_GEN_RPC -> ok
     end,
     case {backend(), role(), otp_is_compatible()} of
-        {mnesia, replicant, _} ->
-            ?LOG(critical, "Configuration error: cannot use mnesia DB "
-                           "backend on the replicant node", []),
-            error(unsupported_backend);
         {rlog, _, false} ->
             ?LOG(critical, "Configuration error: cannot use mria DB "
                            "backend with this version of Erlang/OTP", []),
@@ -308,8 +307,10 @@ consistency_check() ->
 -spec copy_from_env(atom()) -> ok.
 copy_from_env(Key) ->
     case application:get_env(mria, Key) of
-        {ok, Val} -> persistent_term:put(?mria(Key), Val);
-        undefined -> ok
+        {ok, Val} ->
+            persistent_term:put(?mria(Key), Val);
+        undefined ->
+            ok
     end.
 
 %% Create a reverse lookup table for finding shard of the table
@@ -399,7 +400,11 @@ erase_shard_config_test() ->
 erase_global_config_test() ->
     PersTerms = lists:sort(persistent_term:get()),
     try
-        ok = load_config()
+        meck:new(classy_site_metadata, [no_history, passthrough]),
+        meck:expect(classy_site_metadata, set, fun(_, _) -> ok end),
+
+        ok = load_config(),
+        meck:unload(classy_site_metadata)
     after
         erase_all_config(),
         %% Check that erase_all_config function restores the status quo:

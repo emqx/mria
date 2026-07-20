@@ -49,7 +49,7 @@ init() ->
                                       {record_name, test_bag},
                                       {attributes, record_info(fields, test_bag)}
                                      ]),
-    mria_rlog:wait_for_shards([test_shard], infinity).
+    ok = mria_rlog:wait_for_shards([test_shard], infinity).
 
 verify_trans_sum(N, Delay) ->
     mnesia:wait_for_tables([test_tab], 10000),

@@ -20,7 +20,8 @@
     replayq,
     snabbkaffe,
     optvar,
-    gproc
+    gproc,
+    classy
    ]},
   {modules, []},
   {licenses, ["Apache 2.0"]},

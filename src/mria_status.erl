@@ -24,6 +24,8 @@
 
 %% API:
 -export([start_link/0,
+         check_stopping/0,
+         prep_restart/0,
          notify_rpc_target_up/2, notify_rpc_target_down/1, rpc_target/2,
          notify_shard_up/2, notify_shard_down/1, wait_for_shards/2,
          notify_core_node_up/2, notify_core_node_down/1, replica_get_core_node/2,
@@ -86,17 +88,39 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec check_stopping() -> ok | {error, ?mria_stopping}.
+check_stopping() ->
+    case optvar:is_set(?optvar(?mria_stopping)) of
+        false ->
+            ok;
+        true ->
+            {error, ?mria_stopping}
+    end.
+
+%% This function should be called before business logic must restart.
+%%
+%% It sets all waiting optvars to a special value `{error, stopping}',
+%% thus waking up all waiters and letting them terminate gracefully.
+prep_restart() ->
+    try gen_server:call(?SERVER, prep_restart, infinity)
+    catch
+        exit:{noproc, _} -> ok
+    end.
+
 %% @doc Return name of the core node that can serve as the RPC target.
 %% It is the same node that serves the local replica, but this optvar
 %% is set before local replica goes up fully. WARNING: this `optvar'
 %% is set before local replica becomes consistent.
--spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | disconnected.
+-spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?mria_stopping} | disconnected.
 rpc_target(Shard, Timeout) ->
-    case optvar:read(?optvar({?rpc_target, Shard}), Timeout) of
-        OK = {ok, _} ->
-            OK;
-        timeout ->
-            disconnected
+    maybe
+        ok ?= check_stopping(),
+        case optvar_read({?rpc_target, Shard}, Timeout) of
+            timeout ->
+                disconnected;
+            Other ->
+                Other
+        end
     end.
 
 -spec notify_rpc_target_up(mria_rlog:shard(), node()) -> ok.
@@ -123,8 +147,9 @@ upstream_node(Shard) ->
 -spec upstream(mria_rlog:shard()) -> {ok, pid()} | disconnected.
 upstream(Shard) ->
     case optvar:peek(?optvar({?upstream_pid, Shard})) of
-        {ok, Pid} -> {ok, Pid};
-        undefined -> disconnected
+        {ok, {ok, Pid}}               -> {ok, Pid};
+        {ok, {error, ?mria_stopping}} -> disconnected;
+        undefined                     -> disconnected
     end.
 
 %% @doc WARNING: this optvar is used STRICTLY for interaction between
@@ -132,9 +157,12 @@ upstream(Shard) ->
 %% that serves minimal number of replicants. As such, it must NOT be
 %% used for RPC targeting: all RPCs from the entire cluster will end
 %% up on a single node.
--spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | timeout.
+-spec replica_get_core_node(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?mria_stopping} | timeout.
 replica_get_core_node(Shard, Timeout) ->
-    optvar:read(?optvar({?core_node, Shard}), Timeout).
+    maybe
+        ok ?= check_stopping(),
+        optvar_read({?core_node, Shard}, Timeout)
+    end.
 
 -spec notify_core_node_up(mria_rlog:shard(), node()) -> ok.
 notify_core_node_up(Shard, Node) ->
@@ -220,29 +248,33 @@ get_shard_lag(Shard) ->
             end
     end.
 
--spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]}.
+-spec wait_for_shards([mria_rlog:shard()], timeout()) -> ok | {timeout, [mria_rlog:shard()]} | {error, ?mria_stopping}.
 wait_for_shards(Shards, Timeout) ->
-    ?tp(waiting_for_shards,
-        #{ shards => Shards
-         , timeout => Timeout
-         }),
-    Result = optvar:wait_vars( [?optvar({?upstream_pid, I})
-                                || I <- Shards,
-                                   I =/= ?LOCAL_CONTENT_SHARD]
-                             , Timeout
-                             ),
-    Ret = case Result of
-              ok ->
-                  ok;
-              {timeout, L} ->
-                  TimedOutShards = [Shard || ?optvar({?upstream_pid, Shard}) <- L],
-                  {timeout, TimedOutShards}
-          end,
-    ?tp(done_waiting_for_shards,
-        #{ shards => Shards
-         , result => Ret
-         }),
-    Ret.
+    maybe
+        ok ?= check_stopping(),
+        ?tp(waiting_for_shards,
+            #{ shards => Shards
+             , timeout => Timeout
+             }),
+        Result = optvar:wait_vars( [?optvar({?upstream_pid, I})
+                                    || I <- Shards,
+                                       I =/= ?LOCAL_CONTENT_SHARD]
+                                 , Timeout
+                                 ),
+        Ret = case Result of
+                  ok ->
+                      ok;
+                  {timeout, L} ->
+                      TimedOutShards = [Shard || ?optvar({?upstream_pid, Shard}) <- L],
+                      {timeout, TimedOutShards}
+              end,
+        ?tp(done_waiting_for_shards,
+            #{ shards => Shards
+             , result => Ret
+             }),
+        ok ?= Ret,
+        check_stopping()
+    end.
 
 -spec shards_status() -> [{mria_rlog:shard(), _Status}].
 shards_status() ->
@@ -346,9 +378,13 @@ notify_replicant_bootstrap_import(Shard) ->
 notify_local_table(Table) ->
     do_notify_up(?local_table, Table, true).
 
--spec local_table_present(mria:table()) -> true.
+-spec local_table_present(mria:table()) -> true | {error, ?mria_stopping}.
 local_table_present(Table) ->
-    optvar:read(?optvar({?local_table, Table})).
+    maybe
+        ok ?= check_stopping(),
+        {ok, _} ?= optvar_read({?local_table, Table}, infinity),
+        true
+    end.
 
 -spec waiting_shards() -> [mria_rlog:shard()].
 waiting_shards() ->
@@ -403,6 +439,10 @@ terminate(_Reason, _State) ->
     [optvar:unset(?optvar(K)) || ?optvar(K) <- optvar:list()],
     {exit, normal}.
 
+handle_call(prep_restart, _From, State) ->
+    optvar:set(?optvar(?mria_stopping), true),
+    [optvar:set(?optvar(K), {error, ?mria_stopping}) || ?optvar(K) <- optvar:list_all()],
+    {reply, ok, State};
 handle_call(_, _, State) ->
     {reply, {error, unknown_call}, State}.
 
@@ -412,6 +452,17 @@ handle_cast(_, State) ->
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+-spec optvar_read(term(), timeout()) -> {ok, term()} | {error, ?mria_stopping} | timeout.
+optvar_read(Var, Timeout) ->
+        case optvar:read(?optvar(Var), Timeout) of
+            {ok, {ok, _} = Ok} ->
+                Ok;
+            {ok, {error, ?mria_stopping} = Err} ->
+                Err;
+            timeout ->
+                timeout
+        end.
 
 -spec set_stat(mria_rlog:shard(), _Stat, term()) -> ok.
 set_stat(Shard, Stat, Val) ->
@@ -452,7 +503,7 @@ do_notify_up(Tag, Object, Value) ->
              , value  => Value
              , node   => node()
              }),
-    optvar:set(?optvar(Key), Value).
+    optvar:set(?optvar(Key), {ok, Value}).
 
 -spec do_notify_down(atom(), term()) -> ok.
 do_notify_down(Tag, Object) ->

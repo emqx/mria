@@ -61,4 +61,6 @@
 
 -define(any_core, any_core).
 
+-define(mria_stopping, stopping).
+
 -endif.

@@ -20,153 +20,126 @@
 -compile(nowarn_export_all).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
--compile(nowarn_deprecated_function). %% Silence the warnings about slave module
+init_per_suite(Config) ->
+    mria_ct:start_dist(),
+    Ref = atomics:new(1, []),
+    [{net_ctr, Ref} | Config].
+
+init_per_testcase(TestCase, Config) ->
+    snabbkaffe:fix_ct_logging(),
+    logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
+    %% Allocate a unique subnet for the testcase:
+    {_, Ctr} = proplists:lookup(net_ctr, Config),
+    Subnet = atomics:add_get(Ctr, 1, 1) rem 256,
+    ok = create_cluster(TestCase, Subnet),
+    Config.
+
+create_cluster(ClusterId, Subnet) ->
+    Fixtures = [ {familiar_snabbkaffe, #{}}
+               , {familiar_app,
+                  #{ app => gen_rpc
+                   , env => fun(_Site, Node, _State) ->
+                                    %% gen_rpc listens on a single IP address:
+                                    [_ | Host] = string:tokens(atom_to_list(Node), "@"),
+                                    {ok, Addr} = inet:parse_address(string:trim(Host)),
+                                    #{ socket_ip => Addr
+                                     , port_discovery => stateless
+                                     }
+                            end}}
+               , {familiar_app,
+                  #{ app => classy
+                   , env => fun(Site, _Node, _State) ->
+                                    #{ setup_hooks => {?MODULE, setup_init_hooks, [Site]}
+                                     , cleanup_check_interval => 100
+                                     , vote_retry_interval => 100
+                                     , rpc_timeout => 100
+                                     , discovery_interval => 100
+                                     , sync_timeout => 100
+                                     }
+                            end
+                   , prep_stop => fun(Site, _Node, _State) ->
+                                          familiar:call(Site, classy, prep_stop, [], infinity)
+                                  end
+                 }}
+               ],
+    put(mria_ct_cluster, {ok, ClusterId}),
+    familiar:start_link_cluster(
+      #{ id => ClusterId
+       , fixtures => familiar:default_fixtures() ++ Fixtures
+       , peer => #{ args => ["-kernel", "prevent_overlapping_partitions", "false"]
+                  , shutdown => {halt, 5000}
+                  }
+       , net => {127, 22, Subnet, 0}
+       }).
+
+end_per_testcase(TestCase, Config) ->
+    Success = case proplists:get_value(tc_status, Config) of
+                  ok -> true;
+                  _  -> false
+              end,
+    logger:notice(asciiart:visible($%, "Complete ~p (success=~p)", [TestCase, Success])),
+    ok = familiar:stop_cluster(TestCase, Success),
+    snabbkaffe:stop(),
+    Config.
+
+setup_init_hooks({_Cluster, Site}) ->
+    %% Use deterministic site IDs
+    classy:on_node_init(fun() ->
+                                classy_node:maybe_init_the_site(Site),
+                                mria_app:on_node_init()
+                        end,
+                        0),
+    %% Imitate business applications:
+    classy:run_level(fun ?MODULE:on_run_level/2, 0).
+
+on_run_level(single, cluster) ->
+    ?tp_span(warning, initializing_run_level, #{node => node()},
+             mria_transaction_gen:init());
+on_run_level(cluster, quorum) ->
+    optvar:set(test_mria_quorum, true);
+on_run_level(quorum, cluster) ->
+    optvar:unset(test_mria_quorum);
+on_run_level(_, _) ->
+    ok.
+
+wait_quorum(Nodes) ->
+    ?assertMatch(
+       {_, []},
+       rpc:multicall(Nodes, optvar, read, [test_mria_quorum], infinity)).
+
+create_start_node(SiteId, Role, JoinTo) ->
+    create_node(SiteId, Role, #{}, JoinTo, #{start => true}).
+
+create_node(SiteId, Role, MriaOpts, JoinTo, FamiliarOpts) ->
+    familiar:create_site(
+      mria_ct:get_cluster(),
+      SiteId,
+      FamiliarOpts#{ fixtures => fixtures(Role, MriaOpts, JoinTo)
+                   }).
+
+fixtures(Role, MriaOpts, JoinTo) ->
+    [ {familiar_app,
+       #{ app => mria
+        , start => false
+        , env => MriaOpts#{ strict_mode             => true
+                          , rlog_lb_update_interval => 100
+                          , node_role               => Role
+                          , cluster_autoheal        => 200
+                          }}}
+    , {mria_join_fixture, JoinTo}
+    ].
+
+get_cluster() ->
+  {ok, Cluster} = get(mria_ct_cluster),
+  Cluster.
 
 %% @doc Get all the test cases in a CT suite.
 all(Suite) ->
     lists:usort([F || {F, 1} <- Suite:module_info(exports),
                       string:substr(atom_to_list(F), 1, 2) == "t_"
                 ]).
-
-cleanup(Testcase) ->
-    ct:pal("Cleaning up after ~p...", [Testcase]),
-    mria:stop(),
-    ok = mnesia:delete_schema([node()]).
-
--type env() :: [{atom(), atom(), term()}].
-
--type start_spec() ::
-        #{ name       := atom()
-         , node       := node()
-         , join_to    => node()
-         , env        := env()
-         , number     := integer()
-         , code_paths := [file:filename_all()]
-         }.
-
--type node_spec() :: mria_rlog:role() % name automatically, use default environment
-                   | {mria_rlog:role(), env()} % name automatically, customize env
-                   | #{ role := mria_rlog:role()
-                      , name => atom()
-                      , env => env()
-                      , code_paths => [file:filename_all()]
-                      }.
-
--type cluster_opt() :: {base_gen_rpc_port, non_neg_integer()}. % starting grpc port
-
-%% @doc Generate cluster config with all necessary connectivity
-%% options, that should be able to run on the localhost
--spec cluster([node_spec()], env()) -> [start_spec()].
-cluster(Specs, CommonEnv) ->
-    cluster(Specs, CommonEnv, []).
-
--spec cluster([node_spec()], env(), [cluster_opt()]) -> [start_spec()].
-cluster(Specs0, CommonEnv, ClusterOpts) ->
-    Specs1 = lists:zip(Specs0, lists:seq(1, length(Specs0))),
-    Specs = expand_node_specs(Specs1, CommonEnv),
-    CoreNodes = [node_id(Name) || #{role := core, name := Name} <- Specs],
-    %% Assign grpc ports:
-    BaseGenRpcPort = proplists:get_value(base_gen_rpc_port, ClusterOpts, 9000),
-    GenRpcPorts = maps:from_list([{node_id(Name), {tcp, BaseGenRpcPort + Num}}
-                                  || #{name := Name, num := Num} <- Specs]),
-    %% Set the default node of the cluster:
-    JoinTo = case CoreNodes of
-                 [First|_] -> #{join_to => First};
-                 _         -> #{}
-             end,
-    [JoinTo#{ name   => Name
-            , node   => node_id(Name)
-            , env    => [ {mria, core_nodes, CoreNodes}
-                        , {mria, node_role, Role}
-                        , {mria, rlog_replica_reconnect_interval, 100} % For faster response times
-                        , {mria, {callback, heal_partition}, fun heal_callback/1}
-                        , {gen_rpc, tcp_server_port, BaseGenRpcPort + Number}
-                        , {gen_rpc, client_config_per_node, {internal, GenRpcPorts}}
-                        | Env]
-            , number => Number
-            , role   => Role
-            , code_paths => CodePaths
-            , beam_args => proplists:get_value(beam_args, ClusterOpts, "")
-            , cover => Cover
-            }
-     || #{role := Role, name := Name, env := Env, code_paths := CodePaths, num := Number, cover := Cover} <- Specs].
-
-start_cluster(node, Specs) ->
-    Nodes = [start_slave(node, I) || I <- Specs],
-    mnesia:delete_schema(Nodes),
-    Nodes;
-start_cluster(mria, Specs) ->
-    start_cluster(node, Specs),
-    [start_mria(I) || I <- Specs];
-start_cluster(mria_async, Specs) ->
-    Ret = start_cluster(node, Specs),
-    spawn(fun() -> [start_mria(I) || I <- Specs] end),
-    Ret.
-
-start_slave(node, #{name := Name, env := Env, code_paths := CodePaths, cover := Cover} = Spec) ->
-    CommonBeamOpts = "+S 1:1 " % We want VMs to only occupy a single core
-        "-kernel inet_dist_listen_min 3000 " % Avoid collisions with gen_rpc ports
-        "-kernel inet_dist_listen_max 3050 "
-        ++ maps:get(beam_args, Spec, "") ++ " ",
-    Node = do_start_slave(Name, CommonBeamOpts),
-    Self = filename:dirname(code:which(?MODULE)),
-    [rpc:call(Node, code, add_patha, [Path]) || Path <- [Self|CodePaths]],
-    %% Load apps before setting the enviroment variables to avoid
-    %% overriding the environment during mria start:
-    [rpc(Node, application, load, [App]) || App <- [gen_rpc]],
-    FormatterConfig = #{ template => [[header, node], "\n", msg, "\n"]
-                       , legacy_header => false
-                       , single_line => false
-                       },
-    rpc(Node, logger, set_formatter_config, [default, FormatterConfig]),
-    LogLevel = list_to_atom(os:getenv("LOG_LEVEL", "notice")),
-    rpc(Node, logger, update_primary_config, [#{level => LogLevel}]),
-    rpc(Node, logger, update_handler_config, [default, #{level => LogLevel}]),
-    [{ok, _} = cover:start([Node]) || Cover],
-    %% Disable gen_rpc listener by default:
-    Env1 = [{gen_rpc, tcp_server_port, false}|Env],
-    setenv(Node, Env1),
-    ok = snabbkaffe:forward_trace(Node),
-    Node;
-start_slave(mria, Spec) ->
-    Node = start_slave(node, Spec),
-    ok = rpc(Node, mria, start, []),
-    ok = rpc(Node, mria_transaction_gen, init, []),
-    Node.
-
-do_start_slave(Name, BeamArgs) ->
-    {ok, Node} = slave:start_link(host(), Name, BeamArgs),
-    Node.
-
-teardown_cluster(Specs) ->
-    ?tp(notice, teardown_cluster, #{}),
-    %% Shut down replicants first, otherwise they will make noise about core nodes going down:
-    [ok = stop_slave(I) || #{role := replicant, node := I} <- Specs],
-    [ok = stop_slave(I) || #{role := core, node := I} <- Specs],
-    ok.
-
-start_mria(#{node := Node} = Spec) ->
-    ok = rpc(Node, mria, start, []),
-    maybe_join_core_cluster(Spec),
-    %% Emulate start of the business apps:
-    InitGenResult = rpc(Node, mria_transaction_gen, init, []),
-    ?tp(mria_ct_cluster_join, #{node => Node, init_gen => InitGenResult}),
-    Node.
-
-maybe_join_core_cluster(#{node := Node, role := core, join_to := JoinTo}) ->
-    %% Join the cluster if needed:
-    case rpc(Node, mria, join, [JoinTo]) of
-        ok     -> ok;
-        ignore -> ok;
-        Err    -> ?panic(failed_to_join_cluster,
-                         #{ node    => Node
-                          , join_to => JoinTo
-                          , error   => Err
-                          })
-    end;
-maybe_join_core_cluster(_) ->
-    ok.
 
 write(Record) ->
     ?tp_span(trans_write, #{record => Record, txid => get_txid()},
@@ -191,13 +164,6 @@ wait_running(Node, Timeout) ->
         false -> timer:sleep(100),
                  wait_running(Node, Timeout - 100)
     end.
-
-stop_slave(Node) ->
-    rpc(Node, mria, stop, []),
-    ok = cover:stop([Node]),
-    rpc(Node, application, stop, [gen_rpc]), %% Avoid "connection refused" errors
-    mnesia:delete_schema([Node]),
-    slave:stop(Node).
 
 host() ->
     [_, Host] = string:tokens(atom_to_list(node()), "@"), Host.
@@ -282,32 +248,12 @@ heal_callback({Majority, Minority}) ->
          , minority => Minority
          }).
 
--if(?OTP_RELEASE >= 25).
 start_dist() ->
     ensure_epmd(),
     case net_kernel:start('ct@127.0.0.1', #{hidden => true}) of
         {ok, _Pid} -> ok;
         {error, {already_started, _}} -> ok
     end.
-
-%% TODO: migrate to peer
-%%
-%% do_start_slave(Name, BeamArgs) ->
-%%     %% {ok, _Pid, Node} = peer:start_link(#{ name => Name
-%%     %%                                     , longnames => true
-%%     %%                                     , host => host()
-%%     %%                                     , args => [BeamArgs]
-%%     %%                                     }),
-%%     Node.
-
--else.
-start_dist() ->
-    ensure_epmd(),
-    case net_kernel:start(['ct@127.0.0.1']) of
-        {ok, _Pid} -> ok;
-        {error, {already_started, _}} -> ok
-    end.
--endif.
 
 ensure_epmd() ->
     open_port({spawn, "epmd"}, []).

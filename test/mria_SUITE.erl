@@ -36,74 +36,81 @@
 all() -> mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
-    mria_ct:start_dist(),
-    snabbkaffe:fix_ct_logging(),
-    Config.
+    mria_ct:init_per_suite(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(TestCase, Config) ->
-    logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
-    Config.
+    mria_ct:init_per_testcase(TestCase, Config).
 
 end_per_testcase(TestCase, Config) ->
-    logger:notice(asciiart:visible($%, "Complete ~p", [TestCase])),
-    mria_ct:cleanup(TestCase),
-    snabbkaffe:stop(),
-    Config.
+    mria_ct:end_per_testcase(TestCase, Config).
 
 t_create_del_table(_) ->
-    try
-        mria:start(),
-        ok = mria:create_table(kv_tab, [
-                    {storage, ram_copies},
-                    {rlog_shard, test_shard},
-                    {record_name, kv_tab},
-                    {attributes, record_info(fields, kv_tab)},
-                    {storage_properties, []}]),
-        ok = mria_mnesia:copy_table(kv_tab, disc_copies),
-        ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
-        {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
-    after
-        mria:stop()
-    end.
+    ?check_trace(
+       #{timetrap => 15_000},
+       begin
+           {ok, _, N} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           mria_ct:wait_quorum([N]),
+           ?ON(N,
+               begin
+                   ok = mria:create_table(
+                          kv_tab,
+                          [ {storage, ram_copies}
+                          , {rlog_shard, test_shard}
+                          , {record_name, kv_tab}
+                          , {attributes, record_info(fields, kv_tab)}
+                          , {storage_properties, []}
+                          ]),
+                   ok = mria_mnesia:copy_table(kv_tab, disc_copies),
+                   ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
+                   {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
+               end)
+       end,
+       []).
 
 t_disc_table(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
-    try
-        Nodes = mria_ct:start_cluster(mria, Cluster),
-        Fun = fun() ->
-                      ok = mria:create_table(kv_tab1,
-                                             [{storage, disc_copies},
-                                              {rlog_shard, test_shard},
-                                              {record_name, kv_tab},
-                                              {attributes, record_info(fields, kv_tab)}
-                                             ]),
-                      ok = mria:create_table(kv_tab2,
-                                             [{storage, disc_only_copies},
-                                              {rlog_shard, test_shard},
-                                              {record_name, kv_tab},
-                                              {attributes, record_info(fields, kv_tab)}
-                                             ]),
-                      ?assertMatch([], mnesia:dirty_all_keys(kv_tab1)),
-                      ?assertMatch([], mnesia:dirty_all_keys(kv_tab2))
-              end,
-        [ok = mria_ct:run_on(N, Fun) || N <- Nodes]
-    after
-        ok = mria_ct:teardown_cluster(Cluster)
-    end.
+    ?check_trace(
+       #{timetrap => 15_000},
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           Fun = fun() ->
+                         ok = ?tp_span(warning, create_kv_tab, #{node => node()},
+                                       mria:create_table(kv_tab1,
+                                                [{storage, disc_copies},
+                                                 {rlog_shard, test_shard},
+                                                 {record_name, kv_tab},
+                                                 {attributes, record_info(fields, kv_tab)}
+                                                ])),
+                         ok = mria:create_table(kv_tab2,
+                                                [{storage, disc_only_copies},
+                                                 {rlog_shard, test_shard},
+                                                 {record_name, kv_tab},
+                                                 {attributes, record_info(fields, kv_tab)}
+                                                ]),
+                         ?assertMatch([], mnesia:dirty_all_keys(kv_tab1)),
+                         ?assertMatch([], mnesia:dirty_all_keys(kv_tab2))
+                 end,
+           [ok = mria_ct:run_on(N, Fun) || N <- Nodes]
+       end,
+       []).
 
 t_bootstrap(_) ->
     Parameters = [{Storage, Type} || Storage <- [ram_copies, disc_copies, disc_only_copies, rocksdb_copies]
                                    , Type    <- [set, ordered_set, bag]
                                    , not (Storage =:= disc_only_copies andalso Type =:= ordered_set)],
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NRecords = 4321,
     ?check_trace(
-       #{timetrap => 30_000},
-        try
-            Nodes = [Core, Replicant] = mria_ct:start_cluster(mria, Cluster),
+       #{timetrap => 60_000},
+        begin
+            {ok, _, Core} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+            {ok, _, Replicant} = mria_ct:create_start_node(<<"r1">>, replicant, Core),
+            Nodes = [Core, Replicant],
             mria_mnesia_test_util:stabilize(1000),
             %% Init tables and data:
             Init =
@@ -122,34 +129,44 @@ t_bootstrap(_) ->
                 end,
             Tables = [mria_ct:run_on(Core, Init, [I]) || I <- Parameters],
             ?tp(notice, "Waiting for full replication", #{}),
-            mria_mnesia_test_util:wait_full_replication(Cluster),
-            %% Restart the replicant so it bootstraps again:
+            mria_mnesia_test_util:wait_full_replication(Nodes),
+            %% Restart business apps on the replicant so it bootstraps again:
             ?tp(warning, "Restarting replicant!", #{}),
-            ?wait_async_action(
-               begin
-                   ok = rpc:call(Replicant, application, stop, [mria]),
-                   ok = rpc:call(Replicant, application, start, [mria]),
-                   ok = ?ON(Replicant, mria_rlog:wait_for_shards([test_shard], infinity))
-               end,
-               #{?snk_kind := "Shard fully up", node := Replicant, shard := test_shard}),
+            ?ON(Replicant,
+                classy:at_lower_level(
+                  stopped,
+                  fun() ->
+                          ?tp(notice, test_restarted_mria, #{})
+                  end)),
+            ?block_until(#{?snk_kind := test_restarted_mria}),
+            mria_mnesia_test_util:stabilize(1000),
+            ?assertMatch(
+               ok,
+               ?ON(Replicant, mria_rlog:wait_for_shards([test_shard], infinity))),
             %% Compare contents of all tables
             ?tp(notice, "Compare contents", #{}),
             [mria_mnesia_test_util:compare_table_contents(Tab, Nodes) || Tab <- Tables]
-        after
-            ok = mria_ct:teardown_cluster(Cluster)
         end,
        [ fun mria_rlog_props:no_unexpected_events/1
-       , fun mria_rlog_props:graceful_stop/1
        ]).
 
 t_rocksdb_table(_) ->
-    EnvOverride = [{mnesia_rocksdb, semantics, fast}],
-    Cluster = mria_ct:cluster( [core, {core, EnvOverride}]
-                             , mria_mnesia_test_util:common_env()
-                             ),
     ?check_trace(
-        try
-            Nodes = mria_ct:start_cluster(mria, Cluster),
+        begin
+            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+            {ok, S2} = familiar:create_site(
+                         mria_ct:get_cluster(),
+                         <<"c2">>,
+                         #{ fixtures => [ {familiar_app,
+                                           #{ app => mnesia_rocksdb
+                                            , env => #{semantics => fast}
+                                            }}
+                                        | mria_ct:fixtures(core, #{}, N1)
+                                        ]
+                          }),
+            {ok, N2} = familiar:start_site(S2),
+            Nodes = [N1, N2],
+
             mria_mnesia_test_util:stabilize(1000),
             CreateTab =
                 fun() ->
@@ -178,35 +195,36 @@ t_rocksdb_table(_) ->
                 end,
             [ok = mria_ct:run_on(N, CreateTab) || N <- Nodes],
             [N = mria_ct:run_on(N, ReadTab)    || N <- Nodes]
-        after
-            ok = mria_ct:teardown_cluster(Cluster)
         end,
         common_checks()).
 
 t_join_leave_cluster(_) ->
-    Cluster = mria_ct:cluster([core, core], []),
-    try
-        %% Implicitly causes N1 to join N0:
-        [N0, N1] = mria_ct:start_cluster(mria, Cluster),
-        mria_ct:run_on(N0,
-          fun() ->
-                  #{running_nodes := [N0, N1]} = mria:info(),
-                  [N0, N1] = lists:sort(mria:running_nodes()),
-                  ok = rpc:call(N1, mria, leave, []),
-                  #{running_nodes := [N0]} = mria:info(),
-                  [N0] = mria:running_nodes()
-          end)
-    after
-        ok = mria_ct:teardown_cluster(Cluster)
-    end.
+    ?check_trace(
+       begin
+           {ok, _, N0} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N1} = mria_ct:create_start_node(<<"c2">>, core, N0),
+           ?ON(N0,
+               begin
+                   #{running_nodes := [N0, N1]} = mria:info(),
+                   [N0, N1] = lists:sort(mria:running_nodes()),
+                   ok = rpc:call(N1, mria, leave, []),
+                   ?retry(100, 100,
+                          begin
+                              #{running_nodes := [N0]} = mria:info(),
+                              [N0] = mria:running_nodes()
+                          end)
+               end)
+       end,
+       []).
 
 t_cluster_core_nodes_on_replicant(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_full_replication(Cluster, 15000),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           mria_mnesia_test_util:wait_full_replication([N1, N2, N3], 15000),
            ?assertEqual(
               [N1, N2],
               erpc:call(N3, mria, cluster_nodes, [cores])),
@@ -216,7 +234,7 @@ t_cluster_core_nodes_on_replicant(_) ->
            ?assertEqual(
               [N1, N2, N3],
               erpc:call(N3, mria, cluster_nodes, [running])),
-           mria_ct:stop_slave(N2),
+           familiar:kill_site(S2),
            timer:sleep(5000),
            ?assertEqual(
               [N1, N2, N3],
@@ -228,17 +246,17 @@ t_cluster_core_nodes_on_replicant(_) ->
               [N1, N3],
               erpc:call(N3, mria, cluster_nodes, [running])),
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 t_remove_from_cluster(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
-       #{timetrap => 30000},
-       try
-           [N0, N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+       #{timetrap => 60000},
+       begin
+           {ok, _, N0} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N1} = mria_ct:create_start_node(<<"c2">>, core, N0),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N0),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r2">>, replicant, N0),
            timer:sleep(1000),
            mria_ct:run_on(N0, fun() ->
                [N0, N1, N2, N3] = lists:sort(mria:running_nodes()),
@@ -254,24 +272,64 @@ t_remove_from_cluster(_) ->
                [] = mria:cluster_nodes(stopped),
                ok
              end),
-           {ok, SubRef} = snabbkaffe:subscribe(
-                            ?match_event(#{ ?snk_kind := mria_exec_callback
-                                          , type      := start
-                                          , ?snk_meta := #{node := N1}
-                                          })),
-           mria_ct:run_on(N0, fun() ->
-               ok = mria:force_leave(N1),
-               Running = mria:running_nodes(),
-               All = mria:cluster_nodes(all),
-               ?assertNot(lists:member(N1, Running)),
-               ?assertNot(lists:member(N1, All)),
-               ?assertNot(mria_membership:is_member(N1))
-             end),
-           %% Make sure that the kicked node restarts the business
-           %% applications:
-           ?assertMatch({ok, [_]}, snabbkaffe:receive_events(SubRef))
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
+           %% 1. Kick a core node from the cluster:
+           ok = ?ON(N0, mria:force_leave(N1)),
+           %% Node itself acknowledges that it got kicked:
+           ?block_until(#{?snk_kind := classy_kicked_remotely, local := ~"c2"}),
+           %% Check that the node itself created a new cluster:
+           ?retry(1000, 10,
+                  ?ON(N1,
+                      begin
+                          %% Check cluster state:
+                          ?assertMatch([N1], mria:cluster_nodes(all)),
+                          ?assertMatch([N1], mria:running_nodes()),
+                          %% Check mnesia schema:
+                          ?assertMatch([N1], mria_mnesia:cluster_nodes(all)),
+                          ?assertMatch([N1], mria_mnesia:cluster_nodes(running)),
+                          ?assertMatch([], mria_mnesia:cluster_nodes(stopped))
+                      end)),
+           %% The rest of the cluster reacts:
+           [?block_until(
+               #{ ?snk_kind := classy_member_leave
+                , remote    := <<"c2">>
+                , ?snk_meta := #{node := I}
+                })
+            || I <- [N0, N2, N3]],
+           ?retry(1000, 10,
+                  ?ON(N0,
+                      begin
+                          %% Peer has been deleted from mnesia schema:
+                          ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(all))),
+                          ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(running))),
+                          ?assertMatch([], mria_mnesia:cluster_nodes(stopped)),
+                          %% Cluster state:
+                          ?assertMatch([N0, N2, N3], mria:cluster_nodes(all)),
+                          ?assertMatch([N0, N2, N3], mria:running_nodes())
+                      end)),
+           %% 2. Kick a replicant from the cluster:
+           ok = ?ON(N0, mria:force_leave(N3)),
+           %% Node itself acknowledges that it got kicked:
+           ?block_until(#{?snk_kind := classy_kicked_remotely, local := ~"r2"}),
+           %% Check that the node itself created a new cluster:
+           ?retry(1000, 10,
+                  ?ON(N3,
+                      begin
+                          ?assertMatch([N3], mria:cluster_nodes(all)),
+                          ?assertMatch([N3], mria:running_nodes()),
+                          ?assertMatch([], mria_mnesia:cluster_nodes(stopped))
+                      end)),
+           %% What its peers see:
+           [?retry(1000, 10,
+                   ?ON(I,
+                       begin
+                           %% Peer has been deleted from mnesia schema:
+                           ?assertMatch([], mria:cluster_nodes(stopped)),
+                           %% Cluster state:
+                           ?assertMatch([N0, N2], mria:cluster_nodes(all)),
+                           ?assertMatch([N0, N2], mria:running_nodes())
+                       end))
+            || I <- [N0, N2]],
+           ok
        end,
        [fun mria_rlog_props:no_unexpected_events/1]).
 
@@ -279,15 +337,11 @@ t_remove_from_cluster(_) ->
 %% the stages of startup and online transaction replication, so it can
 %% be used to check if anything is _obviously_ broken.
 t_rlog_smoke_test(_) ->
-    Env = [ {mria, bootstrapper_chunk_config, #{count_limit => 3}}
-          | mria_mnesia_test_util:common_env()
-          ],
     NTrans = 300,
-    Cluster = mria_ct:cluster([core, core, replicant], Env),
     CounterKey = counter,
     ?check_trace(
        #{timetrap => NTrans * 10 + 10000},
-       try
+       begin
            %% Inject some orderings to make sure the replicant
            %% receives transactions in all states.
            %%
@@ -303,8 +357,14 @@ t_rlog_smoke_test(_) ->
            %% 4. Make sure some transactions are produced while in normal mode
            ?force_ordering(#{?snk_kind := state_change, to := normal},
                            #{?snk_kind := trans_gen_counter_update, value := 25}),
-
-           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
+           %% Start the nodes:
+           Opts = #{start => true},
+           MriaOpts = #{bootstrapper_chunk_config => #{count_limit => 3}},
+           {ok, _, N1} = mria_ct:create_node(<<"c1">>, core, MriaOpts, undefined, Opts),
+           {ok, _, N2} = mria_ct:create_node(<<"c2">>, core, MriaOpts, N1, Opts),
+           {ok, S3, N3} = mria_ct:create_node(<<"r1">>, replicant, MriaOpts, undefined, Opts),
+           Nodes = [N1, N2, N3],
+           ok = erpc:cast(N3, mria, join, [N1]),
            ok = mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Generate some transactions:
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
@@ -321,11 +381,8 @@ t_rlog_smoke_test(_) ->
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            %% Check status:
            [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
-           mria_ct:stop_slave(N3),
+           familiar:stop_site(S3),
            Nodes
-       after
-           mria_ct:teardown_cluster(Cluster),
-           ok
        end,
        [ fun mria_rlog_props:no_tlog_gaps/1
        , fun mria_rlog_props:no_unexpected_events/1
@@ -346,19 +403,19 @@ t_rlog_smoke_test(_) ->
        ]).
 
 t_transaction_on_replicant(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
            mria_mnesia_test_util:stabilize(1000),
-           {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
-           mria_mnesia_test_util:stabilize(1000), mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           {atomic, _} = ?ON(N2, mria_transaction_gen:create_data()),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            {atomic, KeyVals} = rpc:call(N2, mria_transaction_gen, ro_read_all_keys, []),
            {atomic, KeyVals} = rpc:call(N1, mria_transaction_gen, ro_read_all_keys, []),
            Nodes
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        fun([_N1, N2], Trace) ->
                ?assert(mria_rlog_props:replicant_bootstrap_stages(N2, Trace)),
@@ -367,10 +424,12 @@ t_transaction_on_replicant(_) ->
        end).
 
 t_sync_transaction_on_replicant(_) ->
-    Cluster = mria_ct:cluster([core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
-       try
-           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3],
            mria_mnesia_test_util:wait_tables(Nodes),
            [?assertEqual({atomic,[]},
                          rpc:call(N, mnesia, transaction, [fun() -> mnesia:all_keys(test_tab) end]))
@@ -421,8 +480,6 @@ t_sync_transaction_on_replicant(_) ->
            TimeoutRpc = rpc:call(N2, mria, sync_transaction, [test_shard, TimeoutFun, [], 10]),
            ?assertEqual({timeout, {atomic, [ExpectedR4]}}, TimeoutRpc),
            Nodes
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        fun([_N1, N2, N3], Trace) ->
                ?assert(
@@ -443,12 +500,14 @@ t_sync_transaction_on_replicant(_) ->
 
 %% Check that behavior on error and exception is the same for both backends
 t_abort(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
-       #{timetrap => 30000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       #{timetrap => 15000},
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _S2, N2} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2],
            mria_mnesia_test_util:wait_tables(Nodes),
+           ?tp(notice, test_go, #{}),
            [begin
                 RetMnesia = rpc:call(Node, mria_transaction_gen, abort, [mnesia, AbortKind]),
                 RetMria = rpc:call(Node, mria_transaction_gen, abort, [mria_mnesia, AbortKind]),
@@ -457,13 +516,13 @@ t_abort(_) ->
                     {A, A} -> ok
                 end
             end
-            || Node <- Nodes, AbortKind <- [abort, error, exit, throw]],
+            || Node <- [N1, N2], AbortKind <- [abort, error, exit, throw]],
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
-       fun(Trace) ->
+       fun(Trace0) ->
+               %% Verify that no transactions were imported (except for the schema):
+               {_, Trace} = ?split_trace_at(#{?snk_kind := test_go}, Trace0),
                ?assertMatch([], ?of_kind(rlog_import_trans, Trace)),
                mria_rlog_props:no_unexpected_events(Trace)
        end).
@@ -471,13 +530,15 @@ t_abort(_) ->
 %% Start processes competing for the key on two core nodes and test
 %% that updates are received in order
 t_core_node_competing_writes(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     CounterKey = counter,
     NOper = 1000,
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
            mria_mnesia_test_util:wait_tables(Nodes),
            spawn(fun() ->
                          rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NOper]),
@@ -485,9 +546,7 @@ t_core_node_competing_writes(_) ->
                  end),
            ok = rpc:call(N2, mria_transaction_gen, counter, [CounterKey, NOper]),
            ?block_until(#{?snk_kind := n1_counter_done}),
-           mria_mnesia_test_util:wait_full_replication(Cluster)
-       after
-           mria_ct:teardown_cluster(Cluster)
+           mria_mnesia_test_util:wait_full_replication(Nodes)
        end,
        fun(Trace) ->
                Events = [Val || #{?snk_kind := rlog_import_trans, ops := Ops} <- Trace,
@@ -500,11 +559,13 @@ t_core_node_competing_writes(_) ->
        end).
 
 t_rlog_clear_table(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            rpc:call(N1, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000),
@@ -512,17 +573,17 @@ t_rlog_clear_table(_) ->
            ?assertMatch({atomic, ok}, rpc:call(N1, mria, clear_table, [test_tab])),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        common_checks()).
 
 t_rlog_match_delete(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            rpc:call(N1, mria_transaction_gen, create_data, []),
            mria_mnesia_test_util:stabilize(1000),
@@ -533,36 +594,8 @@ t_rlog_match_delete(_) ->
            do_match_delete_test(N1, Nodes, Recs, Pattern),
            Pattern1 = {test_tab, '_', <<"match_delete">>},
            do_match_delete_test(N2, Nodes, Recs, Pattern1)
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        common_checks()).
-
-t_rlog_match_delete_unsupported(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
-    ?check_trace(
-       #{timetrap => 30000},
-       try
-           [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           ok = mock_mnesia_match_delete(N1),
-           ok = mock_mnesia_match_delete(N2),
-           Pat = {dummy_pattern, '_', '_'},
-           Exp = {error, unsupported_otp_version},
-           ?assertEqual(Exp, rpc:call(N1, mria, match_delete, [dummy_tab, Pat])),
-           ?assertEqual(Exp, rpc:call(N2, mria, match_delete, [dummy_tab, Pat])),
-           unmock_mnesia_match_delete(N1),
-           unmock_mnesia_match_delete(N2)
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end,
-       common_checks()).
-
-mock_mnesia_match_delete(Node) ->
-    ?assert(rpc:call(Node, erlang, function_exported, [mnesia, match_delete, 2])),
-    ok = rpc:call(Node, meck, new, [mnesia, [no_link, no_history, unstick, passthrough]]),
-    ok = rpc:call(Node, meck, delete, [mnesia, match_delete, 2, true]),
-    ?assertNot(rpc:call(Node, erlang, function_exported, [mnesia, match_delete, 2])),
-    ok.
 
 unmock_mnesia_match_delete(Node) ->
     ok = rpc:call(Node, meck, unload, [mnesia]),
@@ -590,11 +623,13 @@ do_match_delete_test(Node, Nodes, Recs, Pattern) ->
 
 %% Compare behaviour of failing dirty operations on core and replicant:
 t_rlog_dirty_ops_fail(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            [?ON(N,
                 begin
@@ -609,17 +644,17 @@ t_rlog_dirty_ops_fail(_) ->
                                )
                 end)
             || N <- Nodes]
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        common_checks()).
 
 t_middleman(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            ?ON(N1,
                begin
@@ -633,8 +668,6 @@ t_middleman(_) ->
                end),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        [ fun mria_rlog_props:replicant_no_restarts/1
        , fun mria_rlog_props:no_unexpected_events/1
@@ -648,11 +681,14 @@ drain_message_queue() ->
     receive M -> [M | drain_message_queue()] after 1 -> [] end.
 
 t_rlog_dirty_operations(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            ok = rpc:call(N1, mria, dirty_write, [{test_tab, 1, 1}]),
            ok = rpc:call(N2, mria, dirty_write, [{test_tab, 2, 2}]),
@@ -678,18 +714,20 @@ t_rlog_dirty_operations(_) ->
                                                     , message_queue_len   := _
                                                     }
                                               }
-                         }, rpc:call(N3, mria_rlog, status, []))
-       after
-           mria_ct:teardown_cluster(Cluster)
+                         },
+                        rpc:call(N3, mria_rlog, status, []))
        end,
        common_checks()).
 
 t_rlog_sync_dirty_operations(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            ok = rpc:call(N1, mria, dirty_write_sync, [{test_tab, 1, 1}]),
            ?assertEqual(
@@ -697,17 +735,18 @@ t_rlog_sync_dirty_operations(_) ->
               rpc:call(N2, mnesia, dirty_read, [test_tab, 1])),
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        common_checks()).
 
 t_rlog_dirty_activity(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            K1 = rpc:async_call(N1, mria, async_dirty, [test_shard, fun() ->
                 mnesia:write({test_tab, 1, 1}),
@@ -756,104 +795,105 @@ t_rlog_dirty_activity(_) ->
                "Table contents are inconsistent, "
                "this is expected in concurrent dirty activity contexts")
            end
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        common_checks()).
 
 t_local_content(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-          Nodes = mria_ct:start_cluster(mria, Cluster),
-          %% Create the table on all nodes:
-          {[ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
-                                             [local_tab,
-                                              [{local_content, true}]
-                                             ]),
-          %% Perform an invalid r/w transactions on all nodes:
-          %%   Write to a non-local table in a local content shard:
-          [?assertMatch( {aborted, {invalid_transaction, _, _}}
-                       , rpc:call(N, mria, transaction,
-                                  [mria:local_content_shard(),
-                                   fun() ->
-                                           ok = mnesia:write({test_tab, key, val})
-                                   end
-                                  ])
-                       )
-           || N <- Nodes],
-          %%   Write to a local table in a non-local shard:
-          [?assertMatch( {aborted, {invalid_transaction, _, _}}
-                       , rpc:call(N, mria, transaction,
-                                  [test_shard,
-                                   fun() ->
-                                           ok = mnesia:write({local_tab, key, val})
-                                   end
-                                  ])
-                       )
-           || N <- Nodes],
-          %% Perform valid r/w transactions on all nodes with different content:
-          [?assertMatch( {atomic, N}
-                       , rpc:call(N, mria, transaction,
-                                  [mria:local_content_shard(),
-                                   fun() ->
-                                           ok = mnesia:write({local_tab, key, node()}),
-                                           node()
-                                   end
-                                  ])
-                       )
-           || N <- Nodes],
-          %% Perform a successful r/o transaction:
-          [?assertMatch( {atomic, N}
-                       , rpc:call(N, mria, ro_transaction,
-                                  [mria:local_content_shard(),
-                                   fun() ->
-                                           [key] = mnesia:all_keys(local_tab),
-                                           Node = node(),
-                                           [{local_tab, key, Node}] = mnesia:read(local_tab, key),
-                                           Node
-                                   end
-                                  ])
-                       )
-           || N <- Nodes],
-          %% Perform an invalid r/o transaction, it should abort:
-          [?assertMatch( {aborted, _}
-                       , rpc:call(N, mria, ro_transaction,
-                                  [mria:local_content_shard(),
-                                   fun() ->
-                                           mnesia:write({local_tab, 1, 1})
-                                   end
-                                  ])
-                       )
-           || N <- Nodes],
-          ok
-      after
-          mria_ct:teardown_cluster(Cluster)
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
+           mria_mnesia_test_util:wait_tables(Nodes),
+           %% Create the table on all nodes:
+           {[ok, ok, ok], []} = rpc:multicall(Nodes, mria, create_table,
+                                              [local_tab,
+                                               [{local_content, true}]
+                                              ]),
+           %% Perform an invalid r/w transactions on all nodes:
+           %%   Write to a non-local table in a local content shard:
+           [?assertMatch( {aborted, {invalid_transaction, _, _}}
+                        , rpc:call(N, mria, transaction,
+                                   [mria:local_content_shard(),
+                                    fun() ->
+                                            ok = mnesia:write({test_tab, key, val})
+                                    end
+                                   ])
+                        )
+            || N <- Nodes],
+           %%   Write to a local table in a non-local shard:
+           [?assertMatch( {aborted, {invalid_transaction, _, _}}
+                        , rpc:call(N, mria, transaction,
+                                   [test_shard,
+                                    fun() ->
+                                            ok = mnesia:write({local_tab, key, val})
+                                    end
+                                   ])
+                        )
+            || N <- Nodes],
+           %% Perform valid r/w transactions on all nodes with different content:
+           [?assertMatch( {atomic, N}
+                        , rpc:call(N, mria, transaction,
+                                   [mria:local_content_shard(),
+                                    fun() ->
+                                            ok = mnesia:write({local_tab, key, node()}),
+                                            node()
+                                    end
+                                   ])
+                        )
+            || N <- Nodes],
+           %% Perform a successful r/o transaction:
+           [?assertMatch( {atomic, N}
+                        , rpc:call(N, mria, ro_transaction,
+                                   [mria:local_content_shard(),
+                                    fun() ->
+                                            [key] = mnesia:all_keys(local_tab),
+                                            Node = node(),
+                                            [{local_tab, key, Node}] = mnesia:read(local_tab, key),
+                                            Node
+                                    end
+                                   ])
+                        )
+            || N <- Nodes],
+           %% Perform an invalid r/o transaction, it should abort:
+           [?assertMatch( {aborted, _}
+                        , rpc:call(N, mria, ro_transaction,
+                                   [mria:local_content_shard(),
+                                    fun() ->
+                                            mnesia:write({local_tab, 1, 1})
+                                    end
+                                   ])
+                        )
+            || N <- Nodes],
+           ok
       end,
       common_checks()).
 
 %% This testcase verifies verifies various modes of mria:ro_transaction
 t_sum_verify(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     NTrans = 100,
     ?check_trace(
        #{timetrap => 30000},
-       try
+       begin
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 2 * NTrans div 4
                           , #{?snk_kind := state_change, to := local_replay, shard := test_shard}
                           ),
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 3 * NTrans div 4
                           , #{?snk_kind := state_change, to := normal, shard := test_shard}
                           ),
-           Nodes = mria_ct:start_cluster(mria_async, Cluster),
+
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            timer:sleep(1000),
            [ok = rpc:call(N, mria_transaction_gen, verify_trans_sum, [NTrans, 10])
             || N <- lists:reverse(Nodes)],
            [?block_until(#{?snk_kind := verify_trans_sum, node := N}, 5000)
             || N <- Nodes]
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        [{"Verify sum property",
          fun(Trace) ->
@@ -865,15 +905,15 @@ t_sum_verify(_) ->
 
 %% Test behavior of the replicant waiting for the core node
 t_core_node_down(_) ->
-    Cluster = mria_ct:cluster( [core, core, replicant]
-                             , mria_mnesia_test_util:common_env()
-                             ),
     NIter = 100,
     ?retry(0, 5, %% TODO: this test is flaky, see https://github.com/emqx/mria/issues/113
       ?check_trace(
          #{timetrap => 30_000},
-         try
-             [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+         begin
+             {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+             {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+             {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+
              mria_mnesia_test_util:stabilize(1000),
              %% Start transaction gen:
              {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
@@ -907,42 +947,41 @@ t_core_node_down(_) ->
              %% Now stop the core nodes:
              {_, {ok, _}} =
                  ?wait_async_action(
-                    [mria_ct:stop_slave(I) || I <- [N1, N2]],
+                    [familiar:stop_site(I) || I <- [S1, S2]],
                     #{ ?snk_kind := mria_status_change
                      , status    := down
                      , tag       := core_node
                      })
-         after
-             mria_ct:teardown_cluster(Cluster)
          end,
          [])).
 
 t_dirty_reads(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     Key = 1,
     Val = 42,
     ?check_trace(
-       #{timetrap => 10000},
-       try
-           [N1, N2] = mria_ct:start_cluster(mria_async, Cluster),
+       #{timetrap => 30000},
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+
            mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Insert data:
-           ok = rpc:call(N1, mria, dirty_write, [{test_tab, Key, Val}]),
+           ok = ?ON(N1, mria:dirty_write({test_tab, Key, Val})),
            %% Ensure that the replicant still reads the correct value locally:
            timer:sleep(1000),
            ?assertEqual([{test_tab, Key, Val}], rpc:call(N2, mnesia, dirty_read, [test_tab, Key]))
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% Test adding tables to the schema:
 t_rlog_schema(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            mria_mnesia_test_util:wait_tables(Nodes),
            %% Add a few new tables to the shard
            [begin
@@ -967,16 +1006,14 @@ t_rlog_schema(_) ->
                                        [tab1, [{rlog_shard, another_shard}]])
                        ),
            mria_mnesia_test_util:stabilize(1000),
-           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            mria_mnesia_test_util:compare_table_contents(tab1, Nodes),
            %% Now create a new record that will be replicated in normal mode:
            ok = rpc:call(N1, mria, dirty_write, [{tab1, 2, 2}]),
            mria_mnesia_test_util:stabilize(1000),
-           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            mria_mnesia_test_util:compare_table_contents(tab1, Nodes),
            Nodes
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        fun([N1, N2], Trace) ->
                ?assert(
@@ -1013,11 +1050,15 @@ t_rlog_schema(_) ->
 
 %% Test post commit hook is called on core nodes and replicated.
 t_mnesia_post_commit_hook(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [_N1, _N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
+
            ok = create_persistence_type_test_tables(Nodes),
            mria_mnesia_test_util:wait_tables(Nodes),
            %% write some records starting on one of the replicas
@@ -1034,14 +1075,12 @@ t_mnesia_post_commit_hook(_) ->
            ok = rpc:call(N3, mria, dirty_write, [kv_tab2, {kv_tab, dw2, dw2}]),
            ok = rpc:call(N3, mria, dirty_write, [kv_tab3, {kv_tab, dw3, dw3}]),
            ok = rpc:call(N3, mria, dirty_write, [kv_tab4, {kv_tab, dw4, dw4}]),
-           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            %% other replica should get updates
            ReplicantNodes = [N3, N4],
            compare_persistence_type_shard_contents(ReplicantNodes),
            ?tp(test_end, #{}),
            Nodes
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        fun([N1, N2, _N3, _N4], Trace) ->
                Cores = [N1, N2],
@@ -1067,17 +1106,16 @@ t_mnesia_post_commit_hook(_) ->
        end).
 
 t_replicant_receives_commits_from_remote_node(_) ->
-    Cluster = mria_ct:cluster( [ core
-                               , core
-                               , replicant
-                               , replicant
-                               ]
-                             , mria_mnesia_test_util:common_env()
-                             ),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [_N1, N2, _N3, _N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
+
+           mria_mnesia_test_util:wait_tables(Nodes),
            %% generate operations in the pure mnesia node
            %% 1. transaction
            ?assertEqual(
@@ -1086,12 +1124,10 @@ t_replicant_receives_commits_from_remote_node(_) ->
                         [test_shard, fun() -> mnesia:write({test_tab, 1, 1}) end])),
            %% 2. dirty write
            ?assertEqual(ok, erpc:call(N2, mria, dirty_write, [{test_tab, 2, 2}])),
-           mria_mnesia_test_util:wait_full_replication(Cluster),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ?tp(test_end, #{}),
            ok
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        fun(Trace0) ->
                {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace0),
@@ -1100,18 +1136,16 @@ t_replicant_receives_commits_from_remote_node(_) ->
        end).
 
 t_promote_replicant_to_core(_) ->
-    Cluster = mria_ct:cluster( [ core
-                               , replicant
-                               , replicant
-                               ]
-                             , mria_mnesia_test_util:common_env()
-                             ),
     NTrans = 60,
     CounterKey = key,
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2, _N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
            ok = mria_mnesia_test_util:wait_tables(Nodes),
            %% Generate some transactions:
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
@@ -1124,35 +1158,31 @@ t_promote_replicant_to_core(_) ->
            ok = erpc:call(N2, fun mria:stop/0),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
            %% restart replicant as a new core
-           ok = erpc:call(
-                  N2,
-                  fun() ->
-                          ok = application:set_env(mria, node_role, core),
-                          ok = mria:start(),
-                          ok = mria:join(N1)
-                  end),
+           {ok, _} = erpc:call(
+                       N2,
+                       fun() ->
+                               ok = application:set_env(mria, node_role, core),
+                               application:ensure_all_started(mria)
+                       end),
            ok = mria_mnesia_test_util:wait_tables([N2]),
            %% generate more transactions
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
-           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:wait_full_replication(Nodes),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ok
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 t_dirty_update_counter(_Config) ->
-    Cluster = mria_ct:cluster( [ core
-                               , replicant
-                               ]
-                             , mria_mnesia_test_util:common_env()
-                             ),
     CounterKey = counter,
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = [N1, N2] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
+
            ok = mria_mnesia_test_util:wait_tables(Nodes),
            %% Check status:
            [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
@@ -1166,76 +1196,76 @@ t_dirty_update_counter(_Config) ->
            mria_mnesia_test_util:stabilize(1000),
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            ok
-       after
-           mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 t_replicant_manual_join(_Config) ->
-    Cluster = mria_ct:cluster( [ core
-                               , core
-                               , {replicant, [{mria, core_nodes, []}]}
-                               ]
-                             , mria_mnesia_test_util:common_env()
-                             ),
     ?check_trace(
        #{timetrap => 60000},
-       try
-           [N1, N2, N3] = mria_ct:start_cluster(mria_async, Cluster),
-           %% 1. Make sure the load balancer didn't discover any core
-           %% nodes when `core_nodes' environment variable is set to
-           %% `[]':
-           ?retry(1000, 10,
-                  ?assertMatch([], rpc:call(N3, mria_lb, core_nodes, []))),
-           %% 2. Manually connect the replicant to the core cluster:
-           ?wait_async_action(
-              ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N3}}),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, undefined),
+           Nodes = [N1, N2, N3],
+
+           %% 1. Connect the replicant to the core cluster:
+           ?tp_span(notice, test_join1, #{},
+                    begin
+                        ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+                        mria_ct:wait_quorum([N3])
+                    end),
            %% Check that meta shard is up:
-           ?assertMatch({ok, Pid} when is_pid(Pid), rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
+           ?assertMatch(
+              {ok, Pid} when is_pid(Pid),
+              rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% Now after we've manually joined the replicant to the
            %% core cluster, we should have both core nodes discovered:
-           ?assertMatch({error, {already_in_cluster, N2}}, rpc:call(N3, mria, join, [N2])),
-           %% 3. Disconnect the replicant from the cluster and check idempotency of this operation:
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N2])),
+           %% 2. Disconnect the replicant from the cluster and check idempotency of this operation:
 
            %% Weird race condition in mnesia:
-           timer:sleep(5000),
-           ?tp(test_disconnect_node, #{node => N3}),
+           ct:sleep(5000),
+           ?tp(notice, test_disconnect_node, #{node => N3}),
            ?assertMatch(ok, rpc:call(N3, mria, leave, [])),
-           ?assertMatch({error, node_not_in_cluster}, rpc:call(N3, mria, leave, [])),
-           ?assertMatch({error, {node_down, _}}, rpc:call(N3, mria, join, ['badnode@badhost'])),
-           %% 4. Now connect the replicant to the core cluster again (bug: EMQX-9021):
+           %% Cannot join a node that is down:
+           ?assertMatch({error, _}, rpc:call(N3, mria, join, ['badnode@badhost.baddomain'])),
+
+           %% 3. Now connect the replicant to the core cluster again (bug: EMQX-9021):
            ?tp(test_reconnect_node, #{node => N3}),
-           ?wait_async_action(
-              ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
-              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N3}}),
-           ?assertMatch({error, {already_in_cluster, N1}}, rpc:call(N3, mria, join, [N1])),
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           ct:sleep(1000),
+
+           %% Re-join to the same node is an idempotent operation:
+           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
            ?assertMatch({ok, _}, rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
-           %% 5. Do the same to the other core node:
+           %% 4. Do the same to the other core node:
            %%    - Disconnect
            ?tp(test_disconnect_node, #{node => N2}),
            ?wait_async_action(
               ?assertMatch(ok, rpc:call(N2, mria, leave, [])),
-              #{?snk_kind := mria_exec_callback, type := start, ?snk_meta := #{node := N2}}),
+              #{?snk_kind := classy_change_run_level, to := quorum, ?snk_meta := #{node := N2}}),
            %%    - Rejoin the cluster
            ?tp(test_reconnect_node, #{node => N2}),
-           ?wait_async_action(
-              ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
-              %% need to wait until N3 pings re-joined N2 and N2 pongs N3
-              #{?snk_kind := mria_membership_pong, member := #member{node = N2}, ?snk_meta := #{node := N3}}),
-           ?assertMatch([N1, N2, N3], lists:sort(rpc:call(N2, mria, running_nodes, []))),
-           ok
-       after
-           mria_ct:teardown_cluster(Cluster)
+           ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
+           ?retry(1000, 10,
+                  ?assertEqual(
+                     [Nodes, Nodes, Nodes],
+                     running_nodes(Nodes))),
+           Nodes
        end,
        []).
 
 t_cluster_nodes(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           [Core1, Core2|_] = Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, Core1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, Core2} = mria_ct:create_start_node(<<"c2">>, core, Core1),
+           {ok, _, Repl1} = mria_ct:create_start_node(<<"r1">>, replicant, Core1),
+           {ok, _, Repl2} = mria_ct:create_start_node(<<"r2">>, replicant, Core1),
+           Nodes = [Core1, Core2, Repl1, Repl2],
+           mria_mnesia_test_util:stabilize(1000),
+
            [?assertEqual(Nodes, lists:sort(rpc:call(N1, mria, cluster_nodes, [State])), {N1, State})
             || N1 <- Nodes,
                State <- [all, running]],
@@ -1249,52 +1279,69 @@ t_cluster_nodes(_) ->
            [?assertMatch(running, rpc:call(N1, mria, cluster_status, [N2]), {N1, N2})
             || N1 <- Nodes,
                N2 <- Nodes]
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
+
+%% TODO: restore this testcase
+%%
 %% This testcase verifies that nodes don't get stuck waiting for each
 %% other during a full cluster parallel restart. To make things realistic, this
 %% testcase creates a wait chain of tables, where creation of one
 %% table depends on waiting for another.
-t_full_cluster_parallel_restart(_) ->
-    Cluster = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
+tt_full_cluster_parallel_restart(_) ->
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, S3, N3} = mria_ct:create_start_node(<<"c3">>, core, N1),
+           Nodes = [N1, N2, N3],
+           Cluster = [S1, S2, S3],
+
+           mria_mnesia_test_util:stabilize(1000),
            OK = [{ok, ok}, {ok, ok}, {ok, ok}],
-           OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
+           ?assertEqual(
+              OK,
+              erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity)),
            %% Write some data:
            ok = ?ON(N1, mria:dirty_write(tab1, {tab1, foo, bar})),
            ok = ?ON(N2, mria:dirty_write(tab2, {tab2, foo, bar})),
            ok = ?ON(N3, mria:dirty_write(tab3, {tab3, foo, bar})),
            %% Restart nodes simultaneously:
            ?tp(notice, test_restart_nodes, #{}),
-           [ok = slave:stop(N) || N <- Nodes],
+           [ok = familiar:stop_site(I) || I <- Cluster],
            Me = self(),
-           [spawn_link(fun() -> mria_ct:start_slave(mria, CN), Me ! {slave_up, CN},timer:sleep(60000) end) || CN <- Cluster],
+           [spawn_link(fun() ->
+                               familiar:start_site(I),
+                               Me ! {slave_up, I},
+                               timer:sleep(60000)
+                       end) || I <- Cluster],
            %% Waiting for all slaves are started.
-           _ = [ ok  || CN <- Cluster, receive {slave_up, CN} -> true end],
+           _ = [ ok  || I <- Cluster, receive {slave_up, I} -> true end],
            %% Restart the chain:
-           OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
+           ?assertEqual(
+              OK,
+              erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity)),
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
+%% TODO: restore this testcase
+%%
 %% This testcase verifies that nodes don't get stuck waiting for each
 %% other during a full cluster seq restart. To make things realistic, this
 %% testcase creates a wait chain of tables, where creation of one
 %% table depends on waiting for another.
-t_full_cluster_seq_restart(_) ->
-    Cluster = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
+tt_full_cluster_seq_restart(_) ->
     ?check_trace(
        #{timetrap => 30_0000},
-       try
-           Nodes = [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, S3, N3} = mria_ct:create_start_node(<<"c3">>, core, N1),
+           Nodes = [N1, N2, N3],
+
            OK = [{ok, ok}, {ok, ok}, {ok, ok}],
            OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
            %% Write some data:
@@ -1305,13 +1352,13 @@ t_full_cluster_seq_restart(_) ->
            %% Add 200ms delay in between to give time for mnesia DECISION table dump
            %% so that DOWN nodes are known when they start.
            ?tp(notice, test_restart_nodes, #{}),
-           [ok = slave:stop(N) || N <- Nodes, ok == timer:sleep(200)],
+           [ok = familiar:stop_site(I) || I <- [S1, S2, S3], ok == timer:sleep(200)],
            %% Start node in reversed order.
-           [mria_ct:start_slave(mria, CN) || CN <- lists:reverse(Cluster)],
+           [familiar:start_site(I) || I <- [S3, S2, S1]],
+           ct:sleep(1000),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
            OK = erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity),
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
@@ -1330,71 +1377,96 @@ full_restart_load_chain() ->
     ?tp(notice, test_all_loaded, #{node => node()}).
 
 t_schema_merge(_) ->
-    Cluster = [C1, C2, C3] = mria_ct:cluster([core, core, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
+       begin
            %% Start mria on C1 and C2:
-           [_, N2, _] = Nodes = mria_ct:start_cluster(node, Cluster),
-           _ = mria_ct:start_mria(C1),
-           _ = mria_ct:start_mria(C2),
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
            %% Stop C2 and start C3 (it should join C3):
-           ok = slave:stop(N2),
+           ok = familiar:stop_site(S2),
            timer:sleep(5000),
-           _ = mria_ct:start_mria(C3),
+           {ok, _, N3} = mria_ct:create_start_node(<<"c3">>, core, N1),
            %% Restart C2:
-           _ = mria_ct:start_slave(mria, C2),
+           _ = familiar:start_site(S2),
+           Nodes = [N1, N2, N3],
            ?retry(1000, 20,
                   ?assertMatch({[[], [], []], []},
                                rpc:multicall(Nodes, mria, info, [stopped_nodes])))
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 t_join_each_other_simultaneously(_) ->
-    Cluster = [maps:remove(join_to, Spec)
-               || Spec <- mria_ct:cluster([core, core], mria_mnesia_test_util:common_env())],
     ?check_trace(
-       try
-           [N1, N2] = mria_ct:start_cluster(mria, Cluster),
-           Key1 = rpc:async_call(N1, mria, join, [N2]),
-           Key2 = rpc:async_call(N2, mria, join, [N1]),
-           ?assertMatch([ok, {error, {already_in_cluster, _}}],
-                        lists:sort([rpc:yield(Key1), rpc:yield(Key2)]))
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
+       #{timetrap => 30_000},
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
+           Nodes = [N1, N2],
+           mria_mnesia_test_util:stabilize(1000),
+
+           Key1 = erpc:send_request(N1, mria, join, [N2]),
+           Key2 = erpc:send_request(N2, mria, join, [N1]),
+           %% Note: join procedure is async:
+           {response, ok} = erpc:wait_response(Key1, 10_000),
+           {response, ok} = erpc:wait_response(Key2, 10_000),
+           ?block_until(#{?snk_kind := "Mria is restarting to join the cluster"}),
+           mria_ct:wait_quorum(Nodes),
+           %% Verify that they created a cluster:
+           ?retry(1000, 10,
+                  begin
+                      ?assertEqual([Nodes, Nodes], cluster_nodes(Nodes)),
+                      ?assertEqual([Nodes, Nodes], running_nodes(Nodes))
+                  end)
        end,
-      []).
+       []).
 
 t_join_another_node_simultaneously(_) ->
-    Cluster = [maps:remove(join_to, Spec)
-               || Spec <- mria_ct:cluster([core, core, core, core], mria_mnesia_test_util:common_env())],
     ?check_trace(
-       try
-           [N1, N2, N3, N4] = Nodes = mria_ct:start_cluster(mria, Cluster),
+       #{timetrap => 30_000},
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
+           {ok, _, N3} = mria_ct:create_start_node(<<"c3">>, core, undefined),
+           {ok, _, N4} = mria_ct:create_start_node(<<"c4">>, core, undefined),
+           Nodes = [N1, N2, N3, N4],
+
            ok = rpc:call(N2, mria, join, [N1]),
-           Key1 = rpc:async_call(N3, mria, join, [N1]),
-           Key2 = rpc:async_call(N4, mria, join, [N1]),
-           ?assertMatch(ok, rpc:yield(Key1)),
-           ?assertMatch(ok, rpc:yield(Key2)),
-           timer:sleep(3000),
-           ?assertEqual({[true, true, true, true], []}, rpc:multicall(Nodes, mria_sup, is_running, []))
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
+           {ok, SRef} = snabbkaffe:subscribe(
+                          ?match_event(#{?snk_kind := "Mria is restarting to join the cluster"}),
+                          2,
+                          infinity),
+           Key1 = erpc:send_request(N3, mria, join, [N1]),
+           Key2 = erpc:send_request(N4, mria, join, [N1]),
+           {response, ok} = erpc:wait_response(Key1, 10_000),
+           {response, ok} = erpc:wait_response(Key2, 10_000),
+           {ok, _} = snabbkaffe:receive_events(SRef),
+           mria_ct:wait_quorum(Nodes),
+           ?assertEqual({[true, true, true, true], []}, rpc:multicall(Nodes, mria_sup, is_running, [])),
+           ?retry(1000, 10,
+                  begin
+                      ?assertEqual(
+                         [Nodes, Nodes, Nodes, Nodes],
+                         cluster_nodes(Nodes)),
+                      ?assertEqual(
+                         [Nodes, Nodes, Nodes, Nodes],
+                         running_nodes(Nodes))
+                  end)
        end,
-      []).
+       []).
 
 t_join_many_nodes_simultaneously(_) ->
-    % Self = self(),
-    CommonEnv = mria_mnesia_test_util:common_env(),
-    Cluster = [maps:remove(join_to, Spec)
-               || Spec <- mria_ct:cluster([core, core, core, core], CommonEnv)],
     ?check_trace(
-       #{timetrap => 15_000},
-       try
+       #{timetrap => 30_000},
+       begin
            %% Spin the cluster up.
-           [N1, N2, N3, N4] = Nodes = mria_ct:start_cluster(mria, Cluster),
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
+           {ok, _, N3} = mria_ct:create_start_node(<<"c3">>, core, undefined),
+           {ok, _, N4} = mria_ct:create_start_node(<<"c4">>, core, undefined),
+           mria_mnesia_test_util:stabilize(1000),
+
+           Nodes = [N1, N2, N3, N4],
            %% Connect only N2, N3, N4 together.
            ok = rpc:call(N2, mria, join, [N4]),
            ok = rpc:call(N3, mria, join, [N4]),
@@ -1407,31 +1479,34 @@ t_join_many_nodes_simultaneously(_) ->
            {ok, _} = snabbkaffe:receive_events(SRef),
            K2 = rpc:async_call(N1, mria, join, [N3]),
            K3 = rpc:async_call(N1, mria, join, [N4]),
-           ?assertMatch([ok,
-                         {error, {already_in_cluster, _}},
-                         {error, {already_in_cluster, _}}],
+           ?assertMatch([ok, ok, ok],
                         lists:sort([rpc:yield(K) || K <- [K1, K2, K3]])),
-           timer:sleep(3000),
-           ?assertEqual({[true, true, true, true], []},
-                        rpc:multicall(Nodes, mria_sup, is_running, [])),
-           {Results, []} = rpc:multicall(Nodes, mria_mnesia, running_nodes, []),
-           ?assertEqual([Nodes, Nodes, Nodes, Nodes],
-                        lists:map(fun lists:sort/1, Results))
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
+           %% Verify that all nodes are up and running and form a cluster:
+           mria_mnesia_test_util:stabilize(1000),
+           ?retry(1000, 10,
+                  begin
+                      ?assertEqual(
+                         {[true, true, true, true], []},
+                         rpc:multicall(Nodes, mria_sup, is_running, [])),
+                      ?assertEqual(
+                         [Nodes, Nodes, Nodes, Nodes],
+                         running_nodes(Nodes))
+                  end)
        end,
       []).
 
 %% Verify replicant rebalance feature:
 t_rebalance(_) ->
-    Cluster = [_C1, C2|_] = mria_ct:cluster([core, core, replicant, replicant],
-                                            mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+
            %% 1. Stop one of the core nodes to create the imbalance:
-           mria_ct:stop_slave(N2),
+           familiar:stop_site(S2),
            timer:sleep(1000),
            %% 2. Verify output of `mria_rebalance:collect' function:
            ?retry(1000, 5,
@@ -1443,8 +1518,7 @@ t_rebalance(_) ->
                          proplists:get_value(N1, Status1))
                   end),
            %% 3. Restart the core:
-           N2 = mria_ct:start_slave(mria, C2),
-           mria_ct:start_mria(C2),
+           {ok, N2} = familiar:start_site(S2),
            %% 3.1. Make sure both replicants discover the new node and
            %% recognize it as the most desirable upstream for
            %% `test_shard':
@@ -1473,71 +1547,6 @@ t_rebalance(_) ->
            ?assertMatch(
               [],
               ?ON(N1, mria_rebalance:plan(mria_rebalance:collect())))
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
-       end,
-       []).
-
-%% This testcase verifies that the replicants use all core nodes in
-%% the upstream cluster, rather than just the ones listed by the core
-%% node discovery callback:
-t_emqx14135(_) ->
-    %% We set up the cluster such that the core node discovery
-    %% callback returns only c1 and c2:
-    DiscoveredNodes = [mria_ct:node_id(c1), mria_ct:node_id(c2)],
-    Conf = [ {mria, core_node_discovery, true}
-           , {mria, {callback, core_node_discovery}, fun() -> DiscoveredNodes end}
-           | mria_mnesia_test_util:common_env()],
-    Cluster = [C1s, C2s, _C3s, R1s] = mria_ct:cluster([ #{role => core, name => c1}
-                                                      , #{role => core, name => c2}
-                                                      , #{role => core, name => c3}
-                                                      , #{role => replicant, name => r1}
-                                                      ],
-                                                      Conf),
-    ?check_trace(
-       #{timetrap => 30_000},
-       try
-           [C1, C2, C3, R1] = mria_ct:start_cluster(node, Cluster),
-           %% 1. Start mria on C1, C2 and R1:
-           mria_ct:start_mria(C1s),
-           mria_ct:start_mria(C2s),
-           mria_ct:start_mria(R1s),
-           %% Verify that all nodes see each other:
-           [?ON(
-               Node,
-               ?assertMatch(
-                  #{ stopped_nodes := []
-                   , running_nodes := [_, _, _]
-                   },
-                   mria:info(),
-                   #{msg => "All nodes should see each other", node => Node}))
-            || Node <- [C1, C2, R1]],
-           %% 2. Now start C3
-           ?ON(C3,
-               begin
-                   mria:start(),
-                   mria:join(C1)
-               end),
-           %% Verify that all nodes see each other:
-           timer:sleep(5000),
-           [?ON(
-               Node,
-               ?defer_assert(
-                  ?assertMatch(
-                     #{ stopped_nodes := []
-                      , running_nodes := [_, _, _, _]
-                      },
-                      mria:info(),
-                      #{msg => "All nodes should see each other", node => Node})))
-            || Node <- [C1, C2, C3, R1]],
-           ?ON(
-              R1,
-              ?assertMatch(
-                 [_, _, _],
-                 mria_lb:core_nodes())),
-           ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
@@ -1545,14 +1554,16 @@ t_emqx14135(_) ->
 %% value of `merge_table' property and that `node_pattern' must be set
 %% for merge tables.
 t_merge_table_schema(_) ->
-    Cluster = mria_ct:cluster([core, replicant],
-                              mria_mnesia_test_util:common_env()),
     MergeShard = merge_shard,
     NormalShard = normal_shard,
     ?check_trace(
        #{timetrap => 15_000},
-       try
-           [N1, N2] = Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, replicant, N1),
+           Nodes = [N1, N2],
+           mria_mnesia_test_util:stabilize(1000),
+
            %% Create normal shard:
            ?assertMatch(
               ok,
@@ -1653,21 +1664,19 @@ t_merge_table_schema(_) ->
                                   }},
                ?ON(I, persistent_term:get(mria_schema_data)))
             || I <- Nodes]
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% This testcase verifies that each node can only update merge table
 %% records that belong to itself
 t_merge_table_verify_op(_) ->
-    Cluster = mria_ct:cluster([core], mria_mnesia_test_util:common_env()),
     Tab = ?FUNCTION_NAME,
     Shard = verify_op_shard,
     ?check_trace(
        #{timetrap => 15_000},
-       try
-           [N] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _, N} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           mria_mnesia_test_util:stabilize(1000),
            ?assertMatch(
               ok,
               ?ON(N, mria:create_table(Tab,
@@ -1737,23 +1746,23 @@ t_merge_table_verify_op(_) ->
                        end))),
            %% TODO: Verify dirty operation.
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% This testcase verifies internal metadata and processes necessary for operation of merge tables.
 %% Successful execution of this test is required for other scenarios.
 t_merge_table_metadata(_) ->
-    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     Tab1 = tab1,
     Tab2 = tab2,
     Tables = [Tab1, Tab2],
     Shard = merge_shard,
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _S3, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2],
+
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab1,
@@ -1841,21 +1850,24 @@ t_merge_table_metadata(_) ->
                down,
                ?ON(I, mria_status:get_upstream_status(Shard, 'fake@node')))
             || I <- Nodes]
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% This testcase verifies replication of transactional writes in merge tables.
 t_merge_table_transaction(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     Tab1 = tab1,
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _S3, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _S4, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
+           mria_ct:wait_quorum(Nodes),
+
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab1,
@@ -1898,7 +1910,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:write({Tab2, {2, N}, {hello, node()}})
                         end)))
             || N <- Nodes],
-           ct:sleep(100),
+           ct:sleep(1000),
            [?defer_assert(
                ?assertEqual(
                   [{Tab1, {I, Ni}, trans} || I <- [1, 2], Ni <- Nodes],
@@ -1922,7 +1934,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:delete_object({Tab2, {2, N}, {hello, node()}})
                         end)))
             || N <- Nodes],
-           ct:sleep(100),
+           ct:sleep(1000),
            [?defer_assert(
                ?assertEqual(
                   [{Tab1, {1, Ni}, trans} || Ni <- Nodes],
@@ -1945,7 +1957,7 @@ t_merge_table_transaction(_) ->
                                 mnesia:delete(Tab2, {1, N}, write)
                         end)))
             || N <- Nodes],
-           ct:sleep(100),
+           ct:sleep(1000),
            [?defer_assert(
                ?assertEqual(
                   [],
@@ -1959,21 +1971,24 @@ t_merge_table_transaction(_) ->
                   #{on => N}))
             || N <- Nodes],
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% This testcase verifies replication of dirty operations in merge tables.
 t_merge_table_dirty(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     Tab1 = tab1,
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _S3, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _S4, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
+           mria_ct:wait_quorum(Nodes),
+
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab1,
@@ -2033,19 +2048,21 @@ t_merge_table_dirty(_) ->
                   dump_table(Tab1, N),
                   #{on => N}))
             || N <- Nodes]
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 t_merge_table_counters(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     Tab = tab,
     Shard = merge_shard,
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _S3, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, _S4, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
+
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab,
@@ -2078,21 +2095,23 @@ t_merge_table_counters(_) ->
                   dump_table(Tab, N),
                   #{on => N}))
             || N <- Nodes]
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% This testcase verifies that nodes pull data from the peers when they reconnect to the cluster:
 t_merge_table_bootstrap(_) ->
-    Cluster = [_, S2, _, S4] = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     Tab1 = tab1,
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _S3, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, S4, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
+
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab1,
@@ -2115,8 +2134,8 @@ t_merge_table_bootstrap(_) ->
             || N <- Nodes],
            ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], Nodes),
            %% Stop one core and one replicant:
-           mria_ct:stop_slave(N2),
-           mria_ct:stop_slave(N4),
+           familiar:stop_site(S2),
+           familiar:stop_site(S4),
            %% Verify that upstream status for these nodes changed to down:
            [?assertEqual(
                down,
@@ -2135,7 +2154,9 @@ t_merge_table_bootstrap(_) ->
                         end)))
             || N <- [N1, N3]],
            %% Restart the nodes:
-           mria_ct:start_cluster(mria, [S2, S4]),
+           familiar:start_site(S2),
+           familiar:start_site(S4),
+           mria_mnesia_test_util:stabilize(1000),
            ok = mria_mnesia_test_util:wait_tables([Tab1, Tab2], [N2, N4]),
            %% Wait until nodes discover each other:
            [?block_until(
@@ -2168,21 +2189,22 @@ t_merge_table_bootstrap(_) ->
             || I <- Nodes,
                J <- Nodes],
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 %% This testcase verifies that nodes pull data from the peers when they reconnect to the cluster:
 t_merge_table_autoclean(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     Tab1 = tab1,
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
        #{timetrap => 30_000},
-       try
-           Nodes = [N1, N2, N3, N4] = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _S3, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, S4, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Nodes = [N1, N2, N3, N4],
            [?assertMatch(
                ok,
                ?ON(N, mria:create_table(Tab1,
@@ -2228,99 +2250,105 @@ t_merge_table_autoclean(_) ->
                ok,
                ?ON(N, mria:dirty_write({Tab2, node(), hello})))
             || N <- Nodes],
-           ct:sleep(100),
-           %% Verify data:
-           [?assertEqual(
-               [{Tab1, Ni, hello} || Ni <- Nodes] ++
-               [{Tab1, {1, Ni}, hello} || Ni <- Nodes],
-               dump_table(Tab1, N),
-               #{on => N})
-            || N <- Nodes],
-           [?assertEqual(
-               [{Tab2, Ni, hello} || Ni <- Nodes],
-               dump_table(Tab2, N),
-               #{on => N})
-            || N <- Nodes],
+           ?retry(500, 10,
+              begin
+                  %% Verify data:
+                  [?assertEqual(
+                      [{Tab1, Ni, hello} || Ni <- Nodes] ++
+                          [{Tab1, {1, Ni}, hello} || Ni <- Nodes],
+                      dump_table(Tab1, N),
+                      #{on => N})
+                   || N <- Nodes],
+                  [?assertEqual(
+                      [{Tab2, Ni, hello} || Ni <- Nodes],
+                      dump_table(Tab2, N),
+                      #{on => N})
+                   || N <- Nodes]
+              end),
            %% Stop two nodes:
-           mria_ct:stop_slave(N2),
-           mria_ct:stop_slave(N4),
-           ct:sleep(100),
+           familiar:stop_site(S2),
+           familiar:stop_site(S4),
            %% Verify that data owned by the stopped nodes is gone:
-           [?assertEqual(
-               [{Tab1, Ni, hello} || Ni <- [N1, N3]] ++
-               [{Tab1, {1, Ni}, hello} || Ni <- [N1, N3]],
-               dump_table(Tab1, N),
-               #{on => N})
-            || N <- [N1, N3]],
-           %% But table without autoclean retains it:
-           [?assertEqual(
-               [{Tab2, Ni, hello} || Ni <- Nodes],
-               dump_table(Tab2, N),
-               #{on => N})
-            || N <- [N1, N3]],
+           ?retry(500, 10,
+                  begin
+                      [?assertEqual(
+                          [{Tab1, Ni, hello} || Ni <- [N1, N3]] ++
+                          [{Tab1, {1, Ni}, hello} || Ni <- [N1, N3]],
+                          dump_table(Tab1, N),
+                          #{on => N})
+                       || N <- [N1, N3]],
+                      %% But table without autoclean retains it:
+                      [?assertEqual(
+                          [{Tab2, Ni, hello} || Ni <- Nodes],
+                          dump_table(Tab2, N),
+                          #{on => N})
+                       || N <- [N1, N3]]
+                  end),
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
 t_is_peer_alive(_) ->
-    Cluster = mria_ct:cluster([core, core, replicant, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
-           Nodes = mria_ct:start_cluster(mria, Cluster),
+       begin
+           {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, _N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, S3, _N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           {ok, S4, _N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           Sites = [S1, S2, S3, S4],
+
            mria_mnesia_test_util:stabilize(1000),
            %% All peers should be alive initially
            [?assertEqual(
                {ok, true},
-               rpc:call(I, mria, is_peer_alive, [J]),
+               familiar:call(I, mria, is_peer_alive, [familiar:which_node(J)]),
                #{on => J, target => I})
-            || I <- Nodes,
-               J <- Nodes],
+            || I <- Sites,
+               J <- Sites],
            %% Non-existent node should be reported as not alive
            [?assertEqual(
                {ok, false},
-               rpc:call(I, mria, is_peer_alive, ['nonexistent@127.0.0.1']),
+               familiar:call(I, mria, is_peer_alive, ['nonexistent@127.0.0.1']),
                #{on => I})
-            || I <- Nodes],
+            || I <- Sites],
            %% Restart nodes one by one and verify that peers report state correctly
            [begin
-                ok = ?tp_span(notice, test_stopping_node, #{node => I},
-                              slave:stop(I)),
+                ok = ?tp_span(notice, test_stopping_node, #{site => I},
+                              familiar:stop_site(I)),
                 ct:sleep(1000),
                 [?assertEqual(
                     {ok, false},
-                    rpc:call(J, mria, is_peer_alive, [I]),
+                    familiar:call(J, mria, is_peer_alive, [familiar:last_node(I)]),
                     #{on => J, target => I})
-                 || J <- Nodes,
+                 || J <- Sites,
                     I =/= J],
                 %% Restart:
-                I = ?tp_span(notice, test_restarting_node, #{node => I},
-                             mria_ct:start_slave(mria, Spec)),
+                {ok, _} = ?tp_span(notice, test_restarting_node, #{node => I},
+                                   familiar:start_site(I)),
                 ct:sleep(1000),
                 %% Verify that the node is reported as up again:
                 [?assertEqual(
                     {ok, true},
-                    rpc:call(J, mria, is_peer_alive, [I]),
+                    familiar:call(J, mria, is_peer_alive, [familiar:which_node(I)]),
                     #{on => J, target => I})
-                 || J <- Nodes]
+                 || J <- Sites]
             end
-            || {I, Spec} <- lists:zip(Nodes, Cluster)]
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
+            || I <- [S1, S2, S3, S4]]
        end,
        []).
 
 t_replica_state_events(_) ->
     Shard = Table = ?FUNCTION_NAME,
-    Cluster = [S1, _S2] = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 30000},
-       try
+       begin
+           {ok, S1, C1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, R1} = mria_ct:create_start_node(<<"r1">>, replicant, C1),
+           Nodes = [C1, R1],
+
            %% Prepare:
            Self = self(),
-           [C1, R1] = mria_ct:start_cluster(mria, Cluster),
            mria_mnesia_test_util:stabilize(1000),
            %% Verify that core cannot subscribe to replica events:
            ?assertEqual(
@@ -2336,7 +2364,7 @@ t_replica_state_events(_) ->
                     ok = mria:create_table(Table, [{rlog_shard, Shard}]),
                     ok = mria:wait_for_tables([Table])
                 end)
-               || I <- [C1, R1]],
+               || I <- Nodes],
            %% This should create series of events:
            ct:sleep(100),
            ?assertEqual(
@@ -2347,14 +2375,17 @@ t_replica_state_events(_) ->
               ],
               mria_ct:mailbox()),
            %% Shut down core node, replicant should react:
-           slave:stop(C1),
+           ok = ?tp_span(
+                   notice, test_stopping_site, #{},
+                   familiar:stop_site(S1)),
            ct:sleep(1000),
            ?assertEqual(
               [ #mria_replica_status_update{shard = t_replica_state_events, status = disconnected}
               ],
               mria_ct:mailbox()),
            %% Restart core:
-           C1 = mria_ct:start_slave(mria, S1),
+           {ok, C1} = familiar:start_site(S1),
+           ct:sleep(1000), %% FIXME
            ok = ?ON(C1, mria:create_table(Table, [{rlog_shard, Shard}])),
            ok = ?ON(C1, mria:wait_for_tables([Table])),
            ct:sleep(5_000),
@@ -2368,8 +2399,6 @@ t_replica_state_events(_) ->
               ok,
               ?ON(R1, mria:unsubscribe_replica_events(Shard, Self))),
            ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        []).
 
@@ -2380,56 +2409,6 @@ get_preferred_core_node(Shard, Replicant) ->
             logger:debug("Replicant's internal status ~p", [sys:get_state(mria_lb)]),
             mria_status:replica_get_core_node(Shard, 0)
         end).
-
-cluster_benchmark(_) ->
-    NReplicas = 6,
-    Config = #{ trans_size => 10
-              , max_time   => 15000
-              , delays     => [10, 100, 1000]
-              },
-    ?check_trace(
-       begin
-           do_cluster_benchmark(Config#{ backend => mnesia
-                                       , cluster => [core || _ <- lists:seq(1, NReplicas)]
-                                       }),
-           do_cluster_benchmark(Config#{ backend  => mria_mnesia
-                                       , cluster => [core, core] ++ [replicant || _ <- lists:seq(3, NReplicas)]
-                                       })
-       end,
-       fun(_, _) ->
-               snabbkaffe:analyze_statistics()
-       end).
-
-do_cluster_benchmark(#{ backend    := Backend
-                      , delays     := Delays
-                      , cluster    := ClusterSpec
-                      } = Config) ->
-    Env = [ {mria, rlog_rpc_module, rpc}
-          | mria_mnesia_test_util:common_env()
-          ],
-    Cluster = mria_ct:cluster(ClusterSpec, Env),
-    ResultFile = "/tmp/" ++ atom_to_list(Backend) ++ "_stats.csv",
-    file:write_file( ResultFile
-                   , mria_ct:vals_to_csv([n_nodes | Delays])
-                   ),
-    [#{node := First}|_] = Cluster,
-    try
-        Nodes = mria_ct:start_cluster(node, Cluster),
-        mria_mnesia_test_util:wait_tables(Nodes),
-        lists:foldl(
-          fun(Node, Cnt) ->
-                  mria_ct:start_mria(Node),
-                  mria_mnesia_test_util:wait_tables([Node]),
-                  mria_mnesia_test_util:stabilize(100),
-                  ok = rpc:call(First, mria_transaction_gen, benchmark,
-                                [ResultFile, Config, Cnt]),
-                  Cnt + 1
-          end,
-          1,
-          Cluster)
-    after
-        mria_ct:teardown_cluster(Cluster)
-    end.
 
 create_persistence_type_test_tables(Nodes) ->
     Success = lists:duplicate(length(Nodes), ok),
@@ -2556,3 +2535,19 @@ common_checks() ->
 dump_table(Tab, Node) ->
     ?ON(Node,
         mnesia:dirty_select(Tab, [{'_', [], ['$_']}])).
+
+cluster_nodes(Nodes) ->
+    Results = erpc:multicall(
+                Nodes,
+                mria_mnesia, cluster_nodes, [all]),
+    [case I of
+         {ok, L} -> lists:sort(L);
+         _       -> I
+     end
+     || I <- Results].
+
+running_nodes(Nodes) ->
+    [case I of
+         {ok, L} -> L;
+         _       -> I
+     end || I <- erpc:multicall(Nodes, mria, running_nodes, [])].

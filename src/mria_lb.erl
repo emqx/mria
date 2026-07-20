@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2021-2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021-2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,8 +23,6 @@
 %% API
 -export([ start_link/0
         , core_nodes/0
-        , join_cluster/1
-        , leave_cluster/0
         ]).
 
 %% gen_server callbacks
@@ -80,21 +78,6 @@ start_link() ->
 -spec core_nodes() -> [node()].
 core_nodes() ->
     gen_server:call(?SERVER, core_nodes, ?CORE_DISCOVERY_TIMEOUT).
-
-join_cluster(Node) ->
-    {ok, FD} = file:open(seed_file(), [write]),
-    ok = io:format(FD, "~p.", [Node]),
-    file:close(FD).
-
-leave_cluster() ->
-    case file:delete(seed_file()) of
-        ok ->
-            ok;
-        {error, enoent} ->
-            ok;
-        {error, Err} ->
-            error(Err)
-    end.
 
 %%================================================================================
 %% gen_server callbacks
@@ -157,25 +140,15 @@ do_update(State = #s{core_nodes = OldCoreNodes, node_info = OldNodeInfo}) ->
                                            , ?MODULE, lb_callback, []
                                            , mria_config:lb_timeout()
                                            ),
-    %% Discovery callback doesn't necessarily return the full list of
-    %% core nodes. LB callback, however, has data about all core
-    %% peers. We use this data to build the full list of core nodes:
-    AdditionalCores = lists:usort([N || {_, #{db_nodes := DBNodes}} <- NodeInfo0, N <- DBNodes])
-                      -- DiscoveredNodes,
-    %% Gather missing data:
-    {NodeInfo1, _BadNodes2} = rpc:multicall( AdditionalCores
-                                           , ?MODULE, lb_callback, []
-                                           , mria_config:lb_timeout()
-                                           ),
-    NodeInfo2 = lists:filter(fun({_, #{whoami := Who, running := IsRunning} = I}) ->
+    NodeInfo1 = lists:filter(fun({_, #{whoami := Who, running := IsRunning} = I}) ->
                                      %% Backward compatibility
                                      IsDiscoverable = maps:get(discovery_enabled, I, true),
                                      IsRunning andalso IsDiscoverable andalso Who =:= core;
                                 (_) ->
                                      false
                              end,
-                             NodeInfo0 ++ NodeInfo1),
-    NodeInfo = maps:from_list(NodeInfo2),
+                             NodeInfo0),
+    NodeInfo = maps:from_list(NodeInfo1),
     maybe_report_changes(OldNodeInfo, NodeInfo),
     %% Find partitions of the core cluster, and if the core cluster is
     %% partitioned choose the best partition to connect to:
@@ -368,19 +341,9 @@ lb_callback() ->
 
 -spec discover_nodes() -> [node()].
 discover_nodes() ->
-    case manual_seed() of
-        [] ->
-            case mria_config:is_core_node_discovery_enabled() of
-                true ->
-                    %% Run the discovery algorithm
-                    DiscoveryFun = mria_config:core_node_discovery_callback(),
-                    DiscoveryFun();
-                false ->
-                    []
-            end;
-        [Seed] ->
-            discover_manually(Seed)
-    end.
+    ordsets:intersection(
+      classy:nodes(core),
+      classy:nodes(mria_compatible)).
 
 -spec discover_replicants([node()]) -> [node()].
 discover_replicants(CoreNodes) ->
@@ -388,33 +351,6 @@ discover_replicants(CoreNodes) ->
                                             , mria_membership, running_replicant_nodelist, []
                                             ),
     lists:usort([Node || Nodes <- Replicants0, is_list(Nodes), Node <- Nodes]).
-
-%% Return the last node that has been explicitly specified via
-%% "mria:join" command. It overrides other discovery mechanisms.
--spec manual_seed() -> [node()].
-manual_seed() ->
-    case file:consult(seed_file()) of
-        {ok, [Node]} when is_atom(Node) ->
-            [Node];
-        {error, enoent} ->
-            [];
-        _ ->
-            logger:critical("~p is corrupt. Delete this file and re-join the node to the cluster. Stopping.",
-                            [seed_file()]),
-            exit(corrupt_seed)
-    end.
-
-%% Return the list of core nodes that belong to the same cluster as
-%% the seed node.
--spec discover_manually(node()) -> [node()].
-discover_manually(Seed) ->
-    try mria_lib:rpc_call(Seed, mria_mnesia, db_nodes, [])
-    catch _:_ ->
-            [Seed]
-    end.
-
-seed_file() ->
-    filename:join(mnesia:system_info(directory), "mria_replicant_cluster_seed").
 
 cluster_score(OldNodes, Cluster) ->
     %% First we compare the clusters by the number of nodes that are

@@ -150,7 +150,7 @@ apply_heal_plan(ClusterViews) ->
 %% partition heal. As these nodes will seed all restarting nodes, they should
 %% contain consistent set of Mria data, i.e. they should have replicated the
 %% same set of transactions.
-%% 
+%%
 %% These survivor nodes are chosen according to reachability matrix:
 %% 1. Each node starts with a bit vector containing only itself.
 %% 2. For every reported running node `RN' by node `N', RN's reachability
@@ -220,15 +220,17 @@ heal_partition([Majority|Minorities]) ->
     Result.
 
 reboot_partitioned(Nodes) ->
-    ?tp(info, "Rebooting partitions", #{nodes => Nodes}),
+    ?tp(warning, "Rebooting partitions", #{nodes => Nodes}),
     lists:foreach(fun rejoin/1, Nodes).
 
 rejoin(Node) ->
-    Ret = rpc:call(Node, mria, join, [node(), heal]),
-    ?tp(critical, "Rejoin for autoheal",
-        #{ node   => Node
-         , return => Ret
-         }).
+    %% Force the remote node to rejoin us with a special reason heal
+    %% that forces creation of mnesia schema:
+    ?tp_span(critical,
+             "Rejoin for autoheal",
+             #{node => Node},
+             rpc:call(Node, mria, join, [node(), heal])).
+
 
 ensure_cancel_timer(undefined) ->
     ok;

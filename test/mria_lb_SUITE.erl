@@ -23,34 +23,32 @@
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include("mria_rlog.hrl").
 
+-define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
+
 all() ->
     mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
-    mria_ct:start_dist(),
-    snabbkaffe:fix_ct_logging(),
-    Config.
+    mria_ct:init_per_suite(Config).
 
 end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(TestCase, Config) ->
-    logger:notice(asciiart:visible($%, "Starting ~p", [TestCase])),
-    ok = snabbkaffe:start_trace(),
-    Config.
+    mria_ct:init_per_testcase(TestCase, Config).
 
 end_per_testcase(TestCase, Config) ->
-    logger:notice(asciiart:visible($%, "Complete ~p", [TestCase])),
-    mria_ct:cleanup(TestCase),
-    snabbkaffe:stop(),
-    Config.
+    mria_ct:end_per_testcase(TestCase, Config).
 
 t_probe(_Config) ->
-    Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
-       try
-           [N1, N2, N3] = mria_ct:start_cluster(mria, Cluster),
-           mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
+       begin
+           {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+           Nodes = [N1, N2, N3],
+
+           mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
            ExpectedVersion = rpc:call(N2, mria_rlog, get_protocol_version, []),
            ?tp(test_start, #{}),
            ok = rpc:call(N1, meck, new, [mria_rlog, [passthrough, no_history, no_link]]),
@@ -80,8 +78,6 @@ t_probe(_Config) ->
            true = rpc:call(N2, mria_rlog_server, probe, [N1, test_shard]),
            ?tp(test_end, #{}),
            {ExpectedVersion, [N1, N2, N3]}
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
        end,
        fun({_ExpectedVersion, [_N1, _N2, _N3]}, _Trace0) ->
                %% TODO
@@ -116,18 +112,22 @@ t_probe(_Config) ->
                ok
        end).
 
-t_core_node_discovery(_Config) ->
-    Cluster = mria_ct:cluster([core, replicant, core], mria_mnesia_test_util:common_env()),
+t_core_node_split(_Config) ->
     ?check_trace(
        #{timetrap => 60000},
-       try
+       begin
            {[C1, R1, C2], {ok, _}} =
                ?wait_async_action(
                   begin
-                      Nodes = [_, R1, _] = mria_ct:start_cluster(mria, Cluster),
-                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-                      {R1, mria_lb} ! update,
-                      Nodes
+                      {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+                      {ok, _, N2} = mria_ct:create_start_node(~"r3", replicant, N1),
+                      %% Give replicant time to connect to N1:
+                      ping_lb(N2),
+                      ct:sleep(1000),
+                      {ok, _, N3} = mria_ct:create_start_node(~"c2", core, N1),
+
+                      mria_mnesia_test_util:wait_full_replication([N1, N2, N3], 5000),
+                      [N1, N2, N3]
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                    , node := _
@@ -139,59 +139,42 @@ t_core_node_discovery(_Config) ->
            ?assertEqual([C1, C2], rpc:call(R1, mria_rlog, core_nodes, [])),
            %% 2. Emulate split brain
            ?tp(test_inject_split_brain, #{}),
-           InexistentNodes = ['inexistent@127.0.0.1'],
-           clear_core_node_list(R1),
-           with_reported_cores(
-             C1, InexistentNodes,
-             fun() ->
-                     {_, {ok, _}} =
-                         ?wait_async_action(
-                            {R1, mria_lb} ! update,
-                            #{ ?snk_kind := mria_lb_split_brain
-                             , node := R1
-                             , clusters := [_, _]
-                             }, 5000),
-                     %% In case of split brain the replicant will fallback to C2, since it has known it before the split
-                     ?assertEqual([C2], rpc:call(R1, mria_lb, core_nodes, [])),
-                     ?assertEqual([C2], rpc:call(R1, mria_rlog, core_nodes, []))
-             end),
-           %% 3. if a candidate is a replicant, it's excluded from the
-           %% final list.  So the LB now decided to fall back to C1
-           %% partition:
-           clear_core_node_list(R1),
-           ?tp(test_inject_replicant_role, #{}),
-           with_role(
-             C2, replicant,
-             fun() ->
-                     {_, {ok, _}} =
-                         ?wait_async_action(
-                            {R1, mria_lb} ! update,
-                            #{ ?snk_kind := mria_lb_core_discovery_new_nodes
-                             , node := R1
-                             , previous_cores := _
-                             , returned_cores := [C1]
-                             }, 5000),
-                     ?assertEqual([C1], rpc:call(R1, mria_lb, core_nodes, [])),
-                     ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
-             end),
-           ok
-       after
-           ok = mria_ct:teardown_cluster(Cluster)
-       end, []).
+           [?ON(I,
+                begin
+                    meck:new(mria_mnesia, [no_history, passthrough, no_link]),
+                    meck:expect(mria_mnesia, db_nodes,
+                                fun() -> [node()] end)
+                end)
+            || I <- [C1, C2]],
+           ping_lb(R1),
+           ?block_until(
+              #{ ?snk_kind := mria_lb_split_brain
+               , node := R1
+               , clusters := [_, _]
+               }),
+           %% In case of split brain the replicant will fallback to C2, since it has known it before the split
+           ?assertEqual([C2], rpc:call(R1, mria_lb, core_nodes, [])),
+           ?assertEqual([C2], rpc:call(R1, mria_rlog, core_nodes, []))
+       end,
+       []).
 
 %% Check that removing a core node from the cluster is handled
 %% correctly by the LB: it prefers the larger cluster.
 t_core_node_leave(_Config) ->
-    Cluster = mria_ct:cluster([core, replicant, core, core], mria_mnesia_test_util:common_env()),
     ?check_trace(
        #{timetrap => 60000},
-       try
+       begin
            {[C1, R1, C2, C3], {ok, _}} =
                ?wait_async_action(
                   begin
-                      Nodes = [_, R1, _, _] = mria_ct:start_cluster(mria, Cluster),
-                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-                      {R1, mria_lb} ! update,
+                      {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+                      {ok, _, N2} = mria_ct:create_start_node(~"r1", replicant, N1),
+                      {ok, _, N3} = mria_ct:create_start_node(~"c2", core, N1),
+                      {ok, _, N4} = mria_ct:create_start_node(~"c3", core, N1),
+
+                      Nodes = [N1, N2, N3, N4],
+                      mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
+                      ping_lb(N2),
                       Nodes
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
@@ -200,85 +183,85 @@ t_core_node_leave(_Config) ->
            %% Kick C2 from the cluster:
            ?tp(test_kick_core_node, #{}),
            ?assertMatch(ok, rpc:call(C2, mria, leave, [])),
+           mria_mnesia_test_util:stabilize(1000),
            %% Make sure there is a netsplit:
            ?assertMatch([C2], rpc:call(C2, mria_mnesia, db_nodes, [])),
            ?assertMatch([C1, C3], lists:sort(rpc:call(C1, mria_mnesia, db_nodes, []))),
            %% Ensure the replicant detected the split:
-           {R1, mria_lb} ! update,
-           ?block_until(#{ ?snk_kind := mria_lb_split_brain
-                         , clusters := [_, _]
-                         }),
+           ping_lb(R1),
            %% It should prefer the larger cluster:
            ?assertEqual([C1, C3], rpc:call(R1, mria_rlog, core_nodes, []))
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end, []).
+       end,
+       []).
 
-%% Check that removing a node from the cluster and disabling its rediscovery is handled correctly by the LB.
-t_node_leave_disable_discovery(_Config) ->
-    Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
+%% Check that disabling rediscovery on the core is handled correctly on the replicant:
+t_core_disable_discovery(_Config) ->
     ?check_trace(
        #{timetrap => 60000},
-       try
+       begin
            {[C1, C2, R1], {ok, _}} =
                ?wait_async_action(
                   begin
-                      Nodes = [_, _, R1] = mria_ct:start_cluster(mria, Cluster),
-                      mria_mnesia_test_util:wait_full_replication(Cluster, 5000),
-                      {R1, mria_lb} ! update,
+                      {ok, _, N1} = mria_ct:create_start_node(~"c1", core, undefined),
+                      {ok, _, N2} = mria_ct:create_start_node(~"c2", core, N1),
+                      {ok, _, N3} = mria_ct:create_start_node(~"r1", replicant, N1),
+                      Nodes = [N1, N2, N3],
+                      mria_mnesia_test_util:wait_full_replication(Nodes, 5000),
+                      ping_lb(N3),
                       Nodes
                   end,
                   #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                    , returned_cores := [_, _]
                    }, 10000),
-           %% Disable discovery and kick C2 from the cluster:
+           %% Disable discovery:
            ?wait_async_action(
-                  begin
-                      erpc:call(C2, fun() -> ok = mria_config:set_core_node_discovery(false),
-                                             mria:leave()
-                                    end)
-                  end,
-                  #{ ?snk_kind := mria_lb_core_discovery_new_nodes
-                   , node := _
-                   , previous_cores := [_, _]
-                   , returned_cores := [_]
-                   }, 10000),
+              begin
+                  ok = ?ON(C2, mria_config:set_core_node_discovery(false))
+              end,
+              #{ ?snk_kind := mria_lb_core_discovery_new_nodes
+               , node := _
+               , previous_cores := [_, _]
+               , returned_cores := [_]
+               }, 10000),
            ?assertEqual([C1], rpc:call(R1, mria_rlog, core_nodes, []))
-       after
-           mria_ct:teardown_cluster(Cluster)
-       end, []).
+       end,
+       []).
 
 t_custom_compat_check(_Config) ->
-    Env = [ {mria, {callback, lb_custom_info_check}, fun(Val) -> Val =:= chosen_one end}
-          | mria_mnesia_test_util:common_env()],
-    Cluster = mria_ct:cluster([ core
-                              , core
-                              , {core, [{mria, {callback, lb_custom_info},
-                                         fun() -> chosen_one end}]}
-                              , replicant
-                              ], Env),
     ?check_trace(
        #{timetrap => 15000},
-       try
-           [_C1, _C2, C3, R1] = mria_ct:start_cluster(mria, Cluster),
-           ?assertEqual({ok, C3},
-                        erpc:call( R1
-                                 , mria_status, replica_get_core_node, [?mria_meta_shard, infinity]
-                                 , infinity
-                                 ))
-       after
-           mria_ct:teardown_cluster(Cluster)
+       begin
+           MriaOpts = #{{callback, lb_custom_info_check} =>
+                            fun(Val) ->
+                                    Val =:= chosen_one
+                            end
+                       },
+           {ok, _, C1} = mria_ct:create_node(~"c1", core, MriaOpts, undefined, #{start => true}),
+           {ok, _, _C2} = mria_ct:create_node(~"c2", core, MriaOpts, C1, #{start => true}),
+           {ok, _, C3} = mria_ct:create_node(~"c3", core, MriaOpts, C1, #{start => true}),
+           {ok, _, R1} = mria_ct:create_node(~"r1", replicant, MriaOpts, C1, #{start => true}),
+
+           mria_mnesia_test_util:stabilize(1000),
+           ?ON(C3,
+               mria_config:register_callback(
+                 lb_custom_info,
+                 fun() -> chosen_one end)),
+           ping_lb(R1),
+
+           ?assertEqual(
+              {ok, C3},
+              ?ON(R1, mria_status:replica_get_core_node(?mria_meta_shard, infinity)))
        end,
        []).
 
 clear_core_node_list(Replicant) ->
-    MaybeOldCallback = erpc:call(Replicant, mria_config, callback, [core_node_discovery]),
+    MaybeOldCallback = ?ON(Replicant, mria_config:callback(core_node_discovery)),
     try
         {_, {ok, _}} = ?wait_async_action(
                           begin
                               ok = erpc:call(Replicant, mria_config, register_callback,
                                              [core_node_discovery, fun() -> [] end]),
-                              {Replicant, mria_lb} ! update
+                              ping_lb(Replicant)
                           end,
                           #{ ?snk_kind := mria_lb_core_discovery_new_nodes
                            , node := Replicant
@@ -326,3 +309,7 @@ with_role(Node, Role, TestFun) ->
     after
         ok = erpc:call(Node, meck, unload, [mria_config])
     end.
+
+
+ping_lb(Node) ->
+    {mria_lb, Node} ! update.
