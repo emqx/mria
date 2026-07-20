@@ -184,7 +184,8 @@ ensure_shard(Shard) ->
           , [mria_schema:entry()]
           , integer()
           }
-        | {badrpc | badtcp, term()}.
+        | {badrpc | badtcp, term()}
+        | {error, _}.
 subscribe(Shard, RemoteNode, Subscriber, Checkpoint) ->
     {ok, Cluster} = classy:the_cluster(),
     case mria_rlog_server:probe(RemoteNode, Shard) of
