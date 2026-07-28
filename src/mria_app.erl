@@ -20,6 +20,8 @@
 
 -export([start/2, stop/1]).
 
+-export([ready/0]).
+
 %% Classy hooks
 -export([ on_run_level/2
         , on_node_init/0
@@ -57,6 +59,14 @@ start(_Type, _Args) ->
 stop(_) ->
     mria_config:erase_all_config(),
     ok.
+
+%%================================================================================
+%% Misc API
+%%================================================================================
+
+-spec ready() -> boolean().
+ready() ->
+    mria_rlog_sup:is_ready().
 
 %%================================================================================
 %% Classy hooks

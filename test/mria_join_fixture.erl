@@ -13,7 +13,8 @@ init_per_node(Site, _Node, JoinTo, Acc) ->
             case is_peer(JoinTo, Site) of
                 false ->
                     ?assertEqual(ok, familiar:call(Site, classy, join_node, [JoinTo, join])),
-                    ?retry(100, 10, ?assertEqual(true, is_peer(JoinTo, Site)));
+                    ?retry(100, 100, ?assert(is_peer(JoinTo, Site))),
+                    ?retry(100, 100, ?assert(familiar:call(Site, mria_app, ready, [])));
                 true ->
                     ok
             end,
