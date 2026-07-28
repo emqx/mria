@@ -20,9 +20,10 @@
 
 -export([start/2, stop/1]).
 
+-export([ready/0]).
+
 %% Classy hooks
--export([ on_run_level_high/2
-        , on_run_level_low/2
+-export([ on_run_level/2
         , on_node_init/0
         , on_create_cluster/2
         , pre_join/4
@@ -60,6 +61,14 @@ stop(_) ->
     ok.
 
 %%================================================================================
+%% Misc API
+%%================================================================================
+
+-spec ready() -> boolean().
+ready() ->
+    mria_rlog_sup:is_ready().
+
+%%================================================================================
 %% Classy hooks
 %%================================================================================
 
@@ -69,15 +78,12 @@ on_node_init() ->
     application:set_env(classy, to_cluster_sets, [core]),
     ok.
 
-on_run_level_high(stopped, single) ->
+on_run_level(stopped, single) ->
     {ok, _Apps} = application:ensure_all_started(mria),
     ok;
-on_run_level_high(_, _) ->
-    ok.
-
-on_run_level_low(single, stopped) ->
+on_run_level(single, stopped) ->
     mria:stop();
-on_run_level_low(_, _) ->
+on_run_level(_, _) ->
     ok.
 
 on_prep_stop(_Reason) ->
@@ -250,8 +256,7 @@ install_hooks(Prio) ->
     , classy:on_membership_change(fun ?MODULE:on_membership_change/4, Prio)
     , classy:on_node_classify(fun ?MODULE:on_node_classify/1, Prio)
       %% Run level:
-    , classy:run_level(fun ?MODULE:on_run_level_high/2, Prio)
-    , classy:run_level(fun ?MODULE:on_run_level_low/2, -Prio)
+    , classy:run_level(fun ?MODULE:on_run_level/2, Prio)
       %% Shutdown:
     , classy:on_prep_stop(fun ?MODULE:on_prep_stop/1, Prio)
     ].

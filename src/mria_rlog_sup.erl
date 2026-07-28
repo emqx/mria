@@ -20,7 +20,7 @@
 
 -behaviour(supervisor).
 
--export([init/1, start_link/0]).
+-export([init/1, start_link/0, is_ready/0]).
 
 -define(SUPERVISOR, ?MODULE).
 
@@ -34,6 +34,10 @@
 start_link() ->
     Role = mria_rlog:role(),
     supervisor:start_link({local, ?SUPERVISOR}, ?MODULE, Role).
+
+-spec is_ready() -> boolean().
+is_ready() ->
+    is_pid(whereis(?SUPERVISOR)).
 
 %%================================================================================
 %% supervisor callbacks
