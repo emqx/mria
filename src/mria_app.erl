@@ -76,6 +76,7 @@ ready() ->
 on_node_init() ->
     _ = install_hooks(9999),
     application:set_env(classy, to_cluster_sets, [core]),
+    application:set_env(classy, discovery_complete_sets, [core]),
     ok.
 
 on_run_level(stopped, single) ->
