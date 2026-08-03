@@ -161,7 +161,7 @@ on_kick_decided(_ClusterId, TargetSite, Intent) ->
             ?tp(critical, mria_failed_to_kick_remote, #{site => TargetSite, reason => Other, intent => Intent})
     end.
 
--spec enrich_site_info(map()) -> map().
+-spec enrich_site_info(classy:site_metadata()) -> classy:site_metadata().
 enrich_site_info(I) ->
     I#{mria => #{ role => mria_rlog:role()
                 , vsn => mria_rlog:get_protocol_version()
