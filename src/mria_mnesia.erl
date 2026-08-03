@@ -165,7 +165,7 @@ on_create_site(_SiteId) ->
                 _ ->
                     %% Some old peers are known.
                     ?tp(notice, mria_cluster_migrating_to_classy, #{node => OldNodes}),
-                    classy:site_prop_set(?migration, {0, OldNodes})
+                    classy_site_metadata:s_set(?migration, {0, OldNodes})
             end;
         _ ->
             ok
@@ -174,7 +174,7 @@ on_create_site(_SiteId) ->
 %% If node is in the "old" cluster, some side effects should be disabled:
 -spec is_in_old_cluster(node()) -> boolean().
 is_in_old_cluster(Node) ->
-    case classy:site_prop_lookup(?migration) of
+    case classy_site_metadata:s_lookup(?migration) of
         [{0, OldNodes}] ->
             lists:member(Node, OldNodes);
         [] ->
@@ -183,12 +183,12 @@ is_in_old_cluster(Node) ->
 
 -spec finish_migration() -> ok.
 finish_migration() ->
-    classy:site_prop_delete(?migration).
+    classy_site_metadata:s_delete(?migration).
 
 -spec pre_autocluster(_, Discovered) -> Discovered when
       Discovered :: [{classy:cluster_id(), [node()]}].
 pre_autocluster(_, Discovered0) ->
-    case classy:site_prop_lookup(?migration) of
+    case classy_site_metadata:s_lookup(?migration) of
         [{0, OldNodes}] ->
             %% If migration is ongoing, then leave only the nodes that
             %% appear in the list:
