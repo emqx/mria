@@ -202,7 +202,7 @@ check_transaction_replay_sequence(Max, Prev, [Next|_]) ->
 check_transaction_replay_sequence_test() ->
     try
         meck:new(classy_site_metadata, [no_history, passthrough]),
-        meck:expect(classy_site_metadata, set, fun(_, _) -> ok end),
+        meck:expect(classy_site_metadata, c_set, fun(_, _) -> ok end),
         ?assert(check_transaction_replay_sequence([])),
         ?assert(check_transaction_replay_sequence([1, 2])),
         ?assert(check_transaction_replay_sequence([2, 3, 4])),

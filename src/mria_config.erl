@@ -171,7 +171,7 @@ load_config() ->
     copy_from_env(bootstrap_batch_size),
     copy_from_env(extra_mnesia_diagnostic_checks),
     consistency_check(),
-    classy_site_metadata:set(
+    classy_site_metadata:c_set(
       mria,
       #{ role => mria_rlog:role()
        , vsn => mria_rlog:get_protocol_version()
@@ -401,7 +401,7 @@ erase_global_config_test() ->
     PersTerms = lists:sort(persistent_term:get()),
     try
         meck:new(classy_site_metadata, [no_history, passthrough]),
-        meck:expect(classy_site_metadata, set, fun(_, _) -> ok end),
+        meck:expect(classy_site_metadata, c_set, fun(_, _) -> ok end),
 
         ok = load_config(),
         meck:unload(classy_site_metadata)
