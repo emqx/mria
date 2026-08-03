@@ -321,17 +321,24 @@ create_table(Name, TabDef) ->
          }),
     Result = case mria_config:whoami() of
                  replicant ->
-                     rpc_to_core_node( ?mria_meta_shard
-                                     , mria_schema, create_table
-                                     , [Name, TabDef]
-                                     );
+                     try
+                         rpc_to_core_node( ?mria_meta_shard
+                                         , mria_schema, create_table
+                                         , [Name, TabDef]
+                                         )
+                     catch
+                         exit:?mria_stopping ->
+                             {error, ?mria_stopping}
+                     end;
                  _ ->
                      mria_schema:create_table(Name, TabDef)
              end,
     case Result of
         {atomic, ok} ->
-            mria_schema:ensure_local_table(Name),
-            ok;
+            maybe
+                true ?= mria_schema:ensure_local_table(Name),
+                ok
+            end;
         Err ->
             Err
     end.
@@ -615,8 +622,8 @@ rpc_to_core_node(Shard, Module, Function, Args, Retries) ->
                 _ ->
                     Ret
             end;
-        Err ->
-            error({mria_failed_to_find_upstream, Shard, Err})
+        {error, ?mria_stopping} ->
+            exit(?mria_stopping)
     end.
 
 should_retry_rpc({badrpc, _}) ->

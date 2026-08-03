@@ -2402,6 +2402,29 @@ t_replica_state_events(_) ->
        end,
        []).
 
+%% This testcase verifies that `create_table' API handles `?mria_stopping' error:
+t_replicant_create_table_stopping(_) ->
+    ?check_trace(
+       #{timetrap => 10_000},
+       begin
+           {ok, _S1, R1} = mria_ct:create_start_node(<<"r1">>, replicant, undefined),
+           ct:sleep(100),
+           %% Spawn a process that tries to create a table, it should block since there are no cores:
+           spawn_link(
+             fun() ->
+                     ?tp_span(test_create_table, #{},
+                              ?ON(R1, mria:create_table(test_table, [{rlog_shard, test_shard}])))
+             end),
+           ct:sleep(100),
+           %% Prepare for restart:
+           ?ON(R1, classy:prep_stop()),
+           {ok, Result} = ?block_until(#{?snk_kind := test_create_table, ?snk_span := {complete, _}}),
+           ?assertMatch(
+              #{?snk_span := {complete, {error, stopping}}},
+              Result)
+       end,
+       []).
+
 get_preferred_core_node(Shard, Replicant) ->
     ?ON(Replicant,
         begin
