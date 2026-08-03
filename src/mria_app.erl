@@ -34,6 +34,12 @@
         , on_node_classify/1
         , on_membership_change/4
         , on_prep_stop/1
+
+          %% Migration:
+        , fallback_get_meta/2
+        , fallback_get_peer_nodes/1
+        , fallback_get_cluster/1
+        , cookie_to_cluster_id/1
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -224,6 +230,47 @@ on_leave(Cluster, _Site, Intent) ->
         _ ->
             ok
     end.
+
+%%--------------------------------------------------------------------------------
+%% Helper functions for migrating to classy
+%%--------------------------------------------------------------------------------
+
+-spec fallback_get_meta(node(), classy:site_metadata()) -> classy:site_metadata().
+fallback_get_meta(Node, Acc) ->
+    maybe
+        Role = mria_rlog:role(Node),
+        true ?= is_atom(Role),
+        Vsn = mria_lib:rpc_call_nothrow(Node, mria_rlog, get_protocol_version, []),
+        true ?= is_integer(Vsn),
+        Acc#{mria => #{role => Role, vsn => Vsn}}
+    else
+        _ -> Acc
+    end.
+
+-spec fallback_get_peer_nodes(node()) -> {ok, [node()]} | undefined.
+fallback_get_peer_nodes(Node) ->
+    case mria_lib:rpc_call_nothrow(Node, mria, cluster_nodes, [all]) of
+        Nodes when is_list(Nodes) ->
+            {ok, Nodes};
+        _ ->
+            undefined
+    end.
+
+-spec fallback_get_cluster(node()) -> {ok, classy:cluster_id()} | undefined.
+fallback_get_cluster(Node) ->
+    case mria_lib:rpc_call_nothrow(Node, mnesia, table_info, [schema, cookie]) of
+        {{_, _, _} = Cookie, _Node} when is_atom(Node) ->
+            {ok, cookie_to_cluster_id(Cookie)};
+        _ ->
+            undefined
+    end.
+
+-spec cookie_to_cluster_id({integer(), integer(), integer()}) -> binary().
+cookie_to_cluster_id({L, M, N} = Cookie) when is_integer(L),
+                                              is_integer(M),
+                                              is_integer(N) ->
+    Bin = crypto:hash(sha3_224, term_to_binary(Cookie)),
+    base64:encode(Bin, #{padding => false, mode => urlsafe}).
 
 %%================================================================================
 %% Internal functions
