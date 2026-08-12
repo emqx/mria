@@ -100,6 +100,58 @@ t_disc_table(_) ->
        end,
        []).
 
+%% This testcase checks correctness of core-core replication of
+%% rocksdb tables.
+t_rocksdb_core_core(_) ->
+    Tab = ?FUNCTION_NAME,
+    ?check_trace(
+       #{timetrap => 30_000},
+       begin
+           {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           Nodes = [N1, N2],
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           [?ON(I, mria:create_table(Tab, [ {storage, rocksdb_copies}
+                                          , {rlog_shard, test_shard}
+                                          ])) || I <- Nodes],
+           %% 1. Check that replication leads to correct results when
+           %% the upstream table is empty. In mnesia protocol, this is
+           %% a rather special case.
+           ok = ?ON(N1, mria:dirty_write({Tab, k1, v1})),
+           ?retry(10, 100,
+                  ?assertMatch(
+                     [{Tab, k1, v1}],
+                     ?ON(N2, mnesia:dirty_read(Tab, k1)))),
+           ok = familiar:stop_site(S1),
+           %% Delete the key:
+           ok = ?ON(N2, mria:dirty_delete(Tab, k1)),
+           %% Restart N1:
+           {ok, N1} = familiar:start_site(S1),
+           ct:sleep(1000),
+           ?assertMatch(
+              [],
+              ?ON(N2, mnesia:dirty_read(Tab, k1))),
+           ?retry(100, 50,
+                  ?assertMatch(
+                     [],
+                     ?ON(N1, mnesia:dirty_read(Tab, k1)))),
+           %% 2. Check that the existing keys are correctly
+           %% transferred.
+
+           %% Create data, more than fits in one mnesia_rocksdb chunk (which has constant size = 100)
+           ok = familiar:stop_site(S1),
+           Tuples = [{Tab, I, I} || I <- lists:seq(0, 200)],
+           [ok = ?ON(N2, mria:dirty_write(I)) || I <- Tuples],
+           %% Restart S1 and wait for replication:
+           {ok, N1} = familiar:start_site(S1),
+           ct:sleep(1000),
+           ?retry(100, 50,
+                  ?assertEqual(
+                     Tuples,
+                     ?ON(N1, mnesia:dirty_match_object({Tab, '$1', '$2'}))))
+       end,
+       []).
+
 t_bootstrap(_) ->
     Parameters = [{Storage, Type} || Storage <- [ram_copies, disc_copies, disc_only_copies, rocksdb_copies]
                                    , Type    <- [set, ordered_set, bag]
