@@ -16,11 +16,6 @@
 
 -module(mria).
 
-%% Start/Stop
--export([ stop/1
-        , stop/0
-        ]).
-
 %% Info
 -export([info/0, info/1, rocksdb_backend_available/0, merge_shard_upstream_status/2]).
 
@@ -101,8 +96,6 @@
 
 -type join_reason() :: join | heal.
 
--type stop_reason() :: join_reason() | stop | leave.
-
 -export_type([info_key/0, infos/0]).
 
 -export_type([ t_result/1
@@ -128,22 +121,6 @@
 -type table() :: atom().
 
 -type table_config() :: list().
-
-%%--------------------------------------------------------------------
-%% Start/Stop
-%%--------------------------------------------------------------------
-
--spec stop() -> ok | {error, _}.
-stop() ->
-    stop(stop).
-
--spec stop(stop_reason()) -> ok.
-stop(Reason) ->
-    ?tp(warning, "Stopping mria", #{reason => Reason, node => node()}),
-    Reason =:= heal orelse Reason =:= leave andalso
-        catch mria_membership:announce(Reason),
-    application:stop(mria),
-    mria_mnesia:ensure_stopped().
 
 %%--------------------------------------------------------------------
 %% Info

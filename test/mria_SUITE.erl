@@ -906,54 +906,55 @@ t_sum_verify(_) ->
 %% Test behavior of the replicant waiting for the core node
 t_core_node_down(_) ->
     NIter = 100,
-    ?retry(0, 5, %% TODO: this test is flaky, see https://github.com/emqx/mria/issues/113
-      ?check_trace(
-         #{timetrap => 30_000},
-         begin
-             {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
-             {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
-             {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
+    %% TODO: this test is flaky, see https://github.com/emqx/mria/issues/113
+    ?check_trace(
+       #{timetrap => 30_000},
+       begin
+           {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
+           {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
+           {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
 
-             mria_mnesia_test_util:stabilize(1000),
-             %% Start transaction gen:
-             {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
-             mria_transaction_gen:start_async_counter(N3, key, NIter + 1),
-             ?tp(warning, "Shutting down all core nodes", #{}),
-             %% Stop mria on all the core nodes:
-             {_, {ok, _}} =
-                 ?wait_async_action(
-                    [rpc:call(I, application, stop, [mria]) || I <- [N1, N2]],
-                    #{ ?snk_kind := mria_status_change
-                     , status    := down
-                     , tag       := core_node
-                     }),
-             timer:sleep(5_000),
-             ?tp(warning, "Restaring the core nodes", #{}),
-             %% Restart mria:
-             {_, {ok, _}} =
-                 ?wait_async_action(
-                    [?ON(I,
-                         begin
-                             application:start(mria),
-                             ok = mria_rlog:wait_for_shards([test_shard], infinity)
-                         end)
-                     || I <- [N1, N2]],
-                    #{ ?snk_kind := mria_status_change
-                     , status    := up
-                     , tag       := core_node
-                     }),
-             %% Wait for the counter update
-             ?block_until(#{?snk_kind := trans_gen_counter_update, value := NIter}),
-             %% Now stop the core nodes:
-             {_, {ok, _}} =
-                 ?wait_async_action(
-                    [familiar:stop_site(I) || I <- [S1, S2]],
-                    #{ ?snk_kind := mria_status_change
-                     , status    := down
-                     , tag       := core_node
-                     })
-         end,
-         [])).
+           mria_mnesia_test_util:stabilize(1000),
+           %% Start transaction gen on the replicant:
+           {atomic, _} = rpc:call(N3, mria_transaction_gen, create_data, []),
+           %% Note: when all core nodes restart, volatile counter
+           %% (ram_copies table) resets to 0, so the number of
+           %% iterations won't be equal to the final value of the
+           %% counter. Double the number of iterations to account for
+           %% that:
+           mria_transaction_gen:start_async_counter(N3, key, NIter * 2),
+           ?block_until(#{?snk_kind := trans_gen_counter_update, value := _}),
+           ?tp(warning, "Shutting down all core nodes", #{}),
+           %% Stop mria on all the core nodes:
+           {_, {ok, _}} =
+               ?wait_async_action(
+                  [rpc:call(I, classy, stop_system, []) || I <- [N1, N2]],
+                  #{ ?snk_kind := mria_status_change
+                   , status    := down
+                   , tag       := core_node
+                   }),
+           ?tp(warning, "All core nodes are down", #{}),
+           timer:sleep(5_000),
+           ?tp(warning, "Restaring the core nodes", #{}),
+           {_, {ok, _}} =
+               ?wait_async_action(
+                  [?ON(I, ok = classy:start_system()) || I <- [N1, N2]],
+                  #{ ?snk_kind := mria_status_change
+                   , status    := up
+                   , tag       := core_node
+                   }),
+           %% Wait for the counter update
+           ?block_until(#{?snk_kind := trans_gen_counter_update, value := NIter}),
+           %% Now stop the core nodes:
+           {_, {ok, _}} =
+               ?wait_async_action(
+                  [familiar:stop_site(I) || I <- [S1, S2]],
+                  #{ ?snk_kind := mria_status_change
+                   , status    := down
+                   , tag       := core_node
+                   })
+       end,
+       []).
 
 t_dirty_reads(_) ->
     Key = 1,
@@ -1155,16 +1156,16 @@ t_promote_replicant_to_core(_) ->
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
            %% promote a replicant to core
            %% stop and generate a few operations
-           ok = erpc:call(N2, fun mria:stop/0),
+           ok = erpc:call(N2, fun classy:stop_system/0),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
            %% restart replicant as a new core
-           {ok, _} = erpc:call(
-                       N2,
-                       fun() ->
-                               ok = application:set_env(mria, node_role, core),
-                               application:ensure_all_started(mria)
-                       end),
-           ok = mria_mnesia_test_util:wait_tables([N2]),
+           ?ON(N2,
+               begin
+                   ok = application:set_env(mria, node_role, core),
+                   ok = classy:start_system()
+               end),
+           ?retry(1000, 10,
+                  ok = mria_mnesia_test_util:wait_tables([N2])),
            %% generate more transactions
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
            mria_mnesia_test_util:wait_full_replication(Nodes),
@@ -2417,7 +2418,7 @@ t_replicant_create_table_stopping(_) ->
              end),
            ct:sleep(100),
            %% Prepare for restart:
-           ?ON(R1, classy:prep_stop()),
+           ?ON(R1, classy:stop_system()),
            {ok, Result} = ?block_until(#{?snk_kind := test_create_table, ?snk_span := {complete, _}}),
            ?assertMatch(
               #{?snk_span := {complete, {error, stopping}}},

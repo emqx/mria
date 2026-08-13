@@ -48,21 +48,6 @@ create_cluster(ClusterId, Subnet) ->
                                      , port_discovery => stateless
                                      }
                             end}}
-               , {familiar_app,
-                  #{ app => classy
-                   , env => fun(Site, _Node, _State) ->
-                                    #{ setup_hooks => {?MODULE, setup_init_hooks, [Site]}
-                                     , cleanup_check_interval => 100
-                                     , vote_retry_interval => 100
-                                     , rpc_timeout => 100
-                                     , discovery_interval => 100
-                                     , sync_timeout => 100
-                                     }
-                            end
-                   , prep_stop => fun(Site, _Node, _State) ->
-                                          familiar:call(Site, classy, prep_stop, [], infinity)
-                                  end
-                 }}
                ],
     put(mria_ct_cluster, {ok, ClusterId}),
     familiar:start_link_cluster(
@@ -87,8 +72,7 @@ end_per_testcase(TestCase, Config) ->
 setup_init_hooks({_Cluster, Site}) ->
     %% Use deterministic site IDs
     classy:on_node_init(fun() ->
-                                classy_node:maybe_init_the_site(Site),
-                                mria_app:on_node_init()
+                                classy_node:maybe_init_the_site(Site)
                         end,
                         0),
     %% Imitate business applications:
@@ -121,13 +105,28 @@ create_node(SiteId, Role, MriaOpts, JoinTo, FamiliarOpts) ->
 
 fixtures(Role, MriaOpts, JoinTo) ->
     [ {familiar_app,
+       #{ app => classy
+        , timeout => 15_000
+        , env => fun(Site, _Node, _State) ->
+                         #{ setup_hooks => {?MODULE, setup_init_hooks, [Site]}
+                          , cleanup_check_interval => 100
+                          , vote_retry_interval => 100
+                          , rpc_timeout => 100
+                          , discovery_interval => 100
+                          , sync_timeout => 100
+                          }
+                 end
+        }}
+    , {familiar_app,
        #{ app => mria
-        , start => false
+        , timeout => 15_000
         , env => MriaOpts#{ strict_mode             => true
                           , rlog_lb_update_interval => 100
                           , node_role               => Role
                           , cluster_autoheal        => 200
-                          }}}
+                          }
+        }}
+    , {classy_start_system_fixture, #{timeout => 15_000}}
     , {mria_join_fixture, JoinTo}
     ].
 
