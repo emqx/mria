@@ -519,8 +519,10 @@ make_2c2r_cluster() ->
     Nodes.
 
 stop_apps() ->
-    classy:prep_stop(),
+    classy:stop_system(),
+    application:stop(mria),
     application:stop(classy).
 
 start_apps() ->
-    application:start(classy).
+    application:ensure_all_started(mria),
+    classy:start_system().
