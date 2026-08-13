@@ -33,6 +33,8 @@
 
 -define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
 
+-define(timetrap, 60_000).
+
 all() -> mria_ct:all(?MODULE).
 
 init_per_suite(Config) ->
@@ -49,7 +51,7 @@ end_per_testcase(TestCase, Config) ->
 
 t_create_del_table(_) ->
     ?check_trace(
-       #{timetrap => 15_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            mria_ct:wait_quorum([N]),
@@ -72,7 +74,7 @@ t_create_del_table(_) ->
 
 t_disc_table(_) ->
     ?check_trace(
-       #{timetrap => 15_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -106,7 +108,7 @@ t_bootstrap(_) ->
                                    , not (Storage =:= disc_only_copies andalso Type =:= ordered_set)],
     NRecords = 4321,
     ?check_trace(
-       #{timetrap => 60_000},
+       #{timetrap => ?timetrap},
         begin
             {ok, _, Core} = mria_ct:create_start_node(<<"c1">>, core, undefined),
             {ok, _, Replicant} = mria_ct:create_start_node(<<"r1">>, replicant, Core),
@@ -219,7 +221,7 @@ t_join_leave_cluster(_) ->
 
 t_cluster_core_nodes_on_replicant(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -251,7 +253,7 @@ t_cluster_core_nodes_on_replicant(_) ->
 
 t_remove_from_cluster(_) ->
     ?check_trace(
-       #{timetrap => 60000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N0} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N1} = mria_ct:create_start_node(<<"c2">>, core, N0),
@@ -404,7 +406,7 @@ t_rlog_smoke_test(_) ->
 
 t_transaction_on_replicant(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -501,7 +503,7 @@ t_sync_transaction_on_replicant(_) ->
 %% Check that behavior on error and exception is the same for both backends
 t_abort(_) ->
     ?check_trace(
-       #{timetrap => 15000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _S2, N2} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
@@ -533,7 +535,7 @@ t_core_node_competing_writes(_) ->
     CounterKey = counter,
     NOper = 1000,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -560,7 +562,7 @@ t_core_node_competing_writes(_) ->
 
 t_rlog_clear_table(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -578,7 +580,7 @@ t_rlog_clear_table(_) ->
 
 t_rlog_match_delete(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -624,7 +626,7 @@ do_match_delete_test(Node, Nodes, Recs, Pattern) ->
 %% Compare behaviour of failing dirty operations on core and replicant:
 t_rlog_dirty_ops_fail(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -649,7 +651,7 @@ t_rlog_dirty_ops_fail(_) ->
 
 t_middleman(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -682,7 +684,7 @@ drain_message_queue() ->
 
 t_rlog_dirty_operations(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -721,7 +723,7 @@ t_rlog_dirty_operations(_) ->
 
 t_rlog_sync_dirty_operations(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -740,7 +742,7 @@ t_rlog_sync_dirty_operations(_) ->
 
 t_rlog_dirty_activity(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -800,7 +802,7 @@ t_rlog_dirty_activity(_) ->
 
 t_local_content(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -876,7 +878,7 @@ t_local_content(_) ->
 t_sum_verify(_) ->
     NTrans = 100,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            ?force_ordering( #{?snk_kind := verify_trans_step, n := N} when N =:= 2 * NTrans div 4
                           , #{?snk_kind := state_change, to := local_replay, shard := test_shard}
@@ -908,7 +910,7 @@ t_core_node_down(_) ->
     NIter = 100,
     %% TODO: this test is flaky, see https://github.com/emqx/mria/issues/113
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -960,7 +962,7 @@ t_dirty_reads(_) ->
     Key = 1,
     Val = 42,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -977,7 +979,7 @@ t_dirty_reads(_) ->
 %% Test adding tables to the schema:
 t_rlog_schema(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -1052,7 +1054,7 @@ t_rlog_schema(_) ->
 %% Test post commit hook is called on core nodes and replicated.
 t_mnesia_post_commit_hook(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1108,7 +1110,7 @@ t_mnesia_post_commit_hook(_) ->
 
 t_replicant_receives_commits_from_remote_node(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1140,7 +1142,7 @@ t_promote_replicant_to_core(_) ->
     NTrans = 60,
     CounterKey = key,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1177,7 +1179,7 @@ t_promote_replicant_to_core(_) ->
 t_dirty_update_counter(_Config) ->
     CounterKey = counter,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -1202,7 +1204,7 @@ t_dirty_update_counter(_Config) ->
 
 t_replicant_manual_join(_Config) ->
     ?check_trace(
-       #{timetrap => 60000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1258,7 +1260,7 @@ t_replicant_manual_join(_Config) ->
 
 t_cluster_nodes(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, Core1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, Core2} = mria_ct:create_start_node(<<"c2">>, core, Core1),
@@ -1292,7 +1294,7 @@ t_cluster_nodes(_) ->
 %% table depends on waiting for another.
 tt_full_cluster_parallel_restart(_) ->
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1336,7 +1338,7 @@ tt_full_cluster_parallel_restart(_) ->
 %% table depends on waiting for another.
 tt_full_cluster_seq_restart(_) ->
     ?check_trace(
-       #{timetrap => 30_0000},
+       #{timetrap => ?timetrap},
        begin
            {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1379,7 +1381,7 @@ full_restart_load_chain() ->
 
 t_schema_merge(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            %% Start mria on C1 and C2:
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
@@ -1399,7 +1401,7 @@ t_schema_merge(_) ->
 
 t_join_each_other_simultaneously(_) ->
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
@@ -1424,7 +1426,7 @@ t_join_each_other_simultaneously(_) ->
 
 t_join_another_node_simultaneously(_) ->
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
@@ -1458,7 +1460,7 @@ t_join_another_node_simultaneously(_) ->
 
 t_join_many_nodes_simultaneously(_) ->
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            %% Spin the cluster up.
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
@@ -1499,7 +1501,7 @@ t_join_many_nodes_simultaneously(_) ->
 %% Verify replicant rebalance feature:
 t_rebalance(_) ->
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1558,7 +1560,7 @@ t_merge_table_schema(_) ->
     MergeShard = merge_shard,
     NormalShard = normal_shard,
     ?check_trace(
-       #{timetrap => 15_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, replicant, N1),
@@ -1674,7 +1676,7 @@ t_merge_table_verify_op(_) ->
     Tab = ?FUNCTION_NAME,
     Shard = verify_op_shard,
     ?check_trace(
-       #{timetrap => 15_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _, N} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            mria_mnesia_test_util:stabilize(1000),
@@ -1758,7 +1760,7 @@ t_merge_table_metadata(_) ->
     Tables = [Tab1, Tab2],
     Shard = merge_shard,
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _S3, N2} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
@@ -1860,7 +1862,7 @@ t_merge_table_transaction(_) ->
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -1981,7 +1983,7 @@ t_merge_table_dirty(_) ->
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -2056,7 +2058,7 @@ t_merge_table_counters(_) ->
     Tab = tab,
     Shard = merge_shard,
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -2105,7 +2107,7 @@ t_merge_table_bootstrap(_) ->
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -2199,7 +2201,7 @@ t_merge_table_autoclean(_) ->
     Tab2 = tab2,
     Shard = merge_shard,
     ?check_trace(
-       #{timetrap => 30_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -2291,7 +2293,7 @@ t_merge_table_autoclean(_) ->
 
 t_is_peer_alive(_) ->
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, S1, N1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, S2, _N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
@@ -2342,7 +2344,7 @@ t_is_peer_alive(_) ->
 t_replica_state_events(_) ->
     Shard = Table = ?FUNCTION_NAME,
     ?check_trace(
-       #{timetrap => 30000},
+       #{timetrap => ?timetrap},
        begin
            {ok, S1, C1} = mria_ct:create_start_node(<<"c1">>, core, undefined),
            {ok, _, R1} = mria_ct:create_start_node(<<"r1">>, replicant, C1),
@@ -2406,7 +2408,7 @@ t_replica_state_events(_) ->
 %% This testcase verifies that `create_table' API handles `?mria_stopping' error:
 t_replicant_create_table_stopping(_) ->
     ?check_trace(
-       #{timetrap => 10_000},
+       #{timetrap => ?timetrap},
        begin
            {ok, _S1, R1} = mria_ct:create_start_node(<<"r1">>, replicant, undefined),
            ct:sleep(100),
