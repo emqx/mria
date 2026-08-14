@@ -60,8 +60,7 @@
         , copy_schema/1
         , delete_schema/0
         , del_schema_copy/1
-        , copy_table/1
-        , copy_table/2
+        , ensure_table_copy/2
         , wait_for_tables/1
         ]).
 
@@ -91,8 +90,6 @@
              , op/0
              , commit_records/0
              ]).
-
--deprecated({copy_table, 1, next_major_release}).
 
 %%--------------------------------------------------------------------
 %% Types
@@ -306,18 +303,19 @@ copy_schema(Node) ->
             {error, {failed_to_copy_schema, Error}}
     end.
 
-%% @doc Copy mnesia table.
--spec(copy_table(Name :: atom()) -> ok).
-copy_table(Name) ->
-    copy_table(Name, ram_copies).
-
--spec(copy_table(Name:: atom(), mria:storage()) -> ok).
-copy_table(Name, Storage) ->
-    case mria_config:role() of
-        core ->
-            mria_lib:ensure_tab(mnesia:add_table_copy(Name, node(), Storage));
-        replicant ->
-            ok
+-spec ensure_table_copy(mria:table(), mria:storage()) -> ok | {error, _}.
+ensure_table_copy(Name, Storage) ->
+    core = mria_config:role(), % Assert
+    %% Hack: mnesia storage type is broken, it doesn't account for external backends
+    case apply(mnesia, add_table_copy, [Name, node(), Storage]) of
+        {atomic, ok} ->
+            ok;
+        {aborted, {already_exists, _Name}} ->
+            ok;
+        {aborted, {already_exists, _Name, _Node}} ->
+            ok;
+        {aborted, Reason} ->
+            {error, Reason}
     end.
 
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.

@@ -65,7 +65,7 @@ t_create_del_table(_) ->
                           , {attributes, record_info(fields, kv_tab)}
                           , {storage_properties, []}
                           ]),
-                   ok = mria_mnesia:copy_table(kv_tab, disc_copies),
+                   ok = mria_mnesia:ensure_table_copy(kv_tab, disc_copies),
                    ok = mnesia:dirty_write(#kv_tab{key = a, val = 1}),
                    {atomic, ok} = mnesia:del_table_copy(kv_tab, node())
                end)
