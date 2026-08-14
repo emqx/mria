@@ -315,7 +315,9 @@ ensure_table_copy(Name, Storage) ->
         {aborted, {already_exists, _Name, _Node}} ->
             ok;
         {aborted, Reason} ->
-            {error, Reason}
+            {error, Reason};
+        Other ->
+            {error, Other}
     end.
 
 -spec wait_for_tables([mria:table()]) -> ok | {error, _Reason}.
