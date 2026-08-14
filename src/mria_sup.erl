@@ -55,9 +55,13 @@ launch_rlog() ->
     end.
 
 terminate_rlog() ->
-    maybe
-        ok ?= supervisor:terminate_child(?top, ?rlog),
-        supervisor:delete_child(?top, ?rlog)
+    case supervisor:terminate_child(?top, ?rlog) of
+        ok ->
+            supervisor:delete_child(?top, ?rlog);
+        {error, not_found} ->
+            ok;
+        Other ->
+            Other
     end.
 
 stop() ->
