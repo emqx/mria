@@ -455,7 +455,7 @@ bootstrap() ->
     ok = create_table(MetaSpec),
     %% Ensure replicas are available before starting copy:
     ok = mria_mnesia:wait_for_tables([?schema]),
-    ok = mria_mnesia:copy_table(?schema, ram_copies),
+    ok = copy_table(?schema, ram_copies),
     RlogSyncOpts = [{record_name, ?rlog_sync},
                     {attributes, record_info(fields, ?rlog_sync)}
                    ],
@@ -470,7 +470,7 @@ bootstrap() ->
     %% Ensure replicas are available before starting copy:
     %% If we've managed to sync only mnesia schema up to this point, `copy_table/2` may
     %% fail if other nodes suddenly become unavailable.
-    ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
+    ok = copy_table(?rlog_sync, null_copies),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, RlogSyncSpec, write], infinity),
@@ -484,20 +484,29 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
                ) ->
     case lists:keyfind(Table, #?schema.mnesia_table, OldEntries) of
         false -> % new entry
-            Ret = case mria_config:role() of
-                      core ->
-                          mria_lib:ensure_ok(mria_mnesia:copy_table(Table, Storage));
-                      replicant ->
-                          create_table(Entry)
-                  end,
-            ok = Ret, %% TODO: print an error message under some conditions?
-            Tables = tables_of_shard(Shard),
-            mria_config:load_shard_config(Shard, Tables),
-            State = State0#s{specs = [Entry|OldEntries]},
-            update_persistent_term(State),
-            mria_status:notify_local_table(Table),
-            notify_change(Shard, Entry, Subscribers),
-            State;
+            maybe
+                ok ?= case mria_config:role() of
+                          core ->
+                              copy_table(Table, Storage);
+                          replicant ->
+                              create_table(Entry)
+                      end,
+                Tables = tables_of_shard(Shard),
+                mria_config:load_shard_config(Shard, Tables),
+                State = State0#s{specs = [Entry|OldEntries]},
+                update_persistent_term(State),
+                mria_status:notify_local_table(Table),
+                notify_change(Shard, Entry, Subscribers),
+                State
+            else
+                Other ->
+                    ?tp(critical, mria_failed_to_create_table,
+                        #{ table => Table
+                         , storage => Storage
+                         , reason => Other
+                         }),
+                State0
+            end;
         _CachedEntry ->
             State0
     end.
@@ -526,7 +535,16 @@ create_table(#?schema{mnesia_table = Table, storage = Storage, config = Config0}
                   false -> Config2
               end,
     Config = [{Storage, [node()]} | Config3],
-    mria_lib:ensure_tab(mnesia:create_table(Table, Config)).
+    case mnesia:create_table(Table, Config) of
+        {atomic, ok} ->
+            ok;
+        {aborted, {already_exists, _Name}} ->
+            ok;
+        {aborted, {already_exists, _Name, _Node}} ->
+            ok;
+        {aborted, Err} ->
+            {error, {failed_to_create_table, Err}}
+    end.
 
 %% @doc Force load a table. Note: mnesia waits for table implicitly.
 force_load(Table) ->
@@ -598,3 +616,22 @@ is_node_pattern(L) when is_list(L) ->
     end;
 is_node_pattern(_) ->
     false.
+
+%% Dialyzer complains about `Other' case, thinking that it won't happen.
+-dialyzer({nowarn_function, [copy_table/2]}).
+copy_table(Table, Storage) ->
+    case mria_rlog:role() of
+        core ->
+            case mria_mnesia:ensure_table_copy(Table, Storage) of
+                ok  ->
+                    ok;
+                {error, {Node, {already_exists, Node}}} ->
+                    ok;
+                {error, Reason} ->
+                    {error, {failed_to_copy_table, Reason}};
+                Other ->
+                    {error, {failed_to_copy_table, Other}}
+            end;
+        replicant ->
+            ok
+    end.

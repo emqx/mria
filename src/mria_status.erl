@@ -111,7 +111,8 @@ prep_restart() ->
 %% It is the same node that serves the local replica, but this optvar
 %% is set before local replica goes up fully. WARNING: this `optvar'
 %% is set before local replica becomes consistent.
--spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?mria_stopping} | disconnected.
+-spec rpc_target(mria_rlog:shard(), infinity) -> {ok, node()} | {error, ?mria_stopping};
+                (mria_rlog:shard(), non_neg_integer()) -> {ok, node()} | {error, ?mria_stopping} | disconnected.
 rpc_target(Shard, Timeout) ->
     maybe
         ok ?= check_stopping(),
