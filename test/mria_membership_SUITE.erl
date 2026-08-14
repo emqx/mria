@@ -415,6 +415,7 @@ test_member_is_stopped_node_observes(WaitKind, StopNode, ObserveNode, AssertF) -
                             <- erpc:call(ObserveNode, mria_membership, AssertF, [])
                              , N =:= StopNode]),
     wait_action(mria_membership_insert, StopNode, ObserveNode, up, ?MODULE, start_apps, []),
+    ct:sleep(100),
     ?assertEqual( [running]
                 , [S || #member{node = N, mnesia = S}
                             <- erpc:call(ObserveNode, mria_membership, AssertF, [])
