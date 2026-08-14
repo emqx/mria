@@ -20,7 +20,6 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 -compile(nowarn_underscore_match).
--compile(nowarn_deprecated_function). %% Silence the warnings about slave module
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").

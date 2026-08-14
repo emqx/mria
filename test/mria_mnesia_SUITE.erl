@@ -22,7 +22,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
--compile(nowarn_deprecated_function). %% Silence the warnings about slave module
+-define(ON(NODE, WHAT), mria_ct:run_on(NODE, fun() -> WHAT end)).
 
 all() ->
     mria_ct:all(?MODULE).
@@ -154,7 +154,7 @@ t_diagnosis_tab(_)->
        end,
        []).
 
-t_extra_diagnostic_checks(_)->
+t_extra_diagnostic_checks(_) ->
     TestTab = test_tab_1,
     ?check_trace(
        #{timetrap => 30_000},
@@ -196,5 +196,30 @@ t_extra_diagnostic_checks(_)->
            ?assertEqual(ok, rpc:call(N1, mria_config, load_config, [])),
 
            ok
+       end,
+       []).
+
+t_schema_cookie(_) ->
+    ?check_trace(
+       #{timetrap => 30_000},
+       begin
+           {ok, _, N1} = familiar:create_site(mria_ct:get_cluster(), ~"c1", #{start => true}),
+           %% Initially there's no schema cookie.
+           ?assertMatch(undefined, ?ON(N1, mria_mnesia:schema_cookie())),
+           %% Create schema:
+           ?assertMatch(ok, ?ON(N1, mnesia:create_schema([N1]))),
+           %% Start mnesia:
+           ?assertMatch(ok, ?ON(N1, mnesia:start())),
+           ct:sleep(100),
+           ?assertMatch(yes, ?ON(N1, mnesia:system_info(is_running))),
+           {ok, Cookie} = ?ON(N1, mria_mnesia:schema_cookie()),
+           ?assertMatch(
+              {{_, _, _}, N1},
+              Cookie),
+           %% Stop mnesia. The same cookie should be returned:
+           ?assertMatch(stopped, ?ON(N1, mnesia:stop())),
+           ct:sleep(100),
+           ?assertMatch(no, ?ON(N1, mnesia:system_info(is_running))),
+           {ok, Cookie} = ?ON(N1, mria_mnesia:schema_cookie())
        end,
        []).
