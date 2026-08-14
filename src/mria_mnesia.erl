@@ -73,6 +73,7 @@
         , clear_table_int/1
         , clear_table_int/2
         , get_internals/0
+        , schema_cookie/0
         ]).
 
 %% gen_server
@@ -476,6 +477,29 @@ get_internals() ->
     case mnesia:get_activity_id() of
         {_, TID, #tidstore{store = TxStore}} ->
             {TID, TxStore}
+    end.
+
+-spec schema_cookie() -> {ok, {tuple(), node()}} | undefined | {error, _}.
+schema_cookie() ->
+    case mnesia:system_info(is_running) of
+        yes ->
+            {ok, mnesia:table_info(schema, cookie)};
+        no ->
+            case mnesia_schema:read_cstructs_from_disc() of
+                {ok, CStructs} ->
+                    Schema = lists:keyfind(schema, 2, CStructs),
+                    case Schema of
+                        #cstruct{cookie = Cookie} when is_tuple(Cookie) ->
+                            {ok, Cookie};
+                        _ ->
+                            %% This includes `false':
+                            {error, {invalid_schema, Schema}}
+                    end;
+                {error, "No schema file exists"} ->
+                    undefined;
+                Err ->
+                    Err
+            end
     end.
 
 %%--------------------------------------------------------------------
