@@ -455,7 +455,7 @@ bootstrap() ->
     ok = create_table(MetaSpec),
     %% Ensure replicas are available before starting copy:
     ok = mria_mnesia:wait_for_tables([?schema]),
-    ok = mria_mnesia:copy_table(?schema, ram_copies),
+    ok = copy_table(?schema, ram_copies),
     RlogSyncOpts = [{record_name, ?rlog_sync},
                     {attributes, record_info(fields, ?rlog_sync)}
                    ],
@@ -470,7 +470,7 @@ bootstrap() ->
     %% Ensure replicas are available before starting copy:
     %% If we've managed to sync only mnesia schema up to this point, `copy_table/2` may
     %% fail if other nodes suddenly become unavailable.
-    ok = mria_mnesia:copy_table(?rlog_sync, null_copies),
+    ok = copy_table(?rlog_sync, null_copies),
     %% Seed the table with the metadata:
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, MetaSpec, write], infinity),
     {atomic, _} = mnesia:transaction(fun mnesia:write/3, [?schema, RlogSyncSpec, write], infinity),
@@ -486,7 +486,7 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
         false -> % new entry
             Ret = case mria_config:role() of
                       core ->
-                          mria_lib:ensure_ok(mria_mnesia:copy_table(Table, Storage));
+                          copy_table(Table, Storage);
                       replicant ->
                           create_table(Entry)
                   end,
@@ -598,3 +598,23 @@ is_node_pattern(L) when is_list(L) ->
     end;
 is_node_pattern(_) ->
     false.
+
+copy_table(Table, Storage) ->
+    case mria_rlog:role() of
+        core ->
+            case mria_mnesia:ensure_table_copy(Table, Storage) of
+                ok  ->
+                    ok;
+                {error, {Node, {already_exists, Node}}} ->
+                    ok;
+                {error, Reason} ->
+                    ?tp(error, failed_to_copy_mnesia_table,
+                        #{ table => Table
+                         , storage => Storage
+                         , reason => Reason
+                         }),
+                    error(schema_error)
+            end;
+        replicant ->
+            ok
+    end.

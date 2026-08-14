@@ -29,7 +29,6 @@
         , cancel_timer/1
         , subscriber_node/1
 
-        , ensure_ok/1
         , ensure_tab/1
 
         , shutdown_process/1
@@ -193,11 +192,6 @@ cancel_timer(TRef) ->
 -spec subscriber_node(subscriber()) -> node().
 subscriber_node({Node, _Pid}) ->
     Node.
-
-ensure_ok(ok) -> ok;
-ensure_ok({error, {Node, {already_exists, Node}}}) -> ok;
-ensure_ok({badrpc, Reason}) -> throw({error, {badrpc, Reason}});
-ensure_ok({error, Reason}) -> throw({error, Reason}).
 
 ensure_tab({atomic, ok})                             -> ok;
 ensure_tab({aborted, {already_exists, _Name}})       -> ok;
