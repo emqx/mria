@@ -32,13 +32,6 @@
 -export([ %% TODO: remove it
           ensure_started/0
         , ensure_stopped/0
-        , connect/1
-        ]).
-
--export([ on_create_site/1
-        , is_in_old_cluster/1
-        , finish_migration/0
-        , pre_autocluster/2
         ]).
 
 %% Mnesia Cluster API
@@ -111,9 +104,6 @@
                            , schema_ops => list()
                            }.
 
--define(migration, mria_migration).
-
-
 -define(SERVER, ?MODULE).
 
 -record(call_ensure_started, {}).
@@ -142,80 +132,6 @@ ensure_started() ->
 -spec(ensure_stopped() -> ok | {error, any()}).
 ensure_stopped() ->
     gen_server:call(?SERVER, #call_ensure_stopped{}, infinity).
-
-%% @doc Cluster with node.
--spec(connect(node()) -> ok | {error, any()}).
-connect(Node) ->
-    ?tp(mria_mnesia_connect, #{to => Node}),
-    case mnesia:change_config(extra_db_nodes, [Node]) of
-        {ok, [Node]}   -> ok;
-        {ok, []}       -> {error, {failed_to_connect_node, Node, not_connected}};
-        {error, Error} -> {error, {failed_to_connect_node, Node, Error}};
-        Error          -> {error, {failed_to_connect_node, Node, Error}}
-    end.
-
-on_create_site(_SiteId) ->
-    %% Migration to classy: check if the mnesia schema had already existed:
-    case {mria_config:role_(), filelib:is_dir(data_dir())} of
-        {core, true} ->
-            %% Found old schema.
-            OldNodes = mria_mnesia:db_nodes() -- [node()],
-            case OldNodes of
-                [] ->
-                    ok;
-                _ ->
-                    %% Some old peers are known.
-                    ?tp(notice, mria_cluster_migrating_to_classy, #{node => OldNodes}),
-                    classy_site_metadata:s_set(?migration, {0, OldNodes})
-            end;
-        _ ->
-            ok
-    end.
-
-%% If node is in the "old" cluster, some side effects should be disabled:
--spec is_in_old_cluster(node()) -> boolean().
-is_in_old_cluster(Node) ->
-    case classy_site_metadata:s_lookup(?migration) of
-        [{0, OldNodes}] ->
-            lists:member(Node, OldNodes);
-        [] ->
-            false
-    end.
-
--spec finish_migration() -> ok.
-finish_migration() ->
-    classy_site_metadata:s_delete(?migration).
-
--spec pre_autocluster(_, Discovered) -> Discovered when
-      Discovered :: [{classy:cluster_id(), [node()]}].
-pre_autocluster(_, Discovered0) ->
-    case classy_site_metadata:s_lookup(?migration) of
-        [{0, OldNodes}] ->
-            %% If migration is ongoing, then leave only the nodes that
-            %% appear in the list:
-            Results = lists:zip(erpc:multicall(OldNodes, classy, the_cluster, [], 1_000), OldNodes),
-            Clusters =
-                lists:foldl(
-                  fun({MaybeCluster, Node}, Acc) ->
-                          case MaybeCluster of
-                              {ok, {ok, Cluster}} ->
-                                  case Acc of
-                                      #{Cluster := L} ->
-                                          Acc#{Cluster := [Node | L]};
-                                      #{} ->
-                                          Acc#{Cluster => [Node]}
-                                  end;
-                              _ ->
-                                  Acc
-                          end
-                  end,
-                  #{},
-                  Results),
-            %% TODO: sort by length
-            maps:to_list(Clusters);
-        [] ->
-            Discovered0
-    end.
 
 %%--------------------------------------------------------------------
 %% Cluster mnesia
@@ -638,6 +554,16 @@ handle_leave() ->
             ok;
         Nodes ->
             do_leave_cluster(Nodes)
+    end.
+
+-spec connect(node()) -> ok | {error, any()}.
+connect(Node) ->
+    ?tp(mria_mnesia_connect, #{to => Node}),
+    case mnesia:change_config(extra_db_nodes, [Node]) of
+        {ok, [Node]}   -> ok;
+        {ok, []}       -> {error, {failed_to_connect_node, Node, not_connected}};
+        {error, Error} -> {error, {failed_to_connect_node, Node, Error}};
+        Error          -> {error, {failed_to_connect_node, Node, Error}}
     end.
 
 %% @doc Data dir

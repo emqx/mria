@@ -33,12 +33,6 @@
         , on_node_classify/1
         , on_membership_change/4
         , on_prep_stop/1
-
-          %% Migration:
-        , fallback_get_meta/2
-        , fallback_get_peer_nodes/1
-        , fallback_get_cluster/1
-        , cookie_to_cluster_id/1
         ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -116,8 +110,8 @@ pre_join(_, _, Node, _) ->
 -spec post_join(classy:cluster_id(), classy:site(), node(), term()) -> ok.
 post_join(_Cluster, _Local, Node, Intent) ->
     Role = mria_config:role_(),
-    case {Role, mria_mnesia:is_in_old_cluster(Node)} of
-        {core, false} ->
+    case Role of
+        core ->
             ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
             try mria_membership:announce(Intent)
             catch
@@ -128,11 +122,7 @@ post_join(_Cluster, _Local, Node, Intent) ->
                 #{ seed   => Node
                  , result => Result
                  });
-        {core, true} ->
-            %% Migration from cluster management via mnesia schema to classy:
-            ?tp(notice, "Mria: already in cluster (migrated)", #{seed => Node}),
-            mria_mnesia:finish_migration();
-        {replicant, _} ->
+        replicant ->
             ok
     end.
 
@@ -183,88 +173,34 @@ on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
 
 -spec on_leave(classy:cluster_id(), classy:site(), term()) -> ok.
 on_leave(Cluster, _Site, Intent) ->
-    %% Check if migration is in progress. If local is joining the
-    %% remote node that has been part of the mnesia cluster before
-    %% migration to classy, then we should skip changes to the schema.
-    IsMigrating = case Intent of
-                      {join, #{node := Node}} ->
-                          mria_mnesia:is_in_old_cluster(Node);
-                      _ ->
-                          false
-                  end,
-    case mria_config:role_() of
-        core when IsMigrating ->
-            ?tp(notice, mria_leave_migration, #{}),
+    Result1 = maybe
+                  ok ?= mria_mnesia:ensure_stopped(),
+                  mria_mnesia:leave_cluster(Intent)
+              end,
+    case Result1 of
+        ok ->
             ok;
-        core ->
-            Result1 = maybe
-                          ok ?= mria_mnesia:ensure_stopped(),
-                          mria_mnesia:leave_cluster(Intent)
-                      end,
-            case Result1 of
-                ok ->
-                    ok;
-                Err1 ->
-                    ?tp(critical, mria_failed_to_leave_cluster,
-                        #{ reason => Err1
-                         , intent => Intent
-                         , cluster => Cluster
-                         })
-            end,
-            case mria_mnesia:delete_schema() of
-                ok ->
-                    ok;
-                Err2 ->
-                    ?tp(critical, mria_failed_to_delete_schema,
-                        #{ reason => Err2
-                         , intent => Intent
-                         , cluster => Cluster
-                         })
-            end;
-        _ ->
-            ok
+        Err1 ->
+            ?tp(critical, mria_failed_to_leave_cluster,
+                #{ reason => Err1
+                 , intent => Intent
+                 , cluster => Cluster
+                 })
+    end,
+    case mria_mnesia:delete_schema() of
+        ok ->
+            ok;
+        Err2 ->
+            ?tp(critical, mria_failed_to_delete_schema,
+                #{ reason => Err2
+                 , intent => Intent
+                 , cluster => Cluster
+                 })
     end.
 
 %%--------------------------------------------------------------------------------
 %% Helper functions for migrating to classy
 %%--------------------------------------------------------------------------------
-
--spec fallback_get_meta(node(), classy:site_metadata()) -> classy:site_metadata().
-fallback_get_meta(Node, Acc) ->
-    maybe
-        Role = mria_rlog:role(Node),
-        true ?= is_atom(Role),
-        Vsn = mria_lib:rpc_call_nothrow(Node, mria_rlog, get_protocol_version, []),
-        true ?= is_integer(Vsn),
-        Acc#{mria => #{role => Role, vsn => Vsn}}
-    else
-        _ -> Acc
-    end.
-
--spec fallback_get_peer_nodes(node()) -> {ok, [node()]} | undefined.
-fallback_get_peer_nodes(Node) ->
-    case mria_lib:rpc_call_nothrow(Node, mria, cluster_nodes, [all]) of
-        Nodes when is_list(Nodes) ->
-            {ok, Nodes};
-        _ ->
-            undefined
-    end.
-
--spec fallback_get_cluster(node()) -> {ok, classy:cluster_id()} | undefined.
-fallback_get_cluster(Node) ->
-    case mria_lib:rpc_call_nothrow(Node, mnesia, table_info, [schema, cookie]) of
-        {{_, _, _} = Cookie, _Node} when is_atom(Node) ->
-            {ok, cookie_to_cluster_id(Cookie)};
-        _ ->
-            undefined
-    end.
-
--spec cookie_to_cluster_id({integer(), integer(), integer()}) -> binary().
-cookie_to_cluster_id({L, M, N} = Cookie) when is_integer(L),
-                                              is_integer(M),
-                                              is_integer(N) ->
-    Bin = crypto:hash(sha3_224, term_to_binary(Cookie)),
-    base64:encode(Bin, #{padding => false, mode => urlsafe}).
 
 %%================================================================================
 %% Internal functions
@@ -275,9 +211,8 @@ setup_classy() ->
     application:set_env(classy, discovery_complete_sets, [core]),
     %% Register hooks:
     Prio = 9999,
-    [ classy:on_create_site(fun mria_mnesia:on_create_site/1, Prio)
-      %% Info:
-    , classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
+    [ %% Info:
+      classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
       %% Clustering:
     , classy:on_create_cluster(fun ?MODULE:on_create_cluster/2, Prio)
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
