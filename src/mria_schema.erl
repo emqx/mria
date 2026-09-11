@@ -617,8 +617,6 @@ is_node_pattern(L) when is_list(L) ->
 is_node_pattern(_) ->
     false.
 
-%% Dialyzer complains about `Other' case, thinking that it won't happen.
--dialyzer({nowarn_function, [copy_table/2]}).
 copy_table(Table, Storage) ->
     case mria_rlog:role() of
         core ->
@@ -628,9 +626,7 @@ copy_table(Table, Storage) ->
                 {error, {Node, {already_exists, Node}}} ->
                     ok;
                 {error, Reason} ->
-                    {error, {failed_to_copy_table, Reason}};
-                Other ->
-                    {error, {failed_to_copy_table, Other}}
+                    {error, {failed_to_copy_table, Reason}}
             end;
         replicant ->
             ok
