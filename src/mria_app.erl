@@ -85,7 +85,6 @@ on_prep_stop(_Reason) ->
 
 -spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok.
 on_create_cluster(_, _) ->
-    %% TODO: migration. Erase schema.
     mria_mnesia:ensure_schema().
 
 -spec pre_join(classy:cluster_id(), classy:site(), node(), term()) -> ok | {error, _}.
