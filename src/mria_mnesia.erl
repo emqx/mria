@@ -29,8 +29,7 @@
 -include_lib("mnesia/src/mnesia.hrl").
 
 %% Start and stop mnesia
--export([ %% TODO: remove it
-          ensure_started/0
+-export([ ensure_started/0
         , ensure_stopped/0
         ]).
 
@@ -50,11 +49,10 @@
 
 %% Dir, schema and tables
 -export([ ensure_schema/0
-        , copy_schema/1
         , delete_schema/0
         , del_schema_copy/1
         , ensure_table_copy/2
-        , wait_for_tables/1
+        , wait_for_tables/1                     %
         ]).
 
 -export([ diagnosis/1
@@ -443,7 +441,7 @@ handle_call(#call_join{to = Node}, _From, S0) ->
     maybe
         {ok, S} ?= handle_ensure_started(S0),
         Reply = ?tp_span(debug, mria_mnesia_join, #{to => Node},
-                         ?LOCK([Node, node()], handle_join(Node))),
+                         handle_join(Node)),
         {reply, Reply, S}
     else
         Err ->
@@ -452,8 +450,7 @@ handle_call(#call_join{to = Node}, _From, S0) ->
 handle_call(#call_leave{}, _From, S0) ->
     maybe
         {ok, S} ?= handle_ensure_stopped(S0),
-        Reply = ?tp_span(debug, mria_mnesia_leave, #{},
-                         ?LOCK([node()], handle_leave())),
+        Reply = ?tp_span(debug, mria_mnesia_leave, #{}, handle_leave()),
         {reply, Reply, S}
     else
         Err ->
@@ -493,7 +490,7 @@ handle_ensure_started(S = #s{started = true}) ->
     {ok, S};
 handle_ensure_started(S = #s{started = false}) ->
     ?tp(notice, "Starting mnesia", #{}),
-    case do_ensure_started() of
+    case ?LOCK([node()], do_ensure_started()) of
         ok ->
             ?tp(notice, "Mnesia is running", #{}),
             {ok, S#s{started = true}};
@@ -539,10 +536,11 @@ handle_ensure_stopped(S = #s{started = true}) ->
 handle_join(Node) ->
     case {mria_config:role_(), mria_rlog:role(Node)} of
         {core, core} ->
-            maybe
-                ok ?= connect(Node),
-                ok ?= copy_schema(node())
-            end;
+            ?LOCK([node(), Node],
+                  maybe
+                      ok ?= connect(Node),
+                      ok ?= copy_schema(node())
+                  end);
         {Role1, Role2} ->
             {error, {bad_roles, Role1, Role2}}
     end.
