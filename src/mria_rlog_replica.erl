@@ -494,9 +494,10 @@ enter_normal(D = #d{shard = Shard, agent = Agent, is_merge_shard = IsMerge}) ->
            set_where_to_read(Shard, node()),
            mria_status:notify_shard_up(Shard, Agent)
        end,
-    ?tp(notice, "Shard fully up",
+    ?tp(notice, "Shard replica ready",
         #{ node => node()
          , shard => D#d.shard
+         , upstream => node(Agent)
          }),
     keep_state_and_data.
 

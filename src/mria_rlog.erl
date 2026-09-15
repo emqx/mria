@@ -24,6 +24,7 @@
 
         , role/0
         , role/1
+        , roles/1
         , backend/0
 
         , core_nodes/0
@@ -120,6 +121,22 @@ role(Node) ->
         core -> core;
         replicant -> replicant
     end.
+
+-spec roles([node()]) -> [{node(), mria_rlog:role() | undefined}].
+roles(Nodes) ->
+    Results = erpc:multicall(Nodes, ?MODULE, role, []),
+    lists:zipwith(
+      fun(Node, Result) ->
+              case Result of
+                  {ok, Role} when Role =:= core;
+                                  Role =:= replicant ->
+                      {Node, Role};
+                  _ ->
+                      {Node, undefined}
+              end
+      end,
+      Nodes,
+      Results).
 
 -spec shard_writes(shard()) -> {ok, shard_writes()} | {aborted, _}.
 shard_writes(Shard) ->

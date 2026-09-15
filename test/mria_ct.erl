@@ -76,7 +76,7 @@ setup_init_hooks({_Cluster, Site}) ->
                         end,
                         0),
     %% Imitate business applications:
-    classy:run_level(fun ?MODULE:on_run_level/2, 0).
+    classy:on_run_level(fun ?MODULE:on_run_level/2, 0).
 
 on_run_level(single, cluster) ->
     ?tp_span(warning, initializing_run_level, #{node => node()},

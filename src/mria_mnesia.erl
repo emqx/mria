@@ -14,29 +14,27 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
-%% @private Internal functions for manipulating Mnesia schema.
-%%
-%% Functions in this module don't interact with Mria processes,
-%% application callbacks, etc. so DON'T USE them directly.
-%%
 -module(mria_mnesia).
+-moduledoc """
+Internal functions for manipulating Mnesia schema.
 
--behavior(gen_server).
+Functions in this module don't interact with Mria processes,
+application callbacks, etc. so DON'T USE them directly.
+""".
 
 -include("mria.hrl").
--include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
 -include_lib("mnesia/src/mnesia.hrl").
 
-%% Start and stop mnesia
--export([ ensure_started/0
-        , ensure_stopped/0
+%% Classy hooks
+-export([ on_run_level/2
+        , on_leave/3
+        , post_join/2
+        , on_create_cluster/2
         ]).
 
 %% Mnesia Cluster API
--export([ join_cluster/1
-        , leave_cluster/1
-        , cluster_info/0
+-export([ cluster_info/0
         , cluster_status/1
         , cluster_view/0
         , cluster_nodes/1
@@ -48,11 +46,10 @@
         ]).
 
 %% Dir, schema and tables
--export([ ensure_schema/0
-        , delete_schema/0
-        , del_schema_copy/1
+-export([ del_schema_copy/1
         , ensure_table_copy/2
-        , wait_for_tables/1                     %
+        , wait_for_tables/1
+        , on_peer_leave/1
         ]).
 
 -export([ diagnosis/1
@@ -65,15 +62,6 @@
         , clear_table_int/2
         , get_internals/0
         , schema_cookie/0
-        ]).
-
-%% gen_server
--export([ start_link/0
-        , init/1
-        , handle_call/3
-        , handle_cast/2
-        , handle_info/2
-        , terminate/2
         ]).
 
 %% Various internal types
@@ -92,7 +80,8 @@
 
 -type record() :: tuple().
 
--type op() :: {{mria:table(), _Key}, record(), mria_rlog:change_type()}.
+-type op(Key) :: {{mria:table(), Key}, record(), mria_rlog:change_type()}.
+-type op() :: op(term()).
 
 -type commit_records() :: #{ node => node()
                            , ram_copies => list()
@@ -102,50 +91,89 @@
                            , schema_ops => list()
                            }.
 
--define(SERVER, ?MODULE).
-
--record(call_ensure_started, {}).
--record(call_ensure_stopped, {}).
--record(call_join, {to :: node()}).
--record(call_leave, {}).
-
 -define(LOCK(NODES, BODY), with_schema_lock(NODES, fun() -> BODY end)).
 
 %%--------------------------------------------------------------------
-%% Start and init mnesia
+%% API
 %%--------------------------------------------------------------------
 
-%% @doc Initialize Mnesia
--spec ensure_schema() -> ok | {error, _}.
-ensure_schema() ->
-    ?tp(debug, "Ensure mnesia schema", #{}),
+-spec on_run_level(classy:run_level(), classy:run_level()) -> ok | {error, _}.
+on_run_level(stopped, single) ->
     maybe
-        ok ?= ensure_data_dir(),
-        init_schema()
+        ?tp(notice, "Starting mnesia", #{}),
+        pre_start_recover(mria_config:role()),
+        ok ?= do_start_mnesia(),
+        ?tp(notice, "Mnesia is running", #{})
+    else
+        Err ->
+            case Err of
+                {error, Reason} -> ok;
+                Reason -> ok
+            end,
+            ?tp(critical, "Failed to start mnesia", #{reason => Reason})
+    end;
+on_run_level(single, stopped) ->
+    maybe
+        ?tp(notice, "Stopping mnesia", #{}),
+        ok ?= do_stop_mnesia(),
+        ?tp(notice, "Mnesia is stopped", #{})
+    else
+        Err ->
+            case Err of
+                {error, Reason} -> ok;
+                Reason -> ok
+            end,
+            ?tp(critical, "Failed to stop mnesia", #{reason => Reason})
+    end;
+on_run_level(_, _) ->
+    ok.
+
+-spec on_peer_leave(classy:site()) -> ok.
+on_peer_leave(Site) ->
+    maybe
+        true ?= is_running(),
+        core ?= mria_config:role(),
+        {ok, Node} ?= classy:node_of_site(Site, false),
+        Peers = cluster_nodes(running) -- [Node],
+        true ?= is_node_in_cluster(Node),
+        ?LOCK(Peers,
+              maybe
+                  del_schema_copy(Node),
+                  ?tp(notice, mria_remove_peer_core, #{node => Node})
+              end)
     end.
 
-ensure_started() ->
-    gen_server:call(?SERVER, #call_ensure_started{}, infinity).
+-spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok | {error, _}.
+on_create_cluster(_Cluster, _Local) ->
+    %% Note: not deleting the existing schema so the upgrade from previous mria versions works
+    ensure_schema().
 
--spec(ensure_stopped() -> ok | {error, any()}).
-ensure_stopped() ->
-    gen_server:call(?SERVER, #call_ensure_stopped{}, infinity).
+-doc """
+Delete the schema.
+""".
+-spec on_leave(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
+on_leave(Cluster, _Site, Intent) ->
+    false = is_running(), % assert
+    case do_delete_schema() of
+        ok ->
+            ok;
+        Err2 ->
+            ?tp(critical, mria_failed_to_delete_schema,
+                #{ reason => Err2
+                 , intent => Intent
+                 , cluster => Cluster
+                 })
+    end.
 
-%%--------------------------------------------------------------------
-%% Cluster mnesia
-%%--------------------------------------------------------------------
+-spec post_join(mria_rlog:role(), node()) -> ok | {error, _}.
+post_join(core, Node) ->
+    copy_schema([Node]);
+post_join(replicant, _Node) ->
+    ensure_schema().
 
-%% @doc Add the node to the cluster schema
--spec join_cluster(node()) -> ok | {error, _}.
-join_cluster(Node) when Node =/= node() ->
-    gen_server:call(?SERVER, #call_join{to = Node}, infinity).
-
-%% @doc This node try leave the cluster
--spec leave_cluster(classy:kick_intent()) -> ok | {error, any()}.
-leave_cluster(_Intent) ->
-    gen_server:call(?SERVER, #call_leave{}, infinity).
-
-%% @doc Cluster Info
+-doc """
+Return sorted lists of running and stopped Mnesia peers nodes.
+""".
 -spec cluster_info() -> map().
 cluster_info() ->
     Running = cluster_nodes(running),
@@ -154,8 +182,10 @@ cluster_info() ->
       stopped_nodes => lists:sort(Stopped)
      }.
 
-%% @doc Cluster status of the node
--spec(cluster_status(node()) -> running | stopped | false).
+-doc """
+Return status of a node from the Mnesia point of view.
+""".
+-spec cluster_status(node()) -> running | stopped | false.
 cluster_status(Node) ->
     case is_node_in_cluster(Node) of
         true ->
@@ -166,12 +196,18 @@ cluster_status(Node) ->
         false -> false
     end.
 
--spec(cluster_view() -> {[node()], [node()]}).
+-doc """
+Note: this function is an RPC target used by autoheal.
+""".
+-spec cluster_view() -> {[node()], [node()]}.
 cluster_view() ->
-    list_to_tuple([lists:sort([N || N <- cluster_nodes(Status)])
-                   || Status <- [running, stopped]]).
+    { lists:sort(cluster_nodes(running))
+    , lists:sort(cluster_nodes(stopped))
+    }.
 
-%% @doc Cluster nodes.
+-doc """
+Return list of Mnesia cluster nodes.
+""".
 -spec(cluster_nodes(all | running | stopped) -> [node()]).
 cluster_nodes(all) ->
     db_nodes();
@@ -180,23 +216,32 @@ cluster_nodes(running) ->
 cluster_nodes(stopped) ->
     cluster_nodes(all) -- cluster_nodes(running).
 
-%% @doc Running nodes.
--spec(running_nodes() -> list(node())).
+-doc """
+Running list of running Mnesia nodes.
+""".
+-spec running_nodes() -> [node()].
 running_nodes() ->
     mnesia:system_info(running_db_nodes).
 
-%% @doc List Mnesia DB nodes.  Used by `mria_lb' to check if nodes
-%% reported by core discovery callback are in the same cluster.  This
-%% should be called only on the core nodes themselves.
+-doc """
+List Mnesia DB nodes.
+
+Used by `mria_lb` to check if nodes reported by core discovery callback are in the same cluster.
+This should be called only on the core nodes themselves.
+""".
 db_nodes() ->
     mnesia:system_info(db_nodes).
 
-%% @doc Is this node in mnesia cluster?
+-doc """
+Return `true` if the local node is part of a larger Mnesia cluster.
+""".
 is_node_in_cluster() ->
     db_nodes() =/= [node()].
 
-%% @doc Is the node in mnesia cluster?
--spec(is_node_in_cluster(node()) -> boolean()).
+-doc """
+Return `true` if the node is a Mnesia peer of the local node.
+""".
+-spec is_node_in_cluster(node()) -> boolean().
 is_node_in_cluster(Node) when Node =:= node() ->
     is_node_in_cluster();
 is_node_in_cluster(Node) ->
@@ -206,13 +251,49 @@ is_node_in_cluster(Node) ->
 %% Dir and Schema
 %%--------------------------------------------------------------------
 
-%% @doc Copy schema.
-copy_schema(Node) ->
+-spec copy_schema([node()]) -> ok | {error, _}.
+copy_schema(Candidates0) ->
+    false = is_running(),
+    Candidates = lists:usort(Candidates0) -- [node()],
+    ?tp(debug, mria_mnesia_copy_schema, #{nodes => Candidates}),
+    %% FIXME: this function is unsafe if the nodes are allowed to
+    %% change their role from `core' to `replicant'. Propagation of
+    %% changes to the classy metadata can be delayed, so the node may
+    %% attempt to copy schema from a replicant. Protection by running
+    %% `mria_rlog:roles(...)' attempts to mitigate that, but that is
+    %% not fool proof:
+    Cores = [I || {I, core} <- mria_rlog:roles(Candidates)],
+    maybe
+        core ?= mria_config:role(),
+        [_ | _] ?= Cores,
+        ?LOCK([node() | Cores],
+              maybe
+                  %% Delete the old schema:
+                  ok ?= do_delete_schema(),
+                  %% Temporarily start Mnesia as a RAM node:
+                  ok ?= do_start_mnesia(),
+                  %% Add the remotes nodes as `extra_db_nodes' and change schema
+                  %% storage to `disc_copies':
+                  ok ?= do_connect(Cores),
+                  ok ?= persist_schema(),
+                  %% Shut down:
+                  ok ?= do_stop_mnesia()
+              end)
+    else
+        replicant ->
+            {error, {failed_to_copy_schema, replicant}};
+        [] ->
+            {error, {failed_to_copy_schema, no_core_nodes}};
+        {error, _} = Err ->
+            Err
+    end.
+
+persist_schema() ->
     ?tp(mria_mnesia_copy_schema, #{}),
-    case mnesia:change_table_copy_type(schema, Node, disc_copies) of
+    case mnesia:change_table_copy_type(schema, node(), disc_copies) of
         {atomic, ok} ->
             ok;
-        {aborted, {already_exists, schema, Node, disc_copies}} ->
+        {aborted, {already_exists, schema, _, disc_copies}} ->
             ok;
         {aborted, Error} ->
             {error, {failed_to_copy_schema, Error}}
@@ -323,15 +404,6 @@ diagnosis_tab(Tab) ->
             io_lib:format("Not able to read table info for ~p ~n", [Tab])
     end.
 
-%% @doc Force to delete schema.
-delete_schema() ->
-    case mnesia:delete_schema([node()]) of
-        ok ->
-            ok;
-        Other ->
-            {error, {failed_to_delete_schema, Other}}
-    end.
-
 %% @doc Delete schema copy
 del_schema_copy(Node) ->
     case mnesia:del_table_copy(schema, Node) of
@@ -417,98 +489,74 @@ schema_cookie() ->
     end.
 
 %%--------------------------------------------------------------------
-%% gen_server is used to serialize operations with the mnesia schema,
-%% and to start and stop mnesia.
-%% --------------------------------------------------------------------
-
--record(s, {started = false :: boolean()}).
-
--spec start_link() -> {ok, pid()}.
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-
-init(_) ->
-    process_flag(trap_exit, true),
-    handle_ensure_stopped(#s{started = true}).
-
-handle_call(#call_ensure_started{}, _From, S0) ->
-    {Reply, S} = handle_ensure_started(S0),
-    {reply, Reply, S};
-handle_call(#call_ensure_stopped{}, _From, S0) ->
-    {Reply, S} = handle_ensure_stopped(S0),
-    {reply, Reply, S};
-handle_call(#call_join{to = Node}, _From, S0) ->
-    maybe
-        {ok, S} ?= handle_ensure_started(S0),
-        Reply = ?tp_span(debug, mria_mnesia_join, #{to => Node},
-                         handle_join(Node)),
-        {reply, Reply, S}
-    else
-        Err ->
-            {reply, Err, S0}
-    end;
-handle_call(#call_leave{}, _From, S0) ->
-    maybe
-        {ok, S} ?= handle_ensure_stopped(S0),
-        Reply = ?tp_span(debug, mria_mnesia_leave, #{}, handle_leave()),
-        {reply, Reply, S}
-    else
-        Err ->
-            {reply, Err, S0}
-    end;
-handle_call(Call, From, S) ->
-    ?unexpected_event_tp(#{ event_type => {call, From}
-                          , event => Call
-                          , state => S
-                          }),
-    {reply, {error, unknown_call}, S}.
-
-handle_cast(Cast, S) ->
-    ?unexpected_event_tp(#{ event_type => cast
-                          , event => Cast
-                          , state => S
-                          }),
-    {noreply, S}.
-
-handle_info(Info, S) ->
-    ?unexpected_event_tp(#{ event_type => info
-                          , event => Info
-                          , state => S
-                          }),
-    {noreply, S}.
-
-terminate(_Reason, S) ->
-    _ = handle_ensure_stopped(S),
-    ?terminate_tp,
-    ok.
-
-%%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
 
-handle_ensure_started(S = #s{started = true}) ->
-    {ok, S};
-handle_ensure_started(S = #s{started = false}) ->
-    ?tp(notice, "Starting mnesia", #{}),
-    case ?LOCK([node()], do_ensure_started()) of
+-doc """
+Try to recover from the situation when Mnesia directory has been nuked.
+""".
+pre_start_recover(core) ->
+    false = is_running(), % assert
+    maybe_set_master_nodes(),
+    case {has_schema(), classy:nodes(core) -- [node()]} of
+        {false, []} ->
+            ensure_schema();
+        {false, Nodes} ->
+            copy_schema(Nodes);
+        {true, _} ->
+            ok
+    end;
+pre_start_recover(replicant) ->
+    ensure_schema().
+
+-spec ensure_schema() -> ok.
+ensure_schema() ->
+    false = is_running(), % assert
+    ok = ensure_data_dir(),
+    case mnesia:create_schema([node()]) of
         ok ->
-            ?tp(notice, "Mnesia is running", #{}),
-            {ok, S#s{started = true}};
-        {error, {failed_to_start_mnesia, Reason}} = Err ->
-            ?tp(critical, "Failed to start mnesia", #{reason => Reason}),
-            {Err, S}
+            ?tp(notice, "Created new mnesia schema", #{node => node()}),
+            ok;
+        {error, {_, {already_exists, _}}} ->
+            ok;
+        Err ->
+            ?tp(critical, "Failed to create mnesia schema", #{result => Err, node => node()}),
+            Err
     end.
 
-do_ensure_started() ->
-    maybe
-        maybe_perform_disaster_recovery(),
-        ok ?= mnesia:start(),
-        {ok, _} = mria_mnesia_null_storage:register(),
-        register_rocksdb(),
-        ok ?= wait_for(start)
-    else
-        {error, Err} -> {error, {failed_to_start_mnesia, Err}};
-        Other        -> {error, {failed_to_start_mnesia, Other}}
+ensure_data_dir() ->
+    case filelib:ensure_dir(data_dir()) of
+        ok              -> ok;
+        {error, Reason} -> {error, {failed_to_create_mnesia_dir, Reason}}
+    end.
+
+maybe_set_master_nodes() ->
+    case os:getenv("MNESIA_MASTER_NODES") of
+        false ->
+            ok;
+        Str ->
+            {ok, Tokens, _} = erl_scan:string(Str),
+            MasterNodes = [A || {atom, _, A} <- Tokens],
+            set_master_nodes(MasterNodes)
+    end.
+
+set_master_nodes(MasterNodes) ->
+    logger:critical("Disaster recovery procedures have been enacted. "
+                    "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
+    mnesia:set_master_nodes(MasterNodes).
+
+-spec data_dir() -> string().
+data_dir() ->
+    mnesia:system_info(directory).
+
+do_start_mnesia() ->
+    case mnesia:start() of
+        ok ->
+            {ok, _} = mria_mnesia_null_storage:register(),
+            register_rocksdb(),
+            wait_for(start);
+        {error, Err} ->
+            {error, {failed_to_start_mnesia, Err}}
     end.
 
 -if(?MRIA_HAS_ROCKSDB == true).
@@ -520,85 +568,63 @@ register_rocksdb() ->
     ok.
 -endif.
 
-
-handle_ensure_stopped(S = #s{started = false}) ->
-    {ok, S};
-handle_ensure_stopped(S = #s{started = true}) ->
-    maybe
-        stopped ?= ?LOCK([node()], mnesia:stop()),
-        wait_for(stop),
-        {ok, S#s{started = false}}
-    else
-        Err ->
-            {Err, S}
+do_stop_mnesia()     ->
+    case mnesia:stop() of
+        stopped      -> wait_for(stop);
+        {error, Err} -> {error, {failed_to_stop_mnesia, Err}}
     end.
 
-handle_join(Node) ->
-    case {mria_config:role_(), mria_rlog:role(Node)} of
-        {core, core} ->
-            ?LOCK([node(), Node],
-                  maybe
-                      ok ?= connect(Node),
-                      ok ?= copy_schema(node())
-                  end);
-        {Role1, Role2} ->
-            {error, {bad_roles, Role1, Role2}}
-    end.
-
-handle_leave() ->
-    case running_nodes() -- [node()] of
-        [] ->
-            %% Not in cluster:
+do_delete_schema() ->
+    case mnesia:delete_schema([node()]) of
+        ok ->
             ok;
-        Nodes ->
-            do_leave_cluster(Nodes)
+        Other ->
+            {error, {failed_to_delete_schema, Other}}
     end.
 
--spec connect(node()) -> ok | {error, any()}.
-connect(Node) ->
-    ?tp(mria_mnesia_connect, #{to => Node}),
-    case mnesia:change_config(extra_db_nodes, [Node]) of
-        {ok, [Node]}   -> ok;
-        {ok, []}       -> {error, {failed_to_connect_node, Node, not_connected}};
-        {error, Error} -> {error, {failed_to_connect_node, Node, Error}};
-        Error          -> {error, {failed_to_connect_node, Node, Error}}
+-doc """
+Return `true` if the local node is running Mnesia.
+""".
+is_running_db_node(Node) ->
+    lists:member(Node, running_nodes()).
+
+%% TODO: remove, rely on classy on_membership_change
+%% -spec do_leave_cluster([node()]) -> ok | {error, any()}.
+%% do_leave_cluster([]) ->
+%%     {error, {failed_to_leave_cluster, no_running_nodes}};
+%% do_leave_cluster([Node | Rest]) ->
+%%     case is_running_db_node(Node) andalso Node =/= node() of
+%%         true ->
+%%             try erpc:call(Node, ?MODULE, del_schema_copy, [node()]) of
+%%                 ok ->
+%%                     ok;
+%%                 {error, Error} ->
+%%                     ?tp(info, mria_do_leave_fail, #{node => Node, reason => Error}),
+%%                     do_leave_cluster(Rest)
+%%             catch
+%%                 EC:Err:Stack ->
+%%                     ?tp(info, mria_do_leave_fail, #{node => Node, EC => Err, stack => Stack}),
+%%                     do_leave_cluster(Rest)
+%%             end;
+%%         false ->
+%%             do_leave_cluster(Rest)
+%%     end.
+
+-spec with_schema_lock([node()], fun(() -> A)) -> A.
+with_schema_lock(Nodes, Fun) ->
+    global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes, infinity).
+
+has_schema() ->
+    case schema_cookie() of
+        {ok, _}   -> true;
+        undefined -> false
     end.
 
-%% @doc Data dir
--spec(data_dir() -> string()).
-data_dir() -> mnesia:system_info(directory).
+is_running() ->
+    mnesia:system_info(is_running) =:= yes.
 
-%% @private
-ensure_data_dir() ->
-    case filelib:ensure_dir(data_dir()) of
-        ok              -> ok;
-        {error, Reason} -> {error, {failed_to_create_mnesia_dir, Reason}}
-    end.
-
--spec init_schema() -> ok | {error, _}.
-init_schema() ->
-    IsAlone = case mnesia:system_info(extra_db_nodes) of
-                  []    -> true;
-                  [_|_] -> false
-              end,
-    case (mria_config:role() =:= replicant) orelse IsAlone of
-        true ->
-            case mnesia:create_schema([node()]) of
-                ok ->
-                    ?tp(notice, "Created new mnesia schema", #{}),
-                    SchemaStatus = ok;
-                {error, {Node, {already_exists, Node}}} ->
-                    SchemaStatus = ok;
-                SchemaStatus ->
-                    ?tp(critical, "Failed to create mnesia schema", #{result => SchemaStatus})
-            end,
-            SchemaStatus;
-        false ->
-            ok
-    end.
-
-%% @doc Wait for mnesia to start, stop or tables ready.
--spec(wait_for(start | stop | tables) -> ok | {error, Reason :: term()}).
+%% @doc Wait for mnesia to start or stop
+-spec wait_for(start | stop) -> ok | {error, Reason :: term()}.
 wait_for(start) ->
     case mnesia:system_info(is_running) of
         yes      -> ok;
@@ -614,46 +640,11 @@ wait_for(stop) ->
         stopping -> timer:sleep(1000), wait_for(stop)
     end.
 
-%% @doc Is running db node.
-is_running_db_node(Node) ->
-    lists:member(Node, running_nodes()).
-
--spec do_leave_cluster([node()]) -> ok | {error, any()}.
-do_leave_cluster([]) ->
-    {error, {failed_to_leave_cluster, no_running_nodes}};
-do_leave_cluster([Node | Rest]) ->
-    case is_running_db_node(Node) andalso Node =/= node() of
-        true ->
-            try erpc:call(Node, ?MODULE, del_schema_copy, [node()]) of
-                ok ->
-                    ok;
-                {error, Error} ->
-                    ?tp(info, mria_do_leave_fail, #{node => Node, reason => Error}),
-                    do_leave_cluster(Rest)
-            catch
-                EC:Err:Stack ->
-                    ?tp(info, mria_do_leave_fail, #{node => Node, EC => Err, stack => Stack}),
-                    do_leave_cluster(Rest)
-            end;
-        false ->
-            do_leave_cluster(Rest)
+-spec do_connect([node()]) -> ok | {error, {failed_to_connect_node, _}}.
+do_connect(Nodes) ->
+    case mnesia:change_config(extra_db_nodes, Nodes) of
+        {ok, [_|_]}    -> ok;
+        {ok, []}       -> {error, {failed_to_connect_node, Nodes, not_connected}};
+        {error, Error} -> {error, {failed_to_connect_node, Nodes, Error}};
+        Error          -> {error, {failed_to_connect_node, Nodes, Error}}
     end.
-
-maybe_perform_disaster_recovery() ->
-    case os:getenv("MNESIA_MASTER_NODES") of
-        false ->
-            ok;
-        Str ->
-            {ok, Tokens, _} = erl_scan:string(Str),
-            MasterNodes = [A || {atom, _, A} <- Tokens],
-            perform_disaster_recovery(MasterNodes)
-    end.
-
-perform_disaster_recovery(MasterNodes) ->
-    logger:critical("Disaster recovery procedures have been enacted. "
-                    "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
-    mnesia:set_master_nodes(MasterNodes).
-
--spec with_schema_lock([node()], fun(() -> A)) -> A.
-with_schema_lock(Nodes, Fun) ->
-    global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes, infinity).
