@@ -244,7 +244,8 @@ join(Node, heal) when is_atom(Node) ->
         ok ?= classy:at_lower_level(
                 stopped,
                 fun() ->
-                        Result = mria_mnesia:join_cluster(Node),
+                        %% FIXME: check role properly
+                        Result = mria_mnesia:post_join(core, Node),
                         Parent ! {Ref, Result}
                 end),
         receive

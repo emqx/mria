@@ -21,7 +21,7 @@
 -export([start_link/0, stop/0, launch_rlog/0, terminate_rlog/0, is_running/0]).
 -export([start_link_rlog/0]).
 
--export([init/1, post_init/1]).
+-export([init/1]).
 
 -include("mria_rlog.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
@@ -70,22 +70,13 @@ stop() ->
 is_running() ->
     is_pid(whereis(?rlog)).
 
-post_init(Parent) ->
-    proc_lib:init_ack(Parent, {ok, self()}),
-    %% Exec the start callback, but first make sure the schema is in
-    %% sync:
-    maybe
-        ok ?= mria_rlog:wait_for_shards([?mria_meta_shard], infinity),
-        ?tp(notice, "Mria is running", #{})
-    end.
-
 -spec init(?top | ?rlog) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init(?top) ->
     SupOpts = #{ strategy => rest_for_one
                , intensity => 0
                , period => 3600
                },
-    Children = [mria_mnesia()],
+    Children = [child(mria_event_buffer, worker)],
     {ok, {SupOpts, Children}};
 init(?rlog) ->
     SupOpts = #{ strategy => one_for_all
@@ -96,7 +87,6 @@ init(?rlog) ->
                , child(mria_schema, worker)
                , child(mria_membership_sup, supervisor)
                , child(mria_rlog_sup, supervisor)
-               , post_init_child()
                ],
     {ok, {SupOpts, Children}}.
 
@@ -116,23 +106,3 @@ child(Mod, supervisor) ->
        type     => supervisor,
        modules  => [Mod]
       }.
-
-mria_mnesia() ->
-    #{id       => mria_mnesia,
-      start    => {mria_mnesia, start_link, []},
-      restart  => permanent,
-      shutdown => infinity,
-      type     => worker,
-      modules  => [mria_mnesia]
-     }.
-
-%% Simple worker process that runs the start callback. We put it into
-%% the supervision tree to make sure it doesn't outlive mria app
-post_init_child() ->
-    #{ id => post_init
-     , start => {proc_lib, start_link, [?MODULE, post_init, [self()]]}
-     , restart => temporary
-     , shutdown => 5_000
-     , type => worker
-     , modules => []
-     }.
