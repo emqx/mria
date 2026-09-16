@@ -415,6 +415,7 @@ test_member_is_stopped_node_observes(WaitKind, StopNode, ObserveNode, AssertF) -
                             <- erpc:call(ObserveNode, mria_membership, AssertF, [])
                              , N =:= StopNode]),
     wait_action(mria_membership_insert, StopNode, ObserveNode, up, ?MODULE, start_apps, []),
+    ct:sleep(100),
     ?assertEqual( [running]
                 , [S || #member{node = N, mnesia = S}
                             <- erpc:call(ObserveNode, mria_membership, AssertF, [])
@@ -519,8 +520,10 @@ make_2c2r_cluster() ->
     Nodes.
 
 stop_apps() ->
-    classy:prep_stop(),
+    classy:stop_system(),
+    application:stop(mria),
     application:stop(classy).
 
 start_apps() ->
-    application:start(classy).
+    application:ensure_all_started(mria),
+    classy:start_system().

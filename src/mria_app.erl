@@ -24,12 +24,9 @@
 
 %% Classy hooks
 -export([ on_run_level/2
-        , on_node_init/0
-        , on_create_cluster/2
         , pre_join/4
         , post_join/4
         , on_kick_decided/3
-        , on_leave/3
         , enrich_site_info/1
         , on_node_classify/1
         , on_membership_change/4
@@ -38,23 +35,19 @@
 
 -include_lib("snabbkaffe/include/trace.hrl").
 -include("mria.hrl").
+-include("mria_rlog.hrl").
 
 %%================================================================================
 %% Application callbacks
 %%================================================================================
 
 start(_Type, _Args) ->
-    ?tp(notice, "Starting mria", #{env => application:get_all_env(mria)}),
+    %% Note: real start of the application happens in `on_run_level'
+    %% callback. Here we just establish hooks.
+    setup_classy(),
     mria_config:load_config(),
     mria_rlog:init(),
-    ?tp(notice, "Starting mnesia", #{}),
-    maybe_perform_disaster_recovery(),
-    maybe
-        ok ?= mria_mnesia:ensure_schema(),
-        ok ?= mria_mnesia:ensure_started(),
-        ?tp(notice, "Starting shards", #{}),
-        mria_sup:start_link()
-    end.
+    mria_sup:start_link().
 
 stop(_) ->
     mria_config:erase_all_config(),
@@ -72,27 +65,25 @@ ready() ->
 %% Classy hooks
 %%================================================================================
 
-%% @doc This function must be called to enable mria
-on_node_init() ->
-    _ = install_hooks(9999),
-    application:set_env(classy, to_cluster_sets, [core]),
-    application:set_env(classy, discovery_complete_sets, [core]),
-    ok.
-
 on_run_level(stopped, single) ->
-    {ok, _Apps} = application:ensure_all_started(mria),
-    ok;
+    ?tp(notice, "Starting mria", #{role => mria_config:role()}),
+    classy_site_metadata:c_set(
+      mria,
+      #{ role => mria_rlog:role()
+       , vsn => mria_rlog:get_protocol_version()
+       }),
+    ok = mria_sup:launch_rlog(),
+    Ret = mria_rlog:wait_for_shards([?mria_meta_shard], 5_000),
+    ?tp(notice, "Mria is running", #{ret => Ret});
 on_run_level(single, stopped) ->
-    mria:stop();
+    ?tp(notice, "Stopping mria", #{}),
+    mria_sup:terminate_rlog(),
+    ?tp(notice, "Mria is stopped", #{});
 on_run_level(_, _) ->
     ok.
 
 on_prep_stop(_Reason) ->
     mria_status:prep_restart().
-
--spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok.
-on_create_cluster(_, _) ->
-    mria_mnesia:ensure_schema().
 
 -spec pre_join(classy:cluster_id(), classy:site(), node(), term()) -> ok | {error, _}.
 pre_join(_Cluster, _RemoteSite, Node, _Intent) when is_atom(Node) ->
@@ -115,25 +106,27 @@ pre_join(_, _, Node, _) ->
 
 -spec post_join(classy:cluster_id(), classy:site(), node(), term()) -> ok.
 post_join(_Cluster, _Local, Node, Intent) ->
-    Role = mria_config:role_(),
-    case {Role, mria_mnesia:is_in_old_cluster(Node)} of
-        {core, false} ->
-            ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+    Role = mria_config:role(),
+    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
+    case Role of
+        core ->
             try mria_membership:announce(Intent)
             catch
                 _:_ -> ok
-            end,
-            Result = join_trans(Node),
-            ?tp(notice, "Mria has joined the cluster",
-                #{ seed   => Node
-                 , result => Result
-                 });
-        {core, true} ->
-            %% Migration from cluster management via mnesia schema to classy:
-            ?tp(notice, "Mria: already in cluster (migrated)", #{seed => Node}),
-            mria_mnesia:finish_migration();
-        {replicant, _} ->
+            end;
+        replicant ->
             ok
+    end,
+    case mria_mnesia:post_join(Role, Node) of
+        ok ->
+            ?tp(notice, "Mria has joined the cluster",
+                #{ seed => Node
+                 });
+        {error, Err} ->
+            ?tp(critical, "Failed to join the cluster",
+                #{ seed   => Node
+                 , result => Err
+                 })
     end.
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
@@ -161,7 +154,7 @@ on_kick_decided(_ClusterId, TargetSite, Intent) ->
             ?tp(critical, mria_failed_to_kick_remote, #{site => TargetSite, reason => Other, intent => Intent})
     end.
 
--spec enrich_site_info(map()) -> map().
+-spec enrich_site_info(classy:site_metadata()) -> classy:site_metadata().
 enrich_site_info(I) ->
     I#{mria => #{ role => mria_rlog:role()
                 , vsn => mria_rlog:get_protocol_version()
@@ -178,107 +171,35 @@ on_node_classify(#{mria := #{role := Role, vsn := Vsn}}) ->
 on_node_classify(#{}) ->
     [].
 
+on_membership_change(_Cluster, Local, Remote, false) when Remote =/= Local ->
+    mria_mnesia:on_peer_leave(Remote);
 on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
     ok.
-
--spec on_leave(classy:cluster_id(), classy:site(), term()) -> ok.
-on_leave(Cluster, _Site, Intent) ->
-    %% Check if migration is in progress. If local is joining the
-    %% remote node that has been part of the mnesia cluster before
-    %% migration to classy, then we should skip changes to the schema.
-    IsMigrating = case Intent of
-                      {join, #{node := Node}} ->
-                          mria_mnesia:is_in_old_cluster(Node);
-                      _ ->
-                          false
-                  end,
-    case mria_config:role_() of
-        core when IsMigrating ->
-            ?tp(notice, mria_leave_migration, #{}),
-            ok;
-        core ->
-            Result1 = maybe
-                          ok ?= mria_mnesia:ensure_stopped(),
-                          mria_mnesia:leave_cluster(Intent)
-                      end,
-            case Result1 of
-                ok ->
-                    ok;
-                Err1 ->
-                    ?tp(critical, mria_failed_to_leave_cluster,
-                        #{ reason => Err1
-                         , intent => Intent
-                         , cluster => Cluster
-                         })
-            end,
-            case mria_mnesia:delete_schema() of
-                ok ->
-                    ok;
-                Err2 ->
-                    ?tp(critical, mria_failed_to_delete_schema,
-                        #{ reason => Err2
-                         , intent => Intent
-                         , cluster => Cluster
-                         })
-            end;
-        _ ->
-            ok
-    end.
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
-maybe_perform_disaster_recovery() ->
-    case os:getenv("MNESIA_MASTER_NODES") of
-        false ->
-            ok;
-        Str ->
-            {ok, Tokens, _} = erl_scan:string(Str),
-            MasterNodes = [A || {atom, _, A} <- Tokens],
-            perform_disaster_recovery(MasterNodes)
-    end.
-
-perform_disaster_recovery(MasterNodes) ->
-    logger:critical("Disaster recovery procedures have been enacted. "
-                    "Starting mnesia with explicitly set master nodes: ~p", [MasterNodes]),
-    mnesia:set_master_nodes(MasterNodes).
-
-install_hooks(Prio) ->
-    [ classy:on_create_site(fun mria_mnesia:on_create_site/1, Prio)
+setup_classy() ->
+    application:set_env(classy, to_cluster_sets, [core]),
+    application:set_env(classy, discovery_complete_sets, [core]),
+    %% Register hooks:
+    Prio = 9999,
+    PrioMnesia = Prio + 1,
+    [ %% Mnesia management:
+      classy:on_create_cluster(fun mria_mnesia:on_create_cluster/2, #{prio => PrioMnesia, timeout => infinity})
+    , classy:on_run_level(fun mria_mnesia:on_run_level/2, #{prio => PrioMnesia, timeout => infinity})
+    , classy:on_leave(fun mria_mnesia:on_leave/3, #{prio => -PrioMnesia, timeout => infinity})
       %% Info:
     , classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
       %% Clustering:
-    , classy:on_create_cluster(fun ?MODULE:on_create_cluster/2, Prio)
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
     , classy:post_join(fun ?MODULE:post_join/4, Prio)
     , classy:on_kick_decided(fun ?MODULE:on_kick_decided/3, Prio)
-    , classy:on_leave(fun ?MODULE:on_leave/3, -Prio)
     , classy:on_membership_change(fun ?MODULE:on_membership_change/4, Prio)
     , classy:on_node_classify(fun ?MODULE:on_node_classify/1, Prio)
       %% Run level:
-    , classy:run_level(fun ?MODULE:on_run_level/2, Prio)
+    , classy:on_run_level(fun ?MODULE:on_run_level/2, #{prio => Prio, timeout => infinity})
       %% Shutdown:
     , classy:on_prep_stop(fun ?MODULE:on_prep_stop/1, Prio)
     ].
-
-join_trans(Node) ->
-    %% NOTE
-    %%
-    %% If two nodes are trying to join each other simultaneously,
-    %% one of them must be blocked waiting for a lock.
-    %% Once lock is released, it is expected to be already in the
-    %% cluster (if the other node joined it successfully).
-    %%
-    %% Additionally, avoid conducting concurrent join operations
-    %% by specifying current process PID as the lock requester.
-    %% Otherwise, concurrent joins can ruin each other's lives and
-    %% make any further cluster operations impossible.
-    %% This can happen, for example, when a concurrent join stops the
-    %% entire `mnesia` system while another join is running schema
-    %% transactions.
-    mria_mnesia:with_schema_lock(
-      fun() ->
-              mria_mnesia:join_cluster(Node)
-      end,
-      [node(), Node]).
