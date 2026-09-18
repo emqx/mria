@@ -550,6 +550,7 @@ data_dir() ->
     mnesia:system_info(directory).
 
 do_start_mnesia() ->
+    application:set_env(mnesia, net_kernel_module, mria_mnesia_net_kernel),
     case mnesia:start() of
         ok ->
             {ok, _} = mria_mnesia_null_storage:register(),
