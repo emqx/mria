@@ -200,20 +200,25 @@ is_peer_alive(Node) ->
         {ok, Result}
     end.
 
-%% @doc Running nodes.
-%% This function should be used with care, as it may not return the most up-to-date
-%% view of replicant nodes, as changes in mria_membership are reflected asynchronously.
-%% For example:
-%% - a core node leaves the cluster and joins it back quickly,
-%% - a replicant node receives monitor DOWN message (see mria_membership)
-%%   and marks the core node as leaving/stopped,
-%% - mria_lb on the replicant re-discovers the core node (rlog_lb_update_interval),
-%% - the replicant pings the core, the core pongs the replicant,
-%%   now each nodes shows the other one as running.
--spec running_nodes() -> list(node()).
+-doc """
+Return list of running Mria nodes.
+
+This function should be used with care, as it may not return the most up-to-date
+view of replicant nodes, as changes in mria_membership are reflected asynchronously.
+For example:
+
+- a core node leaves the cluster and joins it back quickly,
+- a replicant node receives monitor DOWN message (see mria_membership)
+  and marks the core node as leaving/stopped,
+- mria_lb on the replicant re-discovers the core node (rlog_lb_update_interval),
+- the replicant pings the core, the core pongs the replicant,
+  now each nodes shows the other one as running.
+""".
+-spec running_nodes() -> [node()].
 running_nodes() ->
     CoreNodes = case mria_rlog:role() of
-                    core -> mria_mnesia:running_nodes();
+                    core ->
+                        mria_mnesia:running_nodes();
                     replicant ->
                         %% Can be used on core node as well, eliminating this
                         %% case statement, but mria_mnesia:running_nodes/0
@@ -227,12 +232,14 @@ running_nodes() ->
 %% Cluster API
 %%--------------------------------------------------------------------
 
-%% @doc Join the cluster
 -spec join(node()) -> ok | ignore | {error, term()}.
 join(Node) ->
     join(Node, join).
 
-%% @doc Join the cluster
+-doc """
+This function exists for compatibility with old versions of mria,
+where autocluster may call it with reason `heal`.
+""".
 -spec join(node(), join_reason()) -> ok | ignore | {error, term()}.
 join(Node, heal) when is_atom(Node) ->
     %% Special case used by autoheal logic.
@@ -244,8 +251,12 @@ join(Node, heal) when is_atom(Node) ->
         ok ?= classy:at_lower_level(
                 stopped,
                 fun() ->
-                        %% FIXME: check role properly
-                        Result = mria_mnesia:post_join(core, Node),
+                        Result = try
+                                     mria_mnesia:post_join(mria_config:role(), Node)
+                                 catch
+                                     EC:Err:Stack ->
+                                         {error, {EC, Err, Stack}}
+                                 end,
                         Parent ! {Ref, Result}
                 end),
         receive

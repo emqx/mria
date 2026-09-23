@@ -1,7 +1,11 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(mria_event_buffer).
+-module(mria_cluster_manager).
+-moduledoc """
+The purpose of this module is to manage Mnesia schema on the core nodes
+and to converge it with the classy cluster view.
+""".
 
 -behavior(gen_statem).
 
@@ -18,8 +22,11 @@
 %% Type declarations
 %%================================================================================
 
--record(cast_member_leave, {site :: classy:site()}).
--record(call_active, {a :: boolean()}).
+-record(s_active, {}).
+-record(s_passive, {}).
+
+-record(cast_member_leave, {node :: node()}).
+-record(call_activate, {a :: boolean()}).
 
 -define(SERVER, ?MODULE).
 
@@ -31,38 +38,41 @@
 start_link() ->
     gen_statem:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec notify_member_leave(classy:site()) -> ok.
-notify_member_leave(Site) ->
-    gen_statem:cast(?SERVER, #cast_member_leave{site = Site}).
+-spec notify_member_leave(node()) -> ok.
+notify_member_leave(Node) ->
+    gen_statem:cast(?SERVER, #cast_member_leave{node = Node}).
 
 -spec activate() -> ok.
 activate() ->
-    gen_statem:call(?SERVER, #call_active{a = true}, infinity).
+    gen_statem:call(?SERVER, #call_activate{a = true}, infinity).
 
 -spec deactivate() -> ok.
 deactivate() ->
-    gen_statem:call(?SERVER, #call_active{a = false}, infinity).
+    gen_statem:call(?SERVER, #call_activate{a = false}, infinity).
 
 %%================================================================================
 %% behavior callbacks
 %%================================================================================
 
+-record(d, {}).
+
 callback_mode() ->
     [handle_event_function].
 
 init(_) ->
-    {ok, false, []}.
+    {ok, #s_passive{}, #d{}}.
 
-handle_event({call, From}, #call_active{a = true}, false, Data) ->
-    {next_state, true, Data, [{reply, From, ok}]};
-handle_event({call, From}, #call_active{a = false}, true, Data) ->
-    {next_state, false, Data, [{reply, From, ok}]};
-handle_event(cast, #cast_member_leave{site = Site}, State, _Data) ->
+handle_event({call, From}, #call_activate{a = true}, #s_passive{}, Data) ->
+    {next_state, #s_active{}, Data, {reply, From, ok}};
+handle_event({call, From}, #call_activate{a = false}, #s_passive{}, Data) ->
+    {next_state, #s_passive{}, Data, {reply, From, ok}};
+handle_event(cast, #cast_member_leave{node = Node}, State, _Data) ->
+    ?tp(notice, ohayo, #{s => State, peer => Node}),
     case State of
-        true ->
-            mria_mnesia:on_peer_leave(Site),
+        #s_active{} ->
+            mria_mnesia:on_peer_leave(Node),
             keep_state_and_data;
-        false ->
+        #s_passive{} ->
             {keep_state_and_data, postpone}
     end;
 handle_event(EventType, Event, State, Data) ->

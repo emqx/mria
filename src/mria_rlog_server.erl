@@ -106,7 +106,11 @@ bootstrap_me(RemoteNode, Shard) ->
 %% Called from mnesia post_commit hook:
 -spec dispatch(mria_rlog:shard(), mria_mnesia:tid(), mria_mnesia:commit_records()) -> ok.
 dispatch(Shard, Tid, Commit) ->
-    Shard ! {trans, Tid, Commit},
+    try
+        Shard ! {trans, Tid, Commit}
+    catch
+        _:_ -> ok
+    end,
     ok.
 
 %%================================================================================

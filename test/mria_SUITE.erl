@@ -282,8 +282,8 @@ t_remove_from_cluster(_) ->
                   ?ON(N1,
                       begin
                           %% Check cluster state:
-                          ?assertMatch([N1], mria:cluster_nodes(all)),
                           ?assertMatch([N1], mria:running_nodes()),
+                          ?assertMatch([N1], mria:cluster_nodes(all)),
                           %% Check mnesia schema:
                           ?assertMatch([N1], mria_mnesia:cluster_nodes(all)),
                           ?assertMatch([N1], mria_mnesia:cluster_nodes(running)),
@@ -300,12 +300,10 @@ t_remove_from_cluster(_) ->
                   ?ON(N0,
                       begin
                           %% Peer has been deleted from mnesia schema:
-                          ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(all))),
-                          ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(running))),
-                          ?assertMatch([], mria_mnesia:cluster_nodes(stopped)),
+                          ?assertMatch({[N0], []}, mria_mnesia:cluster_view()),
                           %% Cluster state:
-                          ?assertMatch([N0, N2, N3], mria:cluster_nodes(all)),
-                          ?assertMatch([N0, N2, N3], mria:running_nodes())
+                          ?assertMatch([N0, N2, N3], mria:running_nodes()),
+                          ?assertMatch([N0, N2, N3], mria:cluster_nodes(all))
                       end)),
            %% 2. Kick a replicant from the cluster:
            ok = ?ON(N0, mria:force_leave(N3)),
@@ -315,8 +313,8 @@ t_remove_from_cluster(_) ->
            ?retry(1000, 10,
                   ?ON(N3,
                       begin
-                          ?assertMatch([N3], mria:cluster_nodes(all)),
                           ?assertMatch([N3], mria:running_nodes()),
+                          ?assertMatch([N3], mria:cluster_nodes(all)),
                           ?assertMatch([], mria_mnesia:cluster_nodes(stopped))
                       end)),
            %% What its peers see:
@@ -326,8 +324,8 @@ t_remove_from_cluster(_) ->
                            %% Peer has been deleted from mnesia schema:
                            ?assertMatch([], mria:cluster_nodes(stopped)),
                            %% Cluster state:
-                           ?assertMatch([N0, N2], mria:cluster_nodes(all)),
-                           ?assertMatch([N0, N2], mria:running_nodes())
+                           ?assertMatch([N0, N2], mria:running_nodes()),
+                           ?assertMatch([N0, N2], mria:cluster_nodes(all))
                        end))
             || I <- [N0, N2]],
            ok

@@ -128,19 +128,18 @@ on_run_level(single, stopped) ->
 on_run_level(_, _) ->
     ok.
 
--spec on_peer_leave(classy:site()) -> ok.
-on_peer_leave(Site) ->
-    maybe
-        true ?= is_running(),
-        core ?= mria_config:role(),
-        {ok, Node} ?= classy:node_of_site(Site, false),
-        Peers = cluster_nodes(running) -- [Node],
-        true ?= is_node_in_cluster(Node),
-        ?LOCK(Peers,
-              maybe
-                  del_schema_copy(Node),
-                  ?tp(notice, mria_remove_peer_core, #{node => Node})
-              end)
+-spec on_peer_leave(node()) -> ok.
+on_peer_leave(Node) ->
+    case core =:= mria_config:role() of
+        true ->
+            Peers = cluster_nodes(running) -- [Node],
+            ?LOCK(Peers,
+                  begin
+                      Result = del_schema_copy(Node),
+                      ?tp(notice, mria_remove_peer_core, #{node => Node, result => Result})
+                  end);
+        false ->
+            ok
     end.
 
 -spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok | {error, _}.
@@ -154,6 +153,7 @@ Delete the schema.
 -spec on_leave(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_leave(Cluster, _Site, Intent) ->
     false = is_running(), % assert
+    do_leave_cluster([]), %% FIXME: remove
     case do_delete_schema() of
         ok ->
             ok;
@@ -277,7 +277,10 @@ copy_schema(Candidates0) ->
                   ok ?= do_connect(Cores),
                   ok ?= persist_schema(),
                   %% Shut down:
-                  ok ?= do_stop_mnesia()
+                  ok ?= do_stop_mnesia(),
+                  %% This config is no longer needed:
+                  mnesia:change_config(extra_db_nodes, []),
+                  ok
               end)
     else
         replicant ->
@@ -570,8 +573,10 @@ register_rocksdb() ->
 
 do_stop_mnesia()     ->
     case mnesia:stop() of
-        stopped      -> wait_for(stop);
-        {error, Err} -> {error, {failed_to_stop_mnesia, Err}}
+        stopped      ->
+            wait_for(stop);
+        {error, Err} ->
+            {error, {failed_to_stop_mnesia, Err}}
     end.
 
 do_delete_schema() ->
@@ -588,27 +593,26 @@ Return `true` if the local node is running Mnesia.
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
 
-%% TODO: remove, rely on classy on_membership_change
-%% -spec do_leave_cluster([node()]) -> ok | {error, any()}.
-%% do_leave_cluster([]) ->
-%%     {error, {failed_to_leave_cluster, no_running_nodes}};
-%% do_leave_cluster([Node | Rest]) ->
-%%     case is_running_db_node(Node) andalso Node =/= node() of
-%%         true ->
-%%             try erpc:call(Node, ?MODULE, del_schema_copy, [node()]) of
-%%                 ok ->
-%%                     ok;
-%%                 {error, Error} ->
-%%                     ?tp(info, mria_do_leave_fail, #{node => Node, reason => Error}),
-%%                     do_leave_cluster(Rest)
-%%             catch
-%%                 EC:Err:Stack ->
-%%                     ?tp(info, mria_do_leave_fail, #{node => Node, EC => Err, stack => Stack}),
-%%                     do_leave_cluster(Rest)
-%%             end;
-%%         false ->
-%%             do_leave_cluster(Rest)
-%%     end.
+-spec do_leave_cluster([node()]) -> ok | {error, any()}.
+do_leave_cluster([]) ->
+    {error, {failed_to_leave_cluster, no_running_nodes}};
+do_leave_cluster([Node | Rest]) ->
+    case is_running_db_node(Node) andalso Node =/= node() of
+        true ->
+            try erpc:call(Node, ?MODULE, del_schema_copy, [node()]) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    ?tp(info, mria_do_leave_fail, #{node => Node, reason => Error}),
+                    do_leave_cluster(Rest)
+            catch
+                EC:Err:Stack ->
+                    ?tp(info, mria_do_leave_fail, #{node => Node, EC => Err, stack => Stack}),
+                    do_leave_cluster(Rest)
+            end;
+        false ->
+            do_leave_cluster(Rest)
+    end.
 
 -spec with_schema_lock([node()], fun(() -> A)) -> A.
 with_schema_lock(Nodes, Fun) ->

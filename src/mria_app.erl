@@ -43,7 +43,7 @@
 
 start(_Type, _Args) ->
     %% Note: real start of the application happens in `on_run_level'
-    %% callback. Here we just establish hooks.
+    %% callback. Here we just establish the hooks.
     setup_classy(),
     mria_config:load_config(),
     mria_rlog:init(),
@@ -74,9 +74,11 @@ on_run_level(stopped, single) ->
        }),
     ok = mria_sup:launch_rlog(),
     Ret = mria_rlog:wait_for_shards([?mria_meta_shard], 5_000),
+    mria_cluster_manager:activate(),
     ?tp(notice, "Mria is running", #{ret => Ret});
 on_run_level(single, stopped) ->
     ?tp(notice, "Stopping mria", #{}),
+    mria_cluster_manager:deactivate(),
     mria_sup:terminate_rlog(),
     ?tp(notice, "Mria is stopped", #{});
 on_run_level(_, _) ->
@@ -172,7 +174,10 @@ on_node_classify(#{}) ->
     [].
 
 on_membership_change(_Cluster, Local, Remote, false) when Remote =/= Local ->
-    mria_mnesia:on_peer_leave(Remote);
+    maybe
+        {ok, Node} ?= classy:node_of_site(Remote, false),
+        mria_cluster_manager:notify_member_leave(Node)
+    end;
 on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
     ok.
 
