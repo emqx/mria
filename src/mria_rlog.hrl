@@ -1,6 +1,19 @@
 -ifndef(MRIA_RLOG_HRL).
 -define(MRIA_RLOG_HRL, true).
 
+-include_lib("classy/include/classy_rl.hrl").
+-include("mria.hrl").
+
+%% Run levels:
+%%   Start mnesia and the schema:
+-define(mria_rl_mnesia, (?mria_rl_ready - 7)).
+%%   Create internal tables:
+-define(mria_rl_create_schema, (?mria_rl_ready - 6)).
+%%   Wait for the internal tables:
+-define(mria_rl_schema, (?mria_rl_ready - 5)).
+
+%% Internal tables/shards
+
 -define(mria_meta_shard, '$mria_meta_shard').
 -define(schema, mria_schema).
 -define(rlog_sync, '$mria_rlog_sync').

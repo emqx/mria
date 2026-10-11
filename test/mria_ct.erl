@@ -21,6 +21,7 @@
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include_lib("stdlib/include/assert.hrl").
+-include_lib("classy/include/classy_rl.hrl").
 
 init_per_suite(Config) ->
     mria_ct:start_dist(),
@@ -78,12 +79,12 @@ setup_init_hooks({_Cluster, Site}) ->
     %% Imitate business applications:
     classy:on_run_level(fun ?MODULE:on_run_level/2, 0).
 
-on_run_level(single, cluster) ->
+on_run_level(enter, ?classy_rl_ready) ->
     ?tp_span(warning, initializing_run_level, #{node => node()},
              mria_transaction_gen:init());
-on_run_level(cluster, quorum) ->
+on_run_level(enter, ?classy_rl_quorum) ->
     optvar:set(test_mria_quorum, true);
-on_run_level(quorum, cluster) ->
+on_run_level(leave, ?classy_rl_quorum) ->
     optvar:unset(test_mria_quorum);
 on_run_level(_, _) ->
     ok.
