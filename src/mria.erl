@@ -234,24 +234,8 @@ join(Node) ->
 
 %% @doc Join the cluster
 -spec join(node(), join_reason()) -> ok | ignore | {error, term()}.
-join(Node, heal) when is_atom(Node) ->
-    %% Special case used by autoheal logic.
-    %% TODO: verify that node is in classy cluster
-    mria_status:prep_restart(),
-    maybe
-        Parent = alias([reply]),
-        Ref = make_ref(),
-        ok ?= classy:at_lower_level(
-                stopped,
-                fun() ->
-                        %% FIXME: check role properly
-                        Result = mria_mnesia:post_join(core, Node),
-                        Parent ! {Ref, Result}
-                end),
-        receive
-            {Ref, Result} -> Result
-        end
-    end;
+join(Winner, heal) when is_atom(Winner) ->
+    mria_cluster:netsplit_winner(Winner);
 join(Node, Reason) when is_atom(Node) ->
     classy:join_node(Node, Reason).
 

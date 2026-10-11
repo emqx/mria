@@ -76,7 +76,7 @@ init(?top) ->
                , intensity => 0
                , period => 3600
                },
-    Children = [child(mria_event_buffer, worker)],
+    Children = [child(mria_cluster, worker)],
     {ok, {SupOpts, Children}};
 init(?rlog) ->
     SupOpts = #{ strategy => one_for_all

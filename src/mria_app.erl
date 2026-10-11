@@ -25,7 +25,6 @@
 %% Classy hooks
 -export([ on_run_level/2
         , pre_join/4
-        , post_join/4
         , on_kick_decided/3
         , enrich_site_info/1
         , on_node_classify/1
@@ -65,20 +64,22 @@ ready() ->
 %% Classy hooks
 %%================================================================================
 
-on_run_level(stopped, single) ->
+on_run_level(enter, ?mria_rl_mnesia) ->
     ?tp(notice, "Starting mria", #{role => mria_config:role()}),
-    classy_site_metadata:c_set(
-      mria,
-      #{ role => mria_rlog:role()
-       , vsn => mria_rlog:get_protocol_version()
-       }),
-    ok = mria_sup:launch_rlog(),
+    mria_cluster:activate(),
+    ok;
+on_run_level(leave, ?mria_rl_mnesia) ->
+    ?tp(notice, "Stopping mria", #{}),
+    mria_cluster:deactivate(),
+    ?tp(notice, "Mria is stopped", #{});
+on_run_level(enter, ?mria_rl_create_schema) ->
+    ok = mria_sup:launch_rlog();
+on_run_level(leave, ?mria_rl_create_schema) ->
+    ok = mria_sup:terminate_rlog();
+on_run_level(enter, ?mria_rl_schema) ->
+    %% FIXME: use barriers instead:
     Ret = mria_rlog:wait_for_shards([?mria_meta_shard], 5_000),
     ?tp(notice, "Mria is running", #{ret => Ret});
-on_run_level(single, stopped) ->
-    ?tp(notice, "Stopping mria", #{}),
-    mria_sup:terminate_rlog(),
-    ?tp(notice, "Mria is stopped", #{});
 on_run_level(_, _) ->
     ok.
 
@@ -103,31 +104,6 @@ pre_join(_Cluster, _RemoteSite, Node, _Intent) when is_atom(Node) ->
     end;
 pre_join(_, _, Node, _) ->
     {error, {bad_node, Node}}.
-
--spec post_join(classy:cluster_id(), classy:site(), node(), term()) -> ok.
-post_join(_Cluster, _Local, Node, Intent) ->
-    Role = mria_config:role(),
-    ?tp(notice, "Mria is restarting to join the cluster", #{seed => Node}),
-    case Role of
-        core ->
-            try mria_membership:announce(Intent)
-            catch
-                _:_ -> ok
-            end;
-        replicant ->
-            ok
-    end,
-    case mria_mnesia:post_join(Role, Node) of
-        ok ->
-            ?tp(notice, "Mria has joined the cluster",
-                #{ seed => Node
-                 });
-        {error, Err} ->
-            ?tp(critical, "Failed to join the cluster",
-                #{ seed   => Node
-                 , result => Err
-                 })
-    end.
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_kick_decided(_ClusterId, TargetSite, Intent) ->
@@ -172,7 +148,11 @@ on_node_classify(#{}) ->
     [].
 
 on_membership_change(_Cluster, Local, Remote, false) when Remote =/= Local ->
-    mria_mnesia:on_peer_leave(Remote);
+    case classy:node_of_site(Remote, false) of
+        {ok, MaybeNode} -> ok;
+        _ -> MaybeNode = undefined
+    end,
+    mria_cluster:notify_member_leave(Remote, MaybeNode);
 on_membership_change(_Cluster, _Local, _Remote, _IsMember) ->
     ok.
 
@@ -185,21 +165,17 @@ setup_classy() ->
     application:set_env(classy, discovery_complete_sets, [core]),
     %% Register hooks:
     Prio = 9999,
-    PrioMnesia = Prio + 1,
     [ %% Mnesia management:
-      classy:on_create_cluster(fun mria_mnesia:on_create_cluster/2, #{prio => PrioMnesia, timeout => infinity})
-    , classy:on_run_level(fun mria_mnesia:on_run_level/2, #{prio => PrioMnesia, timeout => infinity})
-    , classy:on_leave(fun mria_mnesia:on_leave/3, #{prio => -PrioMnesia, timeout => infinity})
+      classy:on_create_cluster(fun mria_mnesia:on_create_cluster/2, #{prio => Prio, timeout => infinity})
+    , classy:on_leave(fun mria_mnesia:on_leave/3, #{prio => -Prio, timeout => infinity})
+    , classy:on_run_level(fun ?MODULE:on_run_level/2, #{prio => Prio, timeout => infinity})
       %% Info:
     , classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
       %% Clustering:
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
-    , classy:post_join(fun ?MODULE:post_join/4, Prio)
     , classy:on_kick_decided(fun ?MODULE:on_kick_decided/3, Prio)
     , classy:on_membership_change(fun ?MODULE:on_membership_change/4, Prio)
     , classy:on_node_classify(fun ?MODULE:on_node_classify/1, Prio)
-      %% Run level:
-    , classy:on_run_level(fun ?MODULE:on_run_level/2, #{prio => Prio, timeout => infinity})
       %% Shutdown:
     , classy:on_prep_stop(fun ?MODULE:on_prep_stop/1, Prio)
     ].

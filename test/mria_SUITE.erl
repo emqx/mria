@@ -134,8 +134,8 @@ t_bootstrap(_) ->
             %% Restart business apps on the replicant so it bootstraps again:
             ?tp(warning, "Restarting replicant!", #{}),
             ?ON(Replicant,
-                classy:at_lower_level(
-                  stopped,
+                classy_boot:at_lower_level(
+                  ?classy_rl_single,
                   fun() ->
                           ?tp(notice, test_restarted_mria, #{})
                   end)),
@@ -300,8 +300,8 @@ t_remove_from_cluster(_) ->
                   ?ON(N0,
                       begin
                           %% Peer has been deleted from mnesia schema:
-                          ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(all))),
                           ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(running))),
+                          ?assertMatch([N0], lists:sort(mria_mnesia:cluster_nodes(all))),
                           ?assertMatch([], mria_mnesia:cluster_nodes(stopped)),
                           %% Cluster state:
                           ?assertMatch([N0, N2, N3], mria:cluster_nodes(all)),
@@ -1245,7 +1245,7 @@ t_replicant_manual_join(_Config) ->
            ?tp(test_disconnect_node, #{node => N2}),
            ?wait_async_action(
               ?assertMatch(ok, rpc:call(N2, mria, leave, [])),
-              #{?snk_kind := classy_change_run_level, to := quorum, ?snk_meta := #{node := N2}}),
+              #{?snk_kind := classy_enter_run_level, n := ?classy_rl_quorum, ?snk_meta := #{node := N2}}),
            %%    - Rejoin the cluster
            ?tp(test_reconnect_node, #{node => N2}),
            ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
