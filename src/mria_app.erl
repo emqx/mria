@@ -58,7 +58,7 @@ stop(_) ->
 
 -spec ready() -> boolean().
 ready() ->
-    mria_rlog_sup:is_ready().
+    classy_boot:run_level(ready) >= ?mria_rl_ready.
 
 %%================================================================================
 %% Classy hooks
