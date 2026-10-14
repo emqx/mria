@@ -598,7 +598,7 @@ call_backend_rw(Shard, Module, Function, Args) ->
 -spec maybe_middleman(module(), atom(), list()) -> term().
 maybe_middleman(Mod, Fun, Args) ->
     {message_queue_len, MQL} = process_info(self(), message_queue_len),
-    MaxMQL = persistent_term:get({mria, max_mql}, 10),
+    MaxMQL = persistent_term:get({mria, max_mql}, 100),
     if MQL >= MaxMQL ->
             with_middleman(Mod, Fun, Args);
        true ->
