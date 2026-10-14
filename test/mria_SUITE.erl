@@ -1063,6 +1063,7 @@ t_mnesia_post_commit_hook(_) ->
 
            ok = create_persistence_type_test_tables(Nodes),
            mria_mnesia_test_util:wait_tables(Nodes),
+           ?tp(test_begin, #{}),
            %% write some records starting on one of the replicas
            {atomic, _} = rpc:call(N3, mria, transaction,
                                   [test_shard,
@@ -1102,7 +1103,8 @@ t_mnesia_post_commit_hook(_) ->
                                                      ],
                     N <- Cores
                ],
-               {Trace1, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace),
+               {_, Trace0} = ?split_trace_at(#{?snk_kind := test_begin}, Trace),
+               {Trace1, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace0),
                mria_rlog_props:all_intercepted_commit_logs_received(Trace1),
                ok
        end).
@@ -1115,6 +1117,7 @@ t_replicant_receives_commits_from_remote_node(_) ->
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, N1),
            {ok, _, N3} = mria_ct:create_start_node(<<"r1">>, replicant, N1),
            {ok, _, N4} = mria_ct:create_start_node(<<"r2">>, replicant, N1),
+           ?tp(test_begin, #{}),
            Nodes = [N1, N2, N3, N4],
 
            mria_mnesia_test_util:wait_tables(Nodes),
@@ -1132,7 +1135,8 @@ t_replicant_receives_commits_from_remote_node(_) ->
            ok
        end,
        fun(Trace0) ->
-               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace0),
+               {_, Trace1} = ?split_trace_at(#{?snk_kind := test_begin}, Trace0),
+               {Trace, _} = ?split_trace_at(#{?snk_kind := test_end}, Trace1),
                mria_rlog_props:all_intercepted_commit_logs_received(Trace),
                ok
        end).
