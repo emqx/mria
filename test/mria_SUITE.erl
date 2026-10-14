@@ -647,6 +647,45 @@ t_middleman(_) ->
 drain_message_queue() ->
     receive M -> [M | drain_message_queue()] after 1 -> [] end.
 
+%% The `middleman' option decides whether a write runs in a helper
+%% process, whatever the length of the caller's message queue.
+t_middleman_opt(_) ->
+    Cluster = mria_ct:cluster([core, replicant], mria_mnesia_test_util:common_env()),
+    ?check_trace(
+       #{timetrap => 30000},
+       try
+           Nodes = [N1, _N2] = mria_ct:start_cluster(mria, Cluster),
+           mria_mnesia_test_util:wait_tables(Nodes),
+           ?ON(N1,
+               begin
+                   %% A long message queue, but no helper process:
+                   [self() ! message || _ <- lists:seq(1, 100)],
+                   ?assertMatch(ok, mria:dirty_write(test_tab, {test_tab, 1, 1}, #{middleman => false})),
+                   ?assertMatch(ok, mria:dirty_delete(test_tab, 2, #{middleman => false})),
+                   ?assertMatch(ok, mria:dirty_delete_object(test_tab, {test_tab, 3, 3}, #{middleman => false})),
+                   ?assertMatch(1, mria:dirty_update_counter(test_tab, 4, 1, #{middleman => false})),
+                   ?assertMatch(ok, mria:async_dirty(test_shard, fun() -> mnesia:write({test_tab, 5, 5}) end, [], #{middleman => false})),
+                   ?assertMatch({atomic, ok}, mria:transaction(test_shard, fun() -> mnesia:write({test_tab, 6, 6}) end, [], #{middleman => false})),
+                   ?assertEqual([], [M || M <- drain_message_queue(), M =/= message]),
+                   %% An empty message queue, but a helper process:
+                   ?assertMatch(ok, mria:dirty_write(test_tab, {test_tab, 7, 7}, #{middleman => true})),
+                   ?assertMatch({atomic, ok}, mria:transaction(test_shard, fun() -> mnesia:write({test_tab, 8, 8}) end, [], #{middleman => true})),
+                   ?assertEqual([], drain_message_queue())
+               end),
+           mria_mnesia_test_util:stabilize(1000),
+           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes)
+       after
+           mria_ct:teardown_cluster(Cluster)
+       end,
+       [ fun mria_rlog_props:replicant_no_restarts/1
+       , fun mria_rlog_props:no_unexpected_events/1
+       , {"Only the two writes with middleman => true use the helper process",
+          fun(Trace) ->
+                  ?assertMatch([#{function := dirty_write}, #{function := transactional_wrapper}],
+                               ?of_kind(mria_lib_with_middleman, Trace))
+          end}
+       ]).
+
 t_rlog_dirty_operations(_) ->
     Cluster = mria_ct:cluster([core, core, replicant], mria_mnesia_test_util:common_env()),
     ?check_trace(

@@ -46,18 +46,22 @@
 
 %% Database API
 -export([ ro_transaction/2
+        , transaction/4
         , transaction/3
         , transaction/2
         , sync_transaction/4
         , sync_transaction/3
         , sync_transaction/2
+        , async_dirty/4
         , async_dirty/3
         , async_dirty/2
+        , sync_dirty/4
         , sync_dirty/3
         , sync_dirty/2
         , clear_table/1
         , match_delete/2
 
+        , dirty_write/3
         , dirty_write/2
         , dirty_write/1
 
@@ -65,12 +69,15 @@
         , dirty_write_sync/1
 
         , dirty_update_counter/2
+        , dirty_update_counter/4
         , dirty_update_counter/3
 
+        , dirty_delete/3
         , dirty_delete/2
         , dirty_delete/1
 
         , dirty_delete_object/1
+        , dirty_delete_object/3
         , dirty_delete_object/2
 
         , local_content_shard/0
@@ -103,6 +110,7 @@
 -export_type([info_key/0, infos/0]).
 
 -export_type([ t_result/1
+             , rw_opts/0
              , backend/0
              , table/0
              , storage/0
@@ -121,6 +129,19 @@
 -type t_result(Res) :: {'atomic', Res} | {'aborted', Reason::term()}.
 
 -type backend() :: rlog | mnesia.
+
+%% Options of a write operation.
+%%
+%% `middleman': whether to run the operation in a helper process.
+%% When the caller has a long message queue, a mnesia transaction is
+%% slow, because its commit stage does receives that scan the entire
+%% queue. A helper process has an empty queue. `true' always uses a
+%% helper, `false' always runs the operation in the caller. When the
+%% option is absent, a helper is used when the caller's queue has
+%% `max_mql' (default 10) or more messages. Set it to `false' for an
+%% operation that never waits for a message, such as a dirty write of a
+%% table with a local copy.
+-type rw_opts() :: #{middleman => boolean()}.
 
 -type table() :: atom().
 
@@ -451,13 +472,17 @@ sync_transaction(Shard, Fun) ->
 
 -spec transaction(mria_rlog:shard(), fun((...) -> A), list()) -> t_result(A).
 transaction(Shard, Function, Args) ->
+    transaction(Shard, Function, Args, #{}).
+
+-spec transaction(mria_rlog:shard(), fun((...) -> A), list(), rw_opts()) -> t_result(A).
+transaction(Shard, Function, Args, Opts) ->
     maybe
         {ok, Writes} ?= mria_rlog:shard_writes(Shard),
         case Writes of
             mnesia ->
-                maybe_middleman(mnesia, transaction, [Function, Args]);
+                maybe_middleman(mnesia, transaction, [Function, Args], Opts);
             local ->
-                maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args]);
+                maybe_middleman(mria_upstream, transactional_wrapper, [Shard, Function, Args], Opts);
             remote ->
                 rpc_to_core_node(Shard, mria_upstream, transactional_wrapper, [Shard, Function, Args])
         end
@@ -469,7 +494,11 @@ transaction(Shard, Fun) ->
 
 -spec async_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A.
 async_dirty(Shard, Fun, Args) ->
-    call_backend_rw(Shard, mnesia, async_dirty, [Fun, Args]).
+    async_dirty(Shard, Fun, Args, #{}).
+
+-spec async_dirty(mria_rlog:shard(), fun((...) -> A), list(), rw_opts()) -> A.
+async_dirty(Shard, Fun, Args, Opts) ->
+    call_backend_rw(Shard, mnesia, async_dirty, [Fun, Args], Opts).
 
 -spec async_dirty(mria_rlog:shard(), fun(() -> A)) -> A.
 async_dirty(Shard, Fun) ->
@@ -477,7 +506,11 @@ async_dirty(Shard, Fun) ->
 
 -spec sync_dirty(mria_rlog:shard(), fun((...) -> A), list()) -> A.
 sync_dirty(Shard, Fun, Args) ->
-    call_backend_rw(Shard, mnesia, sync_dirty, [Fun, Args]).
+    sync_dirty(Shard, Fun, Args, #{}).
+
+-spec sync_dirty(mria_rlog:shard(), fun((...) -> A), list(), rw_opts()) -> A.
+sync_dirty(Shard, Fun, Args, Opts) ->
+    call_backend_rw(Shard, mnesia, sync_dirty, [Fun, Args], Opts).
 
 -spec sync_dirty(mria_rlog:shard(), fun(() -> A)) -> A.
 sync_dirty(Shard, Fun) ->
@@ -510,9 +543,13 @@ dirty_write(Record) ->
 
 -spec dirty_write(mria:table(), tuple()) -> ok.
 dirty_write(Tab, Record) ->
+    dirty_write(Tab, Record, #{}).
+
+-spec dirty_write(mria:table(), tuple(), rw_opts()) -> ok.
+dirty_write(Tab, Record, Opts) ->
     mria_upstream:verify_merge_table_record(Tab, Record) orelse
         error({bad_record_node, Tab, Record}),
-    call_backend_rw_dirty(dirty_write, Tab, [Record]).
+    call_backend_rw_dirty(dirty_write, Tab, [Record], Opts).
 
 -spec dirty_write_sync(tuple()) -> ok.
 dirty_write_sync(Record) ->
@@ -527,7 +564,11 @@ dirty_write_sync(Tab, Record) ->
 
 -spec dirty_update_counter(mria:table(), term(), integer()) -> integer().
 dirty_update_counter(Tab, Key, Incr) ->
-    call_backend_rw_dirty(dirty_update_counter, Tab, [Key, Incr]).
+    dirty_update_counter(Tab, Key, Incr, #{}).
+
+-spec dirty_update_counter(mria:table(), term(), integer(), rw_opts()) -> integer().
+dirty_update_counter(Tab, Key, Incr, Opts) ->
+    call_backend_rw_dirty(dirty_update_counter, Tab, [Key, Incr], Opts).
 
 -spec dirty_update_counter({mria:table(), term()}, integer()) -> integer().
 dirty_update_counter({Tab, Key}, Incr) ->
@@ -535,7 +576,11 @@ dirty_update_counter({Tab, Key}, Incr) ->
 
 -spec dirty_delete(mria:table(), term()) -> ok.
 dirty_delete(Tab, Key) ->
-    call_backend_rw_dirty(dirty_delete, Tab, [Key]).
+    dirty_delete(Tab, Key, #{}).
+
+-spec dirty_delete(mria:table(), term(), rw_opts()) -> ok.
+dirty_delete(Tab, Key, Opts) ->
+    call_backend_rw_dirty(dirty_delete, Tab, [Key], Opts).
 
 -spec dirty_delete({mria:table(), term()}) -> ok.
 dirty_delete({Tab, Key}) ->
@@ -543,9 +588,13 @@ dirty_delete({Tab, Key}) ->
 
 -spec dirty_delete_object(mria:table(), tuple()) -> ok.
 dirty_delete_object(Tab, Record) ->
+    dirty_delete_object(Tab, Record, #{}).
+
+-spec dirty_delete_object(mria:table(), tuple(), rw_opts()) -> ok.
+dirty_delete_object(Tab, Record, Opts) ->
     mria_upstream:verify_merge_table_record(Tab, Record) orelse
         error({bad_record_node, Tab, Record}),
-    call_backend_rw_dirty(dirty_delete_object, Tab, [Record]).
+    call_backend_rw_dirty(dirty_delete_object, Tab, [Record], Opts).
 
 -spec dirty_delete_object(tuple()) -> ok.
 dirty_delete_object(Record) ->
@@ -580,23 +629,39 @@ unsubscribe_replica_events(Shard, Pid) ->
 
 -spec call_backend_rw_dirty(atom(), mria:table(), list()) -> term().
 call_backend_rw_dirty(Function, Table, Args) ->
+    call_backend_rw_dirty(Function, Table, Args, #{}).
+
+-spec call_backend_rw_dirty(atom(), mria:table(), list(), rw_opts()) -> term().
+call_backend_rw_dirty(Function, Table, Args, Opts) ->
     Shard = mria_config:shard_rlookup(Table),
-    call_backend_rw(Shard, mnesia, Function, [Table|Args]).
+    call_backend_rw(Shard, mnesia, Function, [Table|Args], Opts).
 
 -spec call_backend_rw(mria_rlog:shard(), module(), atom(), list()) -> term().
 call_backend_rw(Shard, Module, Function, Args) ->
+    call_backend_rw(Shard, Module, Function, Args, #{}).
+
+-spec call_backend_rw(mria_rlog:shard(), module(), atom(), list(), rw_opts()) -> term().
+call_backend_rw(Shard, Module, Function, Args, Opts) ->
     case mria_rlog:shard_writes(Shard) of
         {ok, remote} ->
             rpc_to_core_node(Shard, Module, Function, Args);
         {ok, _} ->
             %% Core or mnesia:
-            maybe_middleman(Module, Function, Args);
+            maybe_middleman(Module, Function, Args, Opts);
         Badshard ->
             exit(Badshard)
     end.
 
 -spec maybe_middleman(module(), atom(), list()) -> term().
 maybe_middleman(Mod, Fun, Args) ->
+    maybe_middleman(Mod, Fun, Args, #{}).
+
+-spec maybe_middleman(module(), atom(), list(), rw_opts()) -> term().
+maybe_middleman(Mod, Fun, Args, #{middleman := false}) ->
+    apply(Mod, Fun, Args);
+maybe_middleman(Mod, Fun, Args, #{middleman := true}) ->
+    with_middleman(Mod, Fun, Args);
+maybe_middleman(Mod, Fun, Args, _Opts) ->
     {message_queue_len, MQL} = process_info(self(), message_queue_len),
     MaxMQL = persistent_term:get({mria, max_mql}, 10),
     if MQL >= MaxMQL ->
