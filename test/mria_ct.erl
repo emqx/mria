@@ -104,6 +104,16 @@ create_node(SiteId, Role, MriaOpts, JoinTo, FamiliarOpts) ->
       FamiliarOpts#{ fixtures => fixtures(Role, MriaOpts, JoinTo)
                    }).
 
+-spec join(node() | classy:site(), node()) -> ok | {error, _}.
+join(Node, JoinTo) ->
+    join(Node, JoinTo, join).
+
+-spec join(node() | familiar:site(), node(), term()) -> ok | {error, _}.
+join(Node, JoinTo, Intent) when is_atom(Node) ->
+    erpc:call(Node, mria_join_fixture, do_join, [JoinTo, Intent]);
+join(Site, JoinTo, Intent) ->
+    familiar:call(Site, mria_join_fixture, do_join, [JoinTo, Intent]).
+
 fixtures(Role, MriaOpts, JoinTo) ->
     [ {familiar_app,
        #{ app => classy
