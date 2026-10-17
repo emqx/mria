@@ -365,7 +365,7 @@ t_rlog_smoke_test(_) ->
            {ok, _, N2} = mria_ct:create_node(<<"c2">>, core, MriaOpts, N1, Opts),
            {ok, S3, N3} = mria_ct:create_node(<<"r1">>, replicant, MriaOpts, undefined, Opts),
            Nodes = [N1, N2, N3],
-           ok = erpc:cast(N3, mria, join, [N1]),
+           ok = mria_ct:join(N3, N1),
            ok = mria_mnesia_test_util:wait_tables([N1, N2]),
            %% Generate some transactions:
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
@@ -1217,7 +1217,7 @@ t_replicant_manual_join(_Config) ->
            %% 1. Connect the replicant to the core cluster:
            ?tp_span(notice, test_join1, #{},
                     begin
-                        ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+                        ?assertMatch(ok, mria_ct:join(N3, N1)),
                         mria_ct:wait_quorum([N3])
                     end),
            %% Check that meta shard is up:
@@ -1226,7 +1226,7 @@ t_replicant_manual_join(_Config) ->
               rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% Now after we've manually joined the replicant to the
            %% core cluster, we should have both core nodes discovered:
-           ?assertMatch(ok, rpc:call(N3, mria, join, [N2])),
+           ?assertMatch(ok, mria_ct:join(N3, N2)),
            %% 2. Disconnect the replicant from the cluster and check idempotency of this operation:
 
            %% Weird race condition in mnesia:
@@ -1238,11 +1238,11 @@ t_replicant_manual_join(_Config) ->
 
            %% 3. Now connect the replicant to the core cluster again (bug: EMQX-9021):
            ?tp(test_reconnect_node, #{node => N3}),
-           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           ?assertMatch(ok, mria_ct:join(N3, N1)),
            ct:sleep(1000),
 
            %% Re-join to the same node is an idempotent operation:
-           ?assertMatch(ok, rpc:call(N3, mria, join, [N1])),
+           ?assertMatch(ok, mria_ct:join(N3, N1)),
            ?assertMatch({ok, _}, rpc:call(N3, mria_status, upstream, [?mria_meta_shard])),
            %% 4. Do the same to the other core node:
            %%    - Disconnect
@@ -1252,7 +1252,7 @@ t_replicant_manual_join(_Config) ->
               #{?snk_kind := classy_enter_run_level, n := ?classy_rl_quorum, ?snk_meta := #{node := N2}}),
            %%    - Rejoin the cluster
            ?tp(test_reconnect_node, #{node => N2}),
-           ?assertMatch(ok, rpc:call(N2, mria, join, [N1])),
+           ?assertMatch(ok, mria_ct:join(N2, N1)),
            ?retry(1000, 10,
                   ?assertEqual(
                      [Nodes, Nodes, Nodes],
@@ -1411,8 +1411,8 @@ t_join_each_other_simultaneously(_) ->
            Nodes = [N1, N2],
            mria_mnesia_test_util:stabilize(1000),
 
-           Key1 = erpc:send_request(N1, mria, join, [N2]),
-           Key2 = erpc:send_request(N2, mria, join, [N1]),
+           Key1 = erpc:send_request(N1, mria_join_fixture, do_join, [N2, join]),
+           Key2 = erpc:send_request(N2, mria_join_fixture, do_join, [N1, join]),
            %% Note: join procedure is async:
            {response, ok} = erpc:wait_response(Key1, 10_000),
            {response, ok} = erpc:wait_response(Key2, 10_000),
@@ -1437,7 +1437,7 @@ t_join_another_node_simultaneously(_) ->
            {ok, _, N4} = mria_ct:create_start_node(<<"c4">>, core, undefined),
            Nodes = [N1, N2, N3, N4],
 
-           ok = rpc:call(N2, mria, join, [N1]),
+           ok = mria_ct:join(N2, N1),
            {ok, SRef} = snabbkaffe:subscribe(
                           ?match_event(#{?snk_kind := "Mria is restarting to join the cluster"}),
                           2,
@@ -1474,17 +1474,17 @@ t_join_many_nodes_simultaneously(_) ->
 
            Nodes = [N1, N2, N3, N4],
            %% Connect only N2, N3, N4 together.
-           ok = rpc:call(N2, mria, join, [N4]),
-           ok = rpc:call(N3, mria, join, [N4]),
+           ok = mria_ct:join(N2, N4),
+           ok = mria_ct:join(N3, N4),
            %% Subscribe to an event emitted right before schema transactions take place.
            {ok, SRef} = snabbkaffe:subscribe(?match_event(#{?snk_kind := mria_mnesia_connect})),
            %% Ask N1 to join the cluster (using N2 as a seed).
-           K1 = rpc:async_call(N1, mria, join, [N2]),
+           K1 = rpc:async_call(N1, mria_join_fixture, do_join, [N2, join]),
            %% Wait for the event, and ask (concurrently) N1 to join the cluster (using
            %% other 2 nodes as seeds).
            {ok, _} = snabbkaffe:receive_events(SRef),
-           K2 = rpc:async_call(N1, mria, join, [N3]),
-           K3 = rpc:async_call(N1, mria, join, [N4]),
+           K2 = rpc:async_call(N1, mria_join_fixture, do_join, [N3, join]),
+           K3 = rpc:async_call(N1, mria_join_fixture, do_join, [N4, join]),
            ?assertMatch([ok, ok, ok],
                         lists:sort([rpc:yield(K) || K <- [K1, K2, K3]])),
            %% Verify that all nodes are up and running and form a cluster:
