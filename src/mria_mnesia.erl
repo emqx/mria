@@ -277,17 +277,20 @@ copy_schema(Candidates0) ->
         core ?= mria_config:role(),
         [_ | _] ?= Cores,
         ?LOCK([node() | Cores],
-              maybe
-                  %% Delete the old schema:
-                  ok ?= do_delete_schema(),
-                  %% Temporarily start Mnesia as a RAM node:
-                  ok ?= do_start_mnesia(),
-                  %% Add the remotes nodes as `extra_db_nodes' and change schema
-                  %% storage to `disc_copies':
-                  ok ?= do_connect(Cores),
-                  ok ?= persist_schema(),
+              try
+                  maybe
+                      %% Delete the old schema:
+                      ok ?= do_delete_schema(),
+                      %% Temporarily start Mnesia as a RAM node:
+                      ok ?= do_start_mnesia(),
+                      %% Add the remotes nodes as `extra_db_nodes' and change schema
+                      %% storage to `disc_copies':
+                      ok ?= do_connect(Cores),
+                      ok ?= persist_schema()
+                  end
+              after
                   %% Shut down:
-                  ok ?= do_stop_mnesia()
+                  do_stop_mnesia()
               end)
     else
         replicant ->

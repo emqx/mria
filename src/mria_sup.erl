@@ -18,7 +18,7 @@
 
 -behaviour(supervisor).
 
--export([start_link/0, stop/0, launch_rlog/0, terminate_rlog/0, is_running/0]).
+-export([start_link/0, stop/0, launch_rlog/0, terminate_rlog/0, is_running/0, lock_schema/2, unlock_schema/0]).
 -export([start_link_rlog/0]).
 
 -export([init/1]).
@@ -52,6 +52,23 @@ launch_rlog() ->
             ok;
         Other ->
             Other
+    end.
+
+-spec lock_schema([node()], timeout()) -> {ok, pid()} | {error, _}.
+lock_schema(Nodes, Timeout) ->
+    Child = #{ id => mria_schema_lock
+             , start => {mria_cluster, start_link_schema_lock, [Nodes, Timeout]}
+             , shutdown => 1000
+             , type => worker
+             , restart => temporary
+             },
+    supervisor:start_child(?top, Child).
+
+-spec unlock_schema() -> ok | {error, _}.
+unlock_schema() ->
+    case supervisor:terminate_child(?top, mria_schema_lock) of
+        {error, not_found} -> ok;
+        Other -> Other
     end.
 
 terminate_rlog() ->

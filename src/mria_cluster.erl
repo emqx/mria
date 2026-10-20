@@ -37,7 +37,17 @@ Mnesia is started and mnesia barrier is lifted in (core, true) and replicant sta
 -behavior(gen_statem).
 
 %% API:
--export([start_link/0, activate/0, deactivate/0, notify_member_leave/2, netsplit_winner/1]).
+-export([ start_link/0
+        , activate/0
+        , deactivate/0
+        , notify_member_leave/2
+        , netsplit_winner/1
+
+        , wait_for_mnesia/1
+
+        , start_link_schema_lock/2
+        , schema_lock_entrypoint/3
+        ]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, callback_mode/0, handle_event/4]).
@@ -65,6 +75,7 @@ Mnesia is started and mnesia barrier is lifted in (core, true) and replicant sta
 -record(call_activate, {}).
 -record(call_deactivate, {}).
 -record(call_join_winner, {node :: node()}).
+-record(call_wait_for_mnesia, {}).
 -define(try_copy_schema, try_copy_schema).
 
 -define(SERVER, ?MODULE).
@@ -107,6 +118,31 @@ Another node notifies us that it won netsplit.
 netsplit_winner(Winner) ->
     gen_statem:call(?SERVER, #call_join_winner{node = Winner}, infinity).
 
+-doc """
+Wait until mnesia schema is created or copied and Mnesia is started.
+""".
+-spec wait_for_mnesia(timeout()) -> ok.
+wait_for_mnesia(Timeout) ->
+    gen_server:call(?SERVER, #call_wait_for_mnesia{}, Timeout).
+
+-doc """
+Start a process that holds the join lock.
+It verifies that a node cannot leave the cluster while another is joining to us.
+""".
+-spec start_link_schema_lock([node()], timeout()) -> {ok, pid()}.
+start_link_schema_lock(Nodes, Timeout) when is_integer(Timeout) andalso Timeout >= 0;
+                                            Timeout =:= infinity ->
+    proc_lib:start_link(?MODULE, schema_lock_entrypoint, [self(), Nodes, Timeout]).
+
+-spec schema_lock_entrypoint(pid(), [node()], timeout()) -> _.
+schema_lock_entrypoint(Parent, Nodes, Timeout) ->
+    proc_lib:init_ack(Parent, {ok, self()}),
+    Success = global:set_lock(?JOIN_LOCK_ID(self()), Nodes),
+    %% Release the lock automatically after timeout:
+    receive after Timeout -> ok end,
+    Success andalso
+        global:del_lock(?JOIN_LOCK_ID(self()), Nodes).
+
 %%================================================================================
 %% behavior callbacks
 %%================================================================================
@@ -125,6 +161,8 @@ handle_event({call, From}, #call_activate{}, #s_passive{}, D) ->
     handle_activate(From, D);
 handle_event({call, From}, #call_deactivate{}, #s_passive{}, _D) ->
     {keep_state_and_data, {reply, From, ok}};
+handle_event({call, _From}, #call_wait_for_mnesia{}, #s_passive{}, _D) ->
+    {keep_state_and_data, postpone};
 handle_event({call, _From}, #call_join_winner{}, #s_passive{}, _D) ->
     {keep_state_and_data, postpone};
 %% Core, has schema:
@@ -139,6 +177,8 @@ handle_event({call, From}, #call_join_winner{node = Node}, #s_core{schema = true
     {ok, Local} = classy:the_site(),
     mria_mnesia:on_leave(Cluster, Local, {heal, Node}),
     {next_state, #s_core{schema = false}, D, {reply, From, ok}};
+handle_event({call, From}, #call_wait_for_mnesia{}, #s_core{schema = true}, _D) ->
+    {keep_state_and_data, {reply, From, ok}};
 %% Replicant:
 handle_event(enter, OldState, #s_replicant{} = NextState, _D) ->
     log_enter(OldState, NextState),
@@ -148,6 +188,8 @@ handle_event(enter, OldState, #s_replicant{} = NextState, _D) ->
     keep_state_and_data;
 handle_event({call, From}, #call_join_winner{}, #s_replicant{}, _D) ->
     {keep_state_and_data, {reply, From, {error, bad_role}}};
+handle_event({call, From}, #call_wait_for_mnesia{}, #s_replicant{}, _D) ->
+    {keep_state_and_data, {reply, From, ok}};
 %% Core, no schema:
 handle_event(enter, OldState, #s_core{schema = false} = NextState, _D) ->
     log_enter(OldState, NextState),
@@ -159,6 +201,8 @@ handle_event({call, From}, #call_join_winner{}, #s_core{schema = false}, _D) ->
     {keep_state_and_data, {reply, From, ok}};
 handle_event(state_timeout, ?try_copy_schema, #s_core{schema = false}, D) ->
     try_copy_schema(D);
+handle_event({call, _From}, #call_wait_for_mnesia{}, #s_core{schema = false}, _D) ->
+    {keep_state_and_data, postpone};
 %% Core/replicant:
 handle_event({call, From}, #call_activate{}, State, _D) when ?is_active(State) ->
     {keep_state_and_data, {reply, From, ok}};
@@ -233,7 +277,12 @@ try_copy_schema(D) ->
                 #{ seed   => Nodes
                  , result => Err
                  }),
-            Timeout = 5_000,
+            %% Peers may not be discovered by classy yet, so retry
+            %% quickly in this case, otherwise use a longer interval:
+            Timeout = case Err of
+                          {failed_to_copy_schema, no_core_nodes} -> 100;
+                          _                                      -> 5_000
+                      end,
             {keep_state_and_data, {state_timeout, Timeout, ?try_copy_schema}}
     end.
 

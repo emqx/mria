@@ -25,6 +25,7 @@
 %% Classy hooks
 -export([ on_run_level/2
         , pre_join/4
+        , on_post_join/4
         , on_kick_decided/3
         , enrich_site_info/1
         , on_node_classify/1
@@ -86,24 +87,44 @@ on_run_level(_, _) ->
 on_prep_stop(_Reason) ->
     mria_status:prep_restart().
 
+%% Note: this hook runs before the join is committed, so it must be
+%% pure, i.e. it should not have any side effects, since it can be
+%% aborted.
 -spec pre_join(classy:cluster_id(), classy:site(), node(), term()) -> ok | {error, _}.
 pre_join(_Cluster, _RemoteSite, Node, _Intent) when is_atom(Node) ->
-    case {mria_node:is_running(Node), catch mria_rlog:role(Node)} of
-        {true, core} ->
+    %% Note: the remote node is guaranteed to be alive at this point,
+    %% because the handshake has already been completed by the caller.
+    %% Check the role using the remote's static configuration: mria app
+    %% may not be running on the remote node while it is still
+    %% converging after its own join:
+    case catch mria_rlog:role(Node) of
+        core ->
             ok;
-        {false, _} ->
-            {error, {node_down, Node}};
-        {_, replicant} ->
+        replicant ->
             {error, {cannot_join_to_replicant, Node}};
-        {IsRunning, Role} ->
-            {error, #{ reason => illegal_target
-                     , target_node => Node
-                     , is_running => IsRunning
-                     , target_role => Role
-                     }}
+        {'EXIT', _} ->
+            {error, {node_down, Node}}
     end;
 pre_join(_, _, Node, _) ->
     {error, {bad_node, Node}}.
+
+%% Note: this hook runs after the membership in the new cluster has
+%% been committed and the run levels have settled. It must block until
+%% mria fully converges (i.e. mnesia schema is copied and mnesia is
+%% running), making `classy:join_node' synchronous wrt mria state.
+-spec on_post_join(classy:cluster_id(), classy:site(), node() | undefined, term()) -> ok.
+on_post_join(_Cluster, _Local, _JoinToNode, _Intent) ->
+    Timeout = 30_000,
+    mria_cluster:activate(),
+    case catch mria_cluster:wait_for_mnesia(Timeout) of
+        ok ->
+            ?tp(notice, mria_join_converged, #{});
+        Err ->
+            ?tp(critical, mria_join_failed,
+                #{ reason  => Err
+                 , timeout => Timeout
+                 })
+    end.
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_kick_decided(_ClusterId, TargetSite, Intent) ->
@@ -133,7 +154,7 @@ on_kick_decided(_ClusterId, TargetSite, Intent) ->
 -spec enrich_site_info(classy:site_metadata()) -> classy:site_metadata().
 enrich_site_info(I) ->
     I#{mria => #{ role => mria_rlog:role()
-                , vsn => mria_rlog:get_protocol_version()
+                , vsn  => mria_rlog:get_protocol_version()
                 }}.
 
 -spec on_node_classify(map()) -> list().
@@ -173,6 +194,7 @@ setup_classy() ->
     , classy:enrich_site_info(fun ?MODULE:enrich_site_info/1, -Prio)
       %% Clustering:
     , classy:pre_join(fun ?MODULE:pre_join/4, Prio)
+    , classy:post_join(fun ?MODULE:on_post_join/4, #{prio => Prio, timeout => infinity})
     , classy:on_kick_decided(fun ?MODULE:on_kick_decided/3, Prio)
     , classy:on_membership_change(fun ?MODULE:on_membership_change/4, Prio)
     , classy:on_node_classify(fun ?MODULE:on_node_classify/1, Prio)
