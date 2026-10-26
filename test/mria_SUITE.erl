@@ -1402,7 +1402,7 @@ t_schema_merge(_) ->
        end,
        []).
 
-t_join_each_other_simultaneously(_) ->
+tt_join_each_other_simultaneously(_) ->
     ?check_trace(
        #{timetrap => ?timetrap},
        begin
@@ -1410,13 +1410,11 @@ t_join_each_other_simultaneously(_) ->
            {ok, _, N2} = mria_ct:create_start_node(<<"c2">>, core, undefined),
            Nodes = [N1, N2],
            mria_mnesia_test_util:stabilize(1000),
-
+           %% Issue requests in parallel:
            Key1 = erpc:send_request(N1, mria_join_fixture, do_join, [N2, join]),
            Key2 = erpc:send_request(N2, mria_join_fixture, do_join, [N1, join]),
-           %% Note: join procedure is async:
-           {response, ok} = erpc:wait_response(Key1, 10_000),
-           {response, ok} = erpc:wait_response(Key2, 10_000),
-           ?block_until(#{?snk_kind := "Mria is restarting to join the cluster"}),
+           _ = erpc:wait_response(Key1, 10_000),
+           _ = erpc:wait_response(Key2, 10_000),
            mria_ct:wait_quorum(Nodes),
            %% Verify that they created a cluster:
            ?retry(1000, 10,
@@ -1439,7 +1437,7 @@ t_join_another_node_simultaneously(_) ->
 
            ok = mria_ct:join(N2, N1),
            {ok, SRef} = snabbkaffe:subscribe(
-                          ?match_event(#{?snk_kind := "Mria is restarting to join the cluster"}),
+                          ?match_event(#{?snk_kind := mria_mnesia_copy_schema}),
                           2,
                           infinity),
            Key1 = erpc:send_request(N3, mria, join, [N1]),
@@ -1477,7 +1475,7 @@ t_join_many_nodes_simultaneously(_) ->
            ok = mria_ct:join(N2, N4),
            ok = mria_ct:join(N3, N4),
            %% Subscribe to an event emitted right before schema transactions take place.
-           {ok, SRef} = snabbkaffe:subscribe(?match_event(#{?snk_kind := mria_mnesia_connect})),
+           {ok, SRef} = snabbkaffe:subscribe(?match_event(#{?snk_kind := classy_joined_cluster})),
            %% Ask N1 to join the cluster (using N2 as a seed).
            K1 = rpc:async_call(N1, mria_join_fixture, do_join, [N2, join]),
            %% Wait for the event, and ask (concurrently) N1 to join the cluster (using

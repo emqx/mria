@@ -133,7 +133,7 @@ on_kick_decided(_ClusterId, TargetSite, Intent) ->
 -spec enrich_site_info(classy:site_metadata()) -> classy:site_metadata().
 enrich_site_info(I) ->
     I#{mria => #{ role => mria_rlog:role()
-                , vsn => mria_rlog:get_protocol_version()
+                , vsn  => mria_rlog:get_protocol_version()
                 }}.
 
 -spec on_node_classify(map()) -> list().
