@@ -22,7 +22,7 @@
 -behaviour(gen_server).
 
 %% API
--export([ start_link/2
+-export([ start_link/3
         , subscribe/4
         , bootstrap_me/2
         , probe/2
@@ -57,6 +57,7 @@
         , parent_sup          :: pid()
         , agent_sup           :: pid()
         , bootstrapper_sup    :: pid()
+        , run_level           :: mria_rlog:maybe_run_level()
         , tlog_replay         :: integer()
         , bootstrap_threshold :: integer()
         , agents = []         :: [pid()]
@@ -67,9 +68,9 @@
 %% API funcions
 %%================================================================================
 
--spec start_link(pid(), mria_rlog:shard()) -> {ok, pid()}.
-start_link(Parent, Shard) ->
-    gen_server:start_link({local, Shard}, ?MODULE, {Parent, Shard}, []).
+-spec start_link(pid(), mria_rlog:shard(), mria_rlog:maybe_run_level()) -> {ok, pid()}.
+start_link(Parent, Shard, MaybeRunLevel) ->
+    gen_server:start_link({local, Shard}, ?MODULE, {Parent, Shard, MaybeRunLevel}, []).
 
 %% @doc Make a call to the server that does nothing.
 %%
@@ -119,7 +120,7 @@ dispatch(Shard, Tid, Commit) ->
 %% gen_server callbacks
 %%================================================================================
 
-init({Parent, Shard}) ->
+init({Parent, Shard, MaybeRunLevel}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:set_process_metadata(#{ domain => [mria, rlog, server]
@@ -127,9 +128,9 @@ init({Parent, Shard}) ->
                                  }),
     ?tp(info, "starting_rlog_shard", #{shard => Shard}),
     ?tp(rlog_server_start, #{node => node()}),
-    {ok, {Parent, Shard}, {continue, post_init}}.
+    {ok, {Parent, Shard, MaybeRunLevel}, {continue, post_init}}.
 
-handle_continue(post_init, {Parent, Shard}) ->
+handle_continue(post_init, {Parent, Shard, MaybeRunLevel}) ->
     Tables = process_schema(Shard),
     mria_schema:wait_for_tables(Tables),
     mria_schema:subscribe_to_shard_schema_updates(Shard),
@@ -144,6 +145,7 @@ handle_continue(post_init, {Parent, Shard}) ->
               , parent_sup          = Parent
               , agent_sup           = AgentSup
               , bootstrapper_sup    = BootstrapperSup
+              , run_level           = MaybeRunLevel
               , tlog_replay         = 30 %% TODO: unused. Remove?
               , bootstrap_threshold = 3000 %% TODO: unused. Remove?
               },
