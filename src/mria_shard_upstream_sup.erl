@@ -21,7 +21,7 @@
 -behaviour(supervisor).
 
 %% API:
--export([ start_link/1
+-export([ start_link/2
         , start_agent_sup/2
         , start_bootstrapper_sup/2
         , restart_agent_sup/1
@@ -31,14 +31,14 @@
         ]).
 
 %% supervisor callbacks & external exports:
--export([init/1, start_link/2]).
+-export([init/1, start_simple_sup/2]).
 
 %%================================================================================
 %% API funcions
 %%================================================================================
 
-start_link(Shard) ->
-    supervisor:start_link(?MODULE, [shard, Shard]).
+start_link(Shard, MaybeRunLevel) ->
+    supervisor:start_link(?MODULE, [shard, Shard, MaybeRunLevel]).
 
 start_agent_sup(SupPid, Shard) ->
     start_sibling(SupPid, agent, Shard).
@@ -69,12 +69,12 @@ list_agents() ->
 %% Supervisor callbacks
 %%================================================================================
 
-init([shard, Shard]) ->
+init([shard, Shard, MaybeRunLevel]) ->
     SupFlags = #{ strategy  => one_for_all
                 , intensity => 0
                 , period    => 1
                 },
-    Children = [server(mria_rlog_server, Shard)],
+    Children = [server(mria_rlog_server, Shard, MaybeRunLevel)],
     {ok, {SupFlags, Children}};
 init([agent, Shard]) ->
     init_simple_sup(mria_rlog_agent, Shard);
@@ -85,16 +85,16 @@ init([bootstrapper, Shard]) ->
 %% Internal exports
 %%================================================================================
 
-start_link(Type, Shard) ->
-    supervisor:start_link(?MODULE, [Type, Shard]).
-
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
-server(Module, Shard) ->
+start_simple_sup(Type, Shard) ->
+    supervisor:start_link(?MODULE, [Type, Shard]).
+
+server(Module, Shard, MaybeRunLevel) ->
     #{ id => Module
-     , start => {Module, start_link, [self(), Shard]}
+     , start => {Module, start_link, [self(), Shard, MaybeRunLevel]}
      , restart => permanent
      , shutdown => 1000
      , type => worker
@@ -126,7 +126,7 @@ restart_sibling(Sup, Id) ->
 -spec simple_sup(agent | bootstrapper, mria_rlog:shard()) -> supervisor:child_spec().
 simple_sup(Id, Shard) ->
     #{ id => Id
-     , start => {?MODULE, start_link, [Id, Shard]}
+     , start => {?MODULE, start_simple_sup, [Id, Shard]}
      , restart => permanent
      , shutdown => infinity
      , type => supervisor

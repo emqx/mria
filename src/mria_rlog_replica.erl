@@ -21,7 +21,7 @@
 -behaviour(gen_statem).
 
 %% API:
--export([start_link/3, where/2, ls/1, clean_merge_table/2]).
+-export([start_link/4, where/2, ls/1, clean_merge_table/2]).
 
 %% gen_statem callbacks:
 -export([init/1, terminate/3, code_change/4, callback_mode/0, handle_event/4, format_status/1]).
@@ -60,6 +60,7 @@
         , upstream                     :: upstream()
         , is_merge_shard               :: boolean()
         , remote_core_node = undefined :: node() | undefined
+        , run_level = undefined       :: mria_rlog:maybe_run_level()
         , agent                        :: pid() | undefined
         , checkpoint       = undefined :: mria_rlog_server:checkpoint() | undefined
         , next_batch_seqno = 0         :: non_neg_integer()
@@ -84,9 +85,9 @@
 %% API funcions
 %%================================================================================
 
--spec start_link(pid(), mria_rlog:shard(), upstream()) -> gen_server:start_ret().
-start_link(ParentSup, Shard, Upstream) ->
-    gen_statem:start_link(?via(Shard, Upstream), ?MODULE, {ParentSup, Shard, Upstream}, []).
+-spec start_link(pid(), mria_rlog:shard(), upstream(), mria_rlog:maybe_run_level()) -> gen_server:start_ret().
+start_link(ParentSup, Shard, Upstream, MaybeRunLevel) ->
+    gen_statem:start_link(?via(Shard, Upstream), ?MODULE, {ParentSup, Shard, Upstream, MaybeRunLevel}, []).
 
 -spec where(mria_rlog:shard(), upstream()) -> {ok, pid()} | undefined.
 where(Shard, Upstream) ->
@@ -117,8 +118,8 @@ clean_merge_table(Table, Node) ->
 %% group event handlers logically.
 callback_mode() -> [handle_event_function, state_enter].
 
--spec init({pid(), mria_rlog:shard(), upstream()}) -> {ok, state(), data()}.
-init({ParentSup, Shard, Upstream}) ->
+-spec init({pid(), mria_rlog:shard(), upstream(), mria_rlog:maybe_run_level()}) -> {ok, state(), data()}.
+init({ParentSup, Shard, Upstream, MaybeRunLevel}) ->
     process_flag(trap_exit, true),
     process_flag(message_queue_data, off_heap),
     logger:update_process_metadata(#{ domain => [mria, rlog, replica]
@@ -134,6 +135,7 @@ init({ParentSup, Shard, Upstream}) ->
           , parent_sup      = ParentSup
           , upstream        = Upstream
           , is_merge_shard  = IsMerge
+          , run_level       = MaybeRunLevel
           },
     {ok, ?disconnected, D}.
 
