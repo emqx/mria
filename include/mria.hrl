@@ -28,4 +28,6 @@
         , status :: mria_rlog_replica:state()
         }).
 
+-define(mria_rl_ready, (?classy_rl_single + 10)).
+
 -endif.

@@ -24,6 +24,7 @@
 
         , role/0
         , role/1
+        , roles/1
         , backend/0
 
         , core_nodes/0
@@ -34,6 +35,7 @@
 
         , intercept_trans/2
         , ensure_shard/1
+        , ensure_shard/2
         , shard_writes/1
         ]).
 
@@ -48,6 +50,7 @@
              , transport/0
              , sync_reply_to/0
              , shard_writes/0
+             , maybe_run_level/0
              ]).
 
 -include("mria_rlog.hrl").
@@ -87,6 +90,8 @@
 
 -type shard_writes() :: mnesia | local | remote.
 
+-type maybe_run_level() :: classy:run_level() | undefined.
+
 %%================================================================================
 %% API
 %%================================================================================
@@ -120,6 +125,22 @@ role(Node) ->
         core -> core;
         replicant -> replicant
     end.
+
+-spec roles([node()]) -> [{node(), mria_rlog:role() | undefined}].
+roles(Nodes) ->
+    Results = erpc:multicall(Nodes, ?MODULE, role, []),
+    lists:zipwith(
+      fun(Node, Result) ->
+              case Result of
+                  {ok, Role} when Role =:= core;
+                                  Role =:= replicant ->
+                      {Node, Role};
+                  _ ->
+                      {Node, undefined}
+              end
+      end,
+      Nodes,
+      Results).
 
 -spec shard_writes(shard()) -> {ok, shard_writes()} | {aborted, _}.
 shard_writes(Shard) ->
@@ -162,12 +183,16 @@ wait_for_shards(Shards, Timeout) ->
     end.
 
 -spec ensure_shard(shard()) -> ok.
-ensure_shard(?LOCAL_CONTENT_SHARD) ->
-    ok;
 ensure_shard(Shard) ->
+    ensure_shard(Shard, undefined).
+
+-spec ensure_shard(shard(), maybe_run_level()) -> ok.
+ensure_shard(?LOCAL_CONTENT_SHARD, _MaybeRunLevel) ->
+    ok;
+ensure_shard(Shard, MaybeRunLevel) ->
     case whereis(Shard) of
         undefined ->
-            case mria_shards_sup:start_shard(Shard) of
+            case mria_shards_sup:start_shard(Shard, MaybeRunLevel) of
                 {ok, _}                       -> ok;
                 {error, already_present}      -> ok;
                 {error, {already_started, _}} -> ok;
