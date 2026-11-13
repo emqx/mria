@@ -97,12 +97,13 @@ pre_join(_Cluster, _RemoteSite, Node, _Intent) when is_atom(Node) ->
     %% Check the role using the remote's static configuration: mria app
     %% may not be running on the remote node while it is still
     %% converging after its own join:
-    case catch mria_rlog:role(Node) of
+    try mria_rlog:role(Node) of
         core ->
             ok;
         replicant ->
-            {error, {cannot_join_to_replicant, Node}};
-        {'EXIT', _} ->
+            {error, {cannot_join_to_replicant, Node}}
+    catch
+        _:_ ->
             {error, {node_down, Node}}
     end;
 pre_join(_, _, Node, _) ->
@@ -116,12 +117,18 @@ pre_join(_, _, Node, _) ->
 on_post_join(_Cluster, _Local, _JoinToNode, _Intent) ->
     Timeout = 30_000,
     mria_cluster:activate(),
-    case catch mria_cluster:wait_for_mnesia(Timeout) of
+    try mria_cluster:wait_for_mnesia(Timeout) of
         ok ->
             ?tp(notice, mria_join_converged, #{});
-        Err ->
+        Other ->
             ?tp(critical, mria_join_failed,
-                #{ reason  => Err
+                #{ reason  => Other
+                 , timeout => Timeout
+                 })
+    catch
+        Class:Reason ->
+            ?tp(critical, mria_join_failed,
+                #{ reason  => {Class, Reason}
                  , timeout => Timeout
                  })
     end.

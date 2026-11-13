@@ -280,8 +280,10 @@ try_copy_schema(D) ->
             %% Peers may not be discovered by classy yet, so retry
             %% quickly in this case, otherwise use a longer interval:
             Timeout = case Err of
-                          {failed_to_copy_schema, no_core_nodes} -> 100;
-                          _                                      -> 5_000
+                          {failed_to_copy_schema, no_core_nodes} ->
+                              100;
+                          _ ->
+                              5_000
                       end,
             {keep_state_and_data, {state_timeout, Timeout, ?try_copy_schema}}
     end.
