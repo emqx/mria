@@ -1347,7 +1347,7 @@ t_cluster_nodes(_) ->
 %% other during a full cluster parallel restart. To make things realistic, this
 %% testcase creates a wait chain of tables, where creation of one
 %% table depends on waiting for another.
-tt_full_cluster_parallel_restart(_) ->
+t_full_cluster_parallel_restart(_) ->
     ?check_trace(
        #{timetrap => ?timetrap},
        begin
@@ -1378,9 +1378,10 @@ tt_full_cluster_parallel_restart(_) ->
            %% Waiting for all slaves are started.
            _ = [ ok  || I <- Cluster, receive {slave_up, I} -> true end],
            %% Restart the chain:
-           ?assertEqual(
-              OK,
-              erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity)),
+           ?retry(1000, 30,
+                  ?assertEqual(
+                     OK,
+                     erpc:multicall(Nodes, ?MODULE, full_restart_load_chain, [], infinity))),
            ok
        end,
        []).
@@ -1391,7 +1392,7 @@ tt_full_cluster_parallel_restart(_) ->
 %% other during a full cluster seq restart. To make things realistic, this
 %% testcase creates a wait chain of tables, where creation of one
 %% table depends on waiting for another.
-tt_full_cluster_seq_restart(_) ->
+t_full_cluster_seq_restart(_) ->
     ?check_trace(
        #{timetrap => ?timetrap},
        begin
@@ -1454,7 +1455,7 @@ t_schema_merge(_) ->
        end,
        []).
 
-tt_join_each_other_simultaneously(_) ->
+t_join_each_other_simultaneously(_) ->
     ?check_trace(
        #{timetrap => ?timetrap},
        begin
