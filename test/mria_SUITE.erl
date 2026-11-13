@@ -1954,6 +1954,15 @@ t_merge_table_transaction(_) ->
                 , ?snk_span := {complete, _}
                 })
             || I <- Nodes, J <- Nodes, I =/= J],
+           %% Wait until the downstream replicas are ready:
+           [?block_until(
+               #{ ?snk_kind := mria_upstream_status
+                , shard := Shard
+                , status := {ready, _}
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
            %% Transactaional write:
            [?assertMatch(
                {atomic, ok},
@@ -2073,6 +2082,15 @@ t_merge_table_dirty(_) ->
                 , ?snk_span := {complete, _}
                 })
             || I <- Nodes, J <- Nodes, I =/= J],
+           %% Wait until the downstream replicas are ready:
+           [?block_until(
+               #{ ?snk_kind := mria_upstream_status
+                , shard := Shard
+                , status := {ready, _}
+                , upstream := J
+                , ?snk_meta := #{node := I}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
            %% Dirty writes:
            [ok = ?ON(N, mria:dirty_write({Tab1, {I, node()}, dirty}))
             || N <- Nodes,
@@ -2136,6 +2154,15 @@ t_merge_table_counters(_) ->
                 , upstream := J
                 , ?snk_meta := #{node := I}
                 , ?snk_span := {complete, _}
+                })
+            || I <- Nodes, J <- Nodes, I =/= J],
+           %% Wait until the downstream replicas are ready:
+           [?block_until(
+               #{ ?snk_kind := mria_upstream_status
+                , shard := Shard
+                , status := {ready, _}
+                , upstream := J
+                , ?snk_meta := #{node := I}
                 })
             || I <- Nodes, J <- Nodes, I =/= J],
            %% Each client updates the counter:
