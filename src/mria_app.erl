@@ -44,12 +44,18 @@
 start(_Type, _Args) ->
     %% Note: real start of the application happens in `on_run_level'
     %% callback. Here we just establish hooks.
-    setup_classy(),
+    Hooks = setup_classy(),
     mria_config:load_config(),
     mria_rlog:init(),
-    mria_sup:start_link().
+    case mria_sup:start_link() of
+        {ok, Pid} ->
+            {ok, Pid, Hooks};
+        Err ->
+            Err
+    end.
 
-stop(_) ->
+stop(Hooks) ->
+    _ = [classy_hook:unhook(I) || I <- Hooks],
     mria_config:erase_all_config(),
     ok.
 
