@@ -119,12 +119,7 @@ on_post_join(_Cluster, _Local, _JoinToNode, _Intent) ->
     mria_cluster:activate(),
     try mria_cluster:wait_for_mnesia(Timeout) of
         ok ->
-            ?tp(notice, mria_join_converged, #{});
-        Other ->
-            ?tp(critical, mria_join_failed,
-                #{ reason  => Other
-                 , timeout => Timeout
-                 })
+            ?tp(notice, mria_join_converged, #{})
     catch
         Class:Reason ->
             ?tp(critical, mria_join_failed,
