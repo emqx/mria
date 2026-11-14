@@ -155,8 +155,9 @@ on_peer_leave(Node) ->
 -spec has_schema() -> boolean().
 has_schema() ->
     case schema_cookie() of
-        {ok, _}   -> true;
-        undefined -> false
+        {ok, _}    -> true;
+        {error, _} -> false;
+        undefined  -> false
     end.
 
 -spec on_create_cluster(classy:cluster_id(), classy:site()) -> ok | {error, _}.
