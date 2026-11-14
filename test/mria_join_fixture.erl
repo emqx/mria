@@ -12,6 +12,9 @@ do_join(Node, Intent) ->
         {error, retry_later} ->
             timer:sleep(100),
             do_join(Node, Intent);
+        {error, node_is_joining_other} ->
+            timer:sleep(100),
+            do_join(Node, Intent);
         Other ->
             Other
     end.
