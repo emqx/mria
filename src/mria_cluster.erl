@@ -51,9 +51,6 @@ Mnesia is started and mnesia barrier is lifted in (core, true) and replicant sta
         , netsplit_winner/1
 
         , wait_for_mnesia/1
-
-        , start_link_schema_lock/2
-        , schema_lock_entrypoint/3
         ]).
 
 %% gen_statem callbacks:
@@ -131,24 +128,6 @@ Wait until mnesia schema is created or copied and Mnesia is started.
 -spec wait_for_mnesia(timeout()) -> ok.
 wait_for_mnesia(Timeout) ->
     gen_server:call(?SERVER, #call_wait_for_mnesia{}, Timeout).
-
--doc """
-Start a process that holds the join lock.
-It verifies that a node cannot leave the cluster while another is joining to us.
-""".
--spec start_link_schema_lock([node()], timeout()) -> {ok, pid()}.
-start_link_schema_lock(Nodes, Timeout) when is_integer(Timeout) andalso Timeout >= 0;
-                                            Timeout =:= infinity ->
-    proc_lib:start_link(?MODULE, schema_lock_entrypoint, [self(), Nodes, Timeout]).
-
--spec schema_lock_entrypoint(pid(), [node()], timeout()) -> _.
-schema_lock_entrypoint(Parent, Nodes, Timeout) ->
-    proc_lib:init_ack(Parent, {ok, self()}),
-    Success = global:set_lock(?JOIN_LOCK_ID(self()), Nodes),
-    %% Release the lock automatically after timeout:
-    receive after Timeout -> ok end,
-    Success andalso
-        global:del_lock(?JOIN_LOCK_ID(self()), Nodes).
 
 %%================================================================================
 %% behavior callbacks

@@ -605,28 +605,6 @@ Return `true` if the local node is running Mnesia.
 is_running_db_node(Node) ->
     lists:member(Node, running_nodes()).
 
-%% TODO: remove, rely on classy on_membership_change
-%% -spec do_leave_cluster([node()]) -> ok | {error, any()}.
-%% do_leave_cluster([]) ->
-%%     {error, {failed_to_leave_cluster, no_running_nodes}};
-%% do_leave_cluster([Node | Rest]) ->
-%%     case is_running_db_node(Node) andalso Node =/= node() of
-%%         true ->
-%%             try erpc:call(Node, ?MODULE, del_schema_copy, [node()]) of
-%%                 ok ->
-%%                     ok;
-%%                 {error, Error} ->
-%%                     ?tp(info, mria_do_leave_fail, #{node => Node, reason => Error}),
-%%                     do_leave_cluster(Rest)
-%%             catch
-%%                 EC:Err:Stack ->
-%%                     ?tp(info, mria_do_leave_fail, #{node => Node, EC => Err, stack => Stack}),
-%%                     do_leave_cluster(Rest)
-%%             end;
-%%         false ->
-%%             do_leave_cluster(Rest)
-%%     end.
-
 -spec with_schema_lock([node()], fun(() -> A)) -> A.
 with_schema_lock(Nodes, Fun) ->
     global:trans(?JOIN_LOCK_ID(self()), Fun, Nodes, infinity).
