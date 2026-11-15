@@ -7,27 +7,34 @@ This module is responsible for converging the mnesia schema to the state of clas
 
 State machine:
 
-                ,---------------<---------- deactivate ------<---.
-               |                                                 |
-mria app       |                     ,- replicant -->(replicant)-'
- start         v                     |
-  o ->(s_passive) ->- activate -->---( my role?
-           ^            |            |
-           |            |            |
-       deactivate       |           core <---- activate -----.
-           ^            ^            |                       |
-           |            |            |            try to copy schema from peer
-    ,-->---+------->----'            v                       |
-  drop     |                         |                       |
- schema    '---(core,true)--<- yes ---- no ---(core,false)---(
-   |               |     ^         have        ^             |
-   |               |      \       schema?      |   mnesia    |
-set barrier     mnesia     |                   `- partition -'
-?rl_mnesia    partition   no
-   |               |       |
-   |               v      /
-   `---<-----<----'`-->--'
-                 loser?
+                ,---------------<---------- deactivate --------<---.
+               |                                                   |
+               S                                                   |
+mria app       |                     ,- replicant --L->(replicant)-|
+ start         v                     |                     ^       |
+  o ->(s_passive) ->- activate --S---( my role?            |   join winner
+           ^                         |                     |       |
+           |                         |                     `-------'
+           S                         |
+           |                         |
+       deactivate                   core
+           ^                         |               ,---------------- no -----------.
+           |                         |               |                               |
+    ,-->---+------->-----------------+---------.     |         ,----try_copy_schema--( success?
+   |       |                         |         |     |         |      from peer      |
+  drop     |                         v         v     v         |                     |
+ schema    '-L-(core,true)--<- yes -' `-- no ->-(core,false)-->(                     |
+   |               |       \       have        ^               |                    yes
+   |               |        \     schema?      |    join       |                     |
+   |             join        \                 `-- winner -----'                     |
+   S            winner        \                                                     /
+   |               |           `------------<-----------------<--------------------'
+   |               v
+   `---<-----<-----'
+
+Legend:
+S - Set barrier
+L - Lift barrier
 
 Postconditions:
 Mnesia is started and mnesia barrier is lifted in (core, true) and replicant states.
