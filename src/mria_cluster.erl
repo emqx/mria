@@ -12,23 +12,23 @@ State machine:
                S                                                   |
 mria app       |                     ,- replicant --L->(replicant)-|
  start         v                     |                     ^       |
-  o ->(s_passive) ->- activate --S---( my role?            |   join winner
+  o -S->(s_passive) ->- activate -S--( assume_role         |   join winner
            ^                         |                     |       |
            |                         |                     `-------'
            S                         |
            |                         |
        deactivate                   core
-           ^                         |               ,---------------- no -----------.
-           |                         |               |                               |
-    ,-->---+------->-----------------+---------.     |         ,----try_copy_schema--( success?
-   |       |                         |         |     |         |      from peer      |
-  drop     |                         v         v     v         |                     |
- schema    '-L-(core,true)--<- yes -' `-- no ->-(core,false)-->(                     |
-   |               |       \       have        ^               |                    yes
-   |               |        \     schema?      |    join       |                     |
-   |             join        \                 `-- winner -----'                     |
-   S            winner        \                                                     /
-   |               |           `------------<-----------------<--------------------'
+           ^                         |               ,---------------- no ------------.
+           |                         |               |                                |
+    ,-->---+------->-----------------+---------.     |          ,----try_copy_schema--( success?
+   |       |                         |         |     |          |      from peer      |
+  drop     |                         v         v     v          |                     |
+ schema    '---(core,true)-L--- yes -' `-- no ->-(core,false)-->(                     |
+   |               |          \     has        ^                |                    yes
+   |               |           \  schema?      |    join        |                     |
+   |             join           \              `-- winner ------'                     |
+   S            winner           \                                                   /
+   |               |              `---------<-----------------<---------------------'
    |               v
    `---<-----<-----'
 
@@ -148,6 +148,7 @@ init(_) ->
 
 %% Passive:
 handle_event(enter, OldState, #s_passive{} = NextState, _D) ->
+    maybe_set_barrier(),
     log_enter(OldState, NextState),
     keep_state_and_data;
 handle_event({call, From}, #call_activate{}, #s_passive{}, D) ->
@@ -287,6 +288,15 @@ handle_deactivate() ->
 
 log_enter(Prev, Next) ->
     ?tp(debug, mria_cluster_state_change, #{f => Prev, n => Next}).
+
+%% Defence against an unexpected restart of mria and/or `mria_cluster'
+%% server: ensure the barrier. NOP if classy is NOT running (normal
+%% case).
+maybe_set_barrier() ->
+    try set_barrier()
+    catch
+        _:_ -> ok
+    end.
 
 set_barrier() ->
     %% NOTE: this barrier is never lifted automatically. We should not
