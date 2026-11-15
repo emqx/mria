@@ -72,7 +72,6 @@ ready() ->
 %%================================================================================
 
 on_run_level(enter, ?mria_rl_mnesia) ->
-    ?tp(notice, "Starting mria", #{role => mria_config:role()}),
     mria_cluster:activate(),
     ok;
 on_run_level(leave, ?mria_rl_mnesia) ->

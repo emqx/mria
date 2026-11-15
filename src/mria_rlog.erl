@@ -116,7 +116,7 @@ status() ->
 
 -spec role() -> mria_rlog:role().
 role() ->
-    mria_config:role().
+    mria_cluster:role().
 
 -spec role(node()) -> mria_rlog:role().
 role(Node) ->
@@ -144,7 +144,7 @@ roles(Nodes) ->
 
 -spec shard_writes(shard()) -> {ok, shard_writes()} | {aborted, _}.
 shard_writes(Shard) ->
-    case mria_config:whoami() of
+    case mria_cluster:role() of
         core ->
             {ok, local};
         replicant ->
@@ -271,7 +271,7 @@ init() ->
     mria_rlog_replica:create_tabs().
 
 cleanup() ->
-    case mria_config:whoami() of
+    case mria_cluster:role() of
         core ->
             mnesia_hook:unregister_hook(post_commit);
         _ ->

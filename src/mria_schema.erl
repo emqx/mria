@@ -119,7 +119,7 @@
 %% away with managing each shard separately
 -spec create_table(mria:table(), _Properties :: list()) -> mria:t_result(ok).
 create_table(Table, TabDef) ->
-    core = mria_config:role(), % assert
+    core = mria_cluster:role(), % assert
     gen_server:call(?MODULE, {create_table, Table, TabDef}, infinity).
 
 %% @private Return the list of tables that belong to the shard and their
@@ -332,7 +332,7 @@ do_create_table(Table, TabDef) ->
 
 -spec add_entry(entry()) -> mria:t_result(ok).
 add_entry(Entry) ->
-    core = mria_config:role(), %% assert
+    core = mria_cluster:role(), %% assert
     mnesia:transaction(
       fun() ->
               #?schema{ mnesia_table = Table
@@ -485,7 +485,7 @@ apply_schema_op( #?schema{mnesia_table = Table, storage = Storage, shard = Shard
     case lists:keyfind(Table, #?schema.mnesia_table, OldEntries) of
         false -> % new entry
             maybe
-                ok ?= case mria_config:role() of
+                ok ?= case mria_cluster:role() of
                           core ->
                               copy_table(Table, Storage);
                           replicant ->

@@ -1193,7 +1193,10 @@ t_replicant_receives_commits_from_remote_node(_) ->
                ok
        end).
 
-t_promote_replicant_to_core(_) ->
+%% This testcase verifies that the node keeps its original role and
+%% refuses to change it even if config changes. The only way to update
+%% the role is to kick the node, call unsafe_reset and join back.
+t_role_change(_) ->
     NTrans = 60,
     CounterKey = key,
     ?check_trace(
@@ -1205,28 +1208,41 @@ t_promote_replicant_to_core(_) ->
            Nodes = [N1, N2, N3],
 
            ok = mria_mnesia_test_util:wait_tables(Nodes),
+           %% Get cluster ID:
+           {ok, Cluster} = ?ON(N2, classy:the_cluster()),
            %% Generate some transactions:
            {atomic, _} = rpc:call(N2, mria_transaction_gen, create_data, []),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
            %% Check status:
            [?assertMatch(#{}, rpc:call(N, mria, info, [])) || N <- Nodes],
            mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
-           %% promote a replicant to core
+           %% Try to demote a core to a replicant
            %% stop and generate a few operations
            ok = erpc:call(N2, fun classy:stop_system/0),
            ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
-           %% restart replicant as a new core
+           %% Try to restart N2 as replicant - should keep the role
            ?ON(N2,
                begin
-                   ok = application:set_env(mria, node_role, core),
+                   ok = application:set_env(mria, node_role, replicant),
                    ok = classy:start_system()
                end),
            ?retry(1000, 10,
                   ok = mria_mnesia_test_util:wait_tables([N2])),
-           %% generate more transactions
-           ok = rpc:call(N1, mria_transaction_gen, counter, [CounterKey, NTrans div 3]),
-           mria_mnesia_test_util:wait_full_replication(Nodes),
-           mria_mnesia_test_util:compare_table_contents(test_tab, Nodes),
+           ?assertMatch(
+              core,
+              ?ON(N2, mria_cluster:role())),
+           %% Kick N2 and reset its role:
+           ?ON(N2,
+               begin
+                   ok = classy:kick_node(N2, change_role),
+                   timer:sleep(5000),
+                   ok = mria_cluster:unsafe_reset_role(Cluster),
+                   ok = classy:join_node(N1, join)
+               end),
+           ok = mria_mnesia_test_util:wait_tables(Nodes),
+           ?assertMatch(
+              replicant,
+              ?ON(N2, mria_cluster:role())),
            ok
        end,
        []).

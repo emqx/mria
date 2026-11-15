@@ -50,6 +50,8 @@ Mnesia is started and mnesia barrier is lifted in (core, true) and replicant sta
         , notify_member_leave/2
         , netsplit_winner/1
 
+        , role/0
+        , unsafe_reset_role/1
         , wait_for_mnesia/1
         ]).
 
@@ -85,6 +87,8 @@ Mnesia is started and mnesia barrier is lifted in (core, true) and replicant sta
 -define(SERVER, ?MODULE).
 
 -define(is_active(STATE), is_record(STATE, s_core) orelse is_record(STATE, s_replicant)).
+
+-define(role_pkey, {mria_cluster, role}).
 
 %%================================================================================
 %% API functions
@@ -134,6 +138,39 @@ wait_for_mnesia(Timeout) ->
     catch
         exit:{timeout, _} ->
             {error, timeout}
+    end.
+
+-doc """
+Return persistent role of the local site.
+""".
+-spec role() -> mria_rlog:role().
+role() ->
+    persistent_term:get(?role_pkey).
+
+-doc """
+Erase the previously held node role in the cluster.
+The node should not be a member of the cluster.
+
+NOTE: each node assumes its role and keeps it for the duration of its
+membership in the cluster.
+
+This limitation is meant to mitigate a class of severe TOCTOU bugs
+that can happen because role information is propagated through the
+cluster async-ly. In particular, a new or recovering core node may try
+to boostrap its schema from a core-turned-replicant, adding it to the
+core cluster - a situation that must never happen.
+
+NOTE: this operation is unsafe and should be manually controlled.
+Before attempting to reset the role, the operator must be certain that
+all former peers consider the node gone.
+""".
+-spec unsafe_reset_role(classy:cluster_id()) -> ok | {error, _}.
+unsafe_reset_role(ClusterID) ->
+    case classy:the_cluster() of
+        {ok, ClusterID} ->
+            {error, cannot_change_role_while_in_the_cluster};
+        _ ->
+            classy_site_metadata:c_delete(ClusterID, mria)
     end.
 
 %%================================================================================
@@ -221,6 +258,7 @@ handle_event(EventType, Event, State, Data) ->
     {keep_state_and_data, Actions}.
 
 terminate(_Reason, _State, _Data) ->
+    _ = persistent_term:erase(?role_pkey),
     ok.
 
 %%================================================================================
@@ -230,13 +268,9 @@ terminate(_Reason, _State, _Data) ->
 handle_activate(From, D) ->
     %% Prevent node boot until Mnesia schema is ready:
     set_barrier(),
-    %% Notify peers about my role:
-    Role = mria_config:role(),
-    classy_site_metadata:c_set(
-      mria,
-      #{ role => Role
-       , vsn  => mria_rlog:get_protocol_version()
-       }),
+    %% Resove my role:
+    Role = assume_role(),
+    ?tp(notice, "Starting mria", #{role => Role}),
     %% Next state:
     Next = case Role of
                core ->
@@ -307,3 +341,29 @@ set_barrier() ->
 
 lift_barrier() ->
     ok = classy_boot:rm_barrier(mnesia).
+
+assume_role() ->
+    RolePerConfig = application:get_env(mria, node_role, core),
+    case classy_site_metadata:c_lookup(mria) of
+        [#{role := Role}] ->
+            case RolePerConfig of
+                Role ->
+                    ok;
+                _ ->
+                    logger:error(
+                      "Configured mria node_role changed from ~p to ~p. "
+                      "Changing the node role is currently not supported, still running as ~p",
+                      [Role, RolePerConfig, Role])
+            end,
+            {ok, Role};
+        [] ->
+            Role = RolePerConfig
+    end,
+    %% Establish our role and protocol version globally:
+    classy_site_metadata:c_set(
+      mria,
+      #{ role => Role
+       , vsn  => mria_rlog:get_protocol_version()
+       }),
+    persistent_term:put(?role_pkey, Role),
+    Role.

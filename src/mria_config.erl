@@ -18,7 +18,6 @@
 -module(mria_config).
 
 -export([ role/0
-        , role_/0
         , backend/0
         , whoami/0
         , rpc_module/0
@@ -113,12 +112,7 @@ backend() ->
 
 -spec role() -> mria_rlog:role().
 role() ->
-    persistent_term:get(?mria(node_role)).
-
-%% Variant of role that works even when mria application is stopped.
--spec role_() -> mria_rlog:role().
-role_() ->
-    application:get_env(mria, node_role, core).
+    mria_cluster:role().
 
 %% Get backend and role:
 -spec whoami() -> core | replicant.
@@ -160,10 +154,10 @@ lb_poll_interval() ->
 
 -spec load_config() -> ok.
 load_config() ->
+    %% NOTE: role is set by mria_cluster. See the related comment as to why.
     copy_from_env(rlog_rpc_module),
     copy_from_env(core_rpc_retries),
     copy_from_env(core_rpc_cooldown),
-    copy_from_env(node_role, core),
     copy_from_env(strict_mode),
     copy_from_env(replay_batch_size),
     copy_from_env(shard_transport),
@@ -307,11 +301,6 @@ copy_from_env(Key) ->
         undefined ->
             ok
     end.
-
--spec copy_from_env(atom(), term()) -> ok.
-copy_from_env(Key, Default) ->
-    Val = application:get_env(mria, Key, Default),
-    persistent_term:put(?mria(Key), Val).
 
 %% Create a reverse lookup table for finding shard of the table
 -spec create_shard_rlookup(mria_rlog:shard(), [mria:table()]) -> ok.

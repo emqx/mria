@@ -281,7 +281,7 @@ create_table(Name, TabDef) ->
         #{ name    => Name
          , options => TabDef
          }),
-    Result = case mria_config:whoami() of
+    Result = case mria_cluster:role() of
                  replicant ->
                      try
                          rpc_to_core_node( ?mria_meta_shard

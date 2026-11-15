@@ -104,7 +104,7 @@ application callbacks, etc. so DON'T USE them directly.
 start() ->
     maybe
         ?tp(notice, "Starting mnesia", #{}),
-        ok ?= pre_start_recover(mria_config:role()),
+        ok ?= pre_start_recover(mria_cluster:role()),
         ok ?= do_start_mnesia(),
         ?tp(notice, "Mnesia is running", #{})
     else
@@ -140,7 +140,7 @@ on_peer_leave(Node) ->
     true = is_running(), % Assert
     %% Check if the local node is eligible and capable to perform
     %% operation with the peer:
-    case mria_config:role() of
+    case mria_cluster:role() of
         core ->
             Peers = cluster_nodes(running) -- [Node],
             ?LOCK(Peers,
@@ -275,7 +275,7 @@ copy_schema(Candidates0) ->
     %% not fool proof:
     Cores = [I || {I, core} <- mria_rlog:roles(Candidates)],
     maybe
-        core ?= mria_config:role(),
+        core ?= mria_cluster:role(),
         [_ | _] ?= Cores,
         ?LOCK([node() | Cores],
               try
@@ -315,7 +315,7 @@ persist_schema() ->
 
 -spec ensure_table_copy(mria:table(), mria:storage()) -> ok | {error, _}.
 ensure_table_copy(Name, Storage) ->
-    core = mria_config:role(), % Assert
+    core = mria_cluster:role(), % Assert
     %% Hack: mnesia storage type is broken, it doesn't account for external backends
     case apply(mnesia, add_table_copy, [Name, node(), Storage]) of
         {atomic, ok} ->
