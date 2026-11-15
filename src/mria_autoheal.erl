@@ -221,16 +221,24 @@ heal_partition([Majority|Minorities]) ->
 
 reboot_partitioned(Nodes) ->
     ?tp(warning, "Rebooting partitions", #{nodes => Nodes}),
-    lists:foreach(fun rejoin/1, Nodes).
-
-rejoin(Node) ->
-    %% Force the remote node to rejoin us with a special reason heal
-    %% that forces creation of mnesia schema:
-    ?tp_span(critical,
-             "Rejoin for autoheal",
-             #{node => Node},
-             rpc:call(Node, mria, join, [node(), heal])).
-
+    %% NOTE: events are duplicated for testing and to keep the old log
+    %% messages:
+    [?tp(critical, "Rejoin for autoheal",
+         #{ node      => I
+          , ?snk_span => start
+          }) || I <- Nodes],
+    Results = erpc:multicall(Nodes, mria, join, [node(), heal], 5_000),
+    [begin
+         case Res of
+             {ok, Return} -> ok;
+             _ -> Return = Res
+         end,
+         ?tp(critical, "Rejoin for autoheal",
+             #{ node      => I
+              , ?snk_span => {complete, Return}
+              })
+     end || {I, Res} <- lists:zip(Nodes, Results)],
+    ok.
 
 ensure_cancel_timer(undefined) ->
     ok;

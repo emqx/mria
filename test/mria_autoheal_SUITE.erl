@@ -39,6 +39,9 @@ end_per_testcase(TC, Config) ->
     mria_ct:end_per_testcase(TC, Config).
 
 t_autoheal(Config) when is_list(Config) ->
+    %% NOTE: previously, the testcase ran with
+    %% prevent_overlapping_partitions => true. That doesn't work, as
+    %% the node can get disconnected from the ct
     Spawn = fun(Site, JoinTo) ->
                     mria_ct:create_node(
                       Site,
@@ -46,7 +49,7 @@ t_autoheal(Config) when is_list(Config) ->
                       #{cluster_autoheal => 200},
                       JoinTo,
                       #{ start => true
-                       , peer => #{args => ["-kernel", "prevent_overlapping_partitions", "true"]}
+                       , peer => #{args => ["-kernel", "prevent_overlapping_partitions", "false"]}
                        })
             end,
     ?check_trace(
@@ -57,6 +60,7 @@ t_autoheal(Config) when is_list(Config) ->
            {ok, _, N3} = Spawn(~"c3", N1),
            {ok, _, N4} = Spawn(~"c4", N1),
            Nodes = [N1, N2, N3, N4],
+           timer:sleep(1000),
            setup(Nodes),
            ?force_ordering(
               #{?snk_kind := test_proceed},
@@ -64,7 +68,11 @@ t_autoheal(Config) when is_list(Config) ->
                                      K =:= "Rejoin for autoheal"),
            %% Simulate netsplit
            ?tp(notice, test_split, #{}),
-           true = rpc:cast(N4, erlang, disconnect_node, [N3]),
+           _ = [rpc:cast(I, erlang, disconnect_node, [J])
+                || {I, Is} <- [ {N4, [N1, N2, N3]}
+                              , {N3, [N1, N2, N4]}
+                              ]
+                 , J <- Is],
            ok = timer:sleep(1000),
            %% SplitView: [[N1,N2], [N3], [N4]]
            ?assertMatch({[N1, N2], [N3, N4]}, view(N1)),
@@ -250,9 +258,8 @@ verify_cluster_healed(Cores, AllNodes) ->
            end).
 
 view(Node) ->
-    Running = rpc:call(Node, mria_mnesia, running_nodes, []),
-    Stopped = rpc:call(Node, mria_mnesia, cluster_nodes, [stopped]),
-    {lists:sort(Running), lists:sort(Stopped)}.
+    ?retry(100, 10,
+           erpc:call(Node, mria_mnesia, cluster_view, [])).
 
 setup(Nodes) ->
     %% FIXME: create a proper solution preventing classy from restrarting cores before mria autoheal activates
