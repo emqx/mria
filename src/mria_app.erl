@@ -160,9 +160,14 @@ on_kick_decided(_ClusterId, TargetSite, Intent) ->
 
 -spec enrich_site_info(classy:site_metadata()) -> classy:site_metadata().
 enrich_site_info(I) ->
-    I#{mria => #{ role => mria_rlog:role()
-                , vsn  => mria_rlog:get_protocol_version()
-                }}.
+    case mria_cluster:maybe_role() of
+        {ok, Role} ->
+            I#{mria => #{ role => Role
+                        , vsn  => mria_rlog:get_protocol_version()
+                        }};
+        undefined ->
+            I
+    end.
 
 -spec on_node_classify(map()) -> list().
 on_node_classify(#{mria := #{role := Role, vsn := Vsn}}) ->

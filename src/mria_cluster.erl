@@ -51,6 +51,7 @@ Mnesia is started and mnesia barrier is lifted in (core, true) and replicant sta
         , netsplit_winner/1
 
         , role/0
+        , maybe_role/0
         , unsafe_reset_role/1
         , wait_for_mnesia/1
         ]).
@@ -146,6 +147,16 @@ Return persistent role of the local site.
 -spec role() -> mria_rlog:role().
 role() ->
     persistent_term:get(?role_pkey).
+
+-doc false.
+-spec maybe_role() -> {ok, mria_rlog:role()} | undefined.
+maybe_role() ->
+    case persistent_term:get(?role_pkey, undefined) of
+        undefined ->
+            undefined;
+        Role ->
+            {ok, Role}
+    end.
 
 -doc """
 Erase the previously held node role in the cluster.
@@ -344,6 +355,13 @@ lift_barrier() ->
 
 assume_role() ->
     RolePerConfig = application:get_env(mria, node_role, core),
+    %% Verify the role. Crash the whole application if invalid, before
+    %% the wrong role gets to become permanent:
+    case RolePerConfig of
+        core -> ok;
+        replicant -> ok;
+        _ -> error({fatal_bad_role, RolePerConfig})
+    end,
     case classy_site_metadata:c_lookup(mria) of
         [#{role := Role}] ->
             case RolePerConfig of
