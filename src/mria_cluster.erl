@@ -296,8 +296,11 @@ log_enter(Prev, Next) ->
     ?tp(debug, mria_cluster_state_change, #{f => Prev, n => Next}).
 
 set_barrier() ->
+    %% NOTE: this barrier is never lifted automatically. We should not
+    %% let the boot continue unless mnesia is ready. Hence no
+    %% `monitor' flag or automatic cleaning on terminate:
     Descr = ~"Mnesia schema is merged and mnesia is running",
-    classy_boot:set_barrier(mnesia, ?mria_rl_mnesia, [{hint, Descr}]).
+    classy_boot:set_barrier(mnesia, ?mria_rl_mnesia, [{hint, Descr}, async]).
 
 lift_barrier() ->
     ok = classy_boot:rm_barrier(mnesia).
