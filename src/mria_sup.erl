@@ -45,7 +45,7 @@ launch_rlog() ->
     case supervisor:start_child(?top, Child) of
         {ok, _} ->
             ok;
-        {error, {already_running, _}} ->
+        {error, {already_started, _}} ->
             ok;
         {error, already_present} ->
             {ok, _} = supervisor:restart_child(?top, ?rlog),
