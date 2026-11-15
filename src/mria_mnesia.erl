@@ -104,7 +104,7 @@ application callbacks, etc. so DON'T USE them directly.
 start() ->
     maybe
         ?tp(notice, "Starting mnesia", #{}),
-        pre_start_recover(mria_config:role()),
+        ok ?= pre_start_recover(mria_config:role()),
         ok ?= do_start_mnesia(),
         ?tp(notice, "Mnesia is running", #{})
     else
@@ -430,7 +430,7 @@ del_schema_copy(Node) ->
             {error, Reason}
     end.
 
--spec ensure_schema() -> ok.
+-spec ensure_schema() -> ok | {error, _}.
 ensure_schema() ->
     false = is_running(), % assert
     ok = ensure_data_dir(),
@@ -526,6 +526,7 @@ schema_cookie() ->
 -doc """
 Try to recover from the situation when Mnesia directory has been nuked.
 """.
+-spec pre_start_recover(mria_rlog:role()) -> ok | {error, _}.
 pre_start_recover(core) ->
     false = is_running(), % assert
     maybe_set_master_nodes(),
