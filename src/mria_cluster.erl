@@ -127,9 +127,14 @@ netsplit_winner(Winner) ->
 -doc """
 Wait until mnesia schema is created or copied and Mnesia is started.
 """.
--spec wait_for_mnesia(timeout()) -> ok.
+-spec wait_for_mnesia(timeout()) -> ok | {error, timeout}.
 wait_for_mnesia(Timeout) ->
-    gen_server:call(?SERVER, #call_wait_for_mnesia{}, Timeout).
+    try
+        gen_server:call(?SERVER, #call_wait_for_mnesia{}, Timeout)
+    catch
+        exit:{timeout, _} ->
+            {error, timeout}
+    end.
 
 %%================================================================================
 %% behavior callbacks

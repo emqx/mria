@@ -115,24 +115,24 @@ pre_join(_Cluster, _RemoteSite, Node, _Intent) when is_atom(Node) ->
 pre_join(_, _, Node, _) ->
     {error, {bad_node, Node}}.
 
-%% Note: this hook runs after the membership in the new cluster has
-%% been committed and the run levels have settled. It must block until
-%% mria fully converges (i.e. mnesia schema is copied and mnesia is
-%% running), making `classy:join_node' synchronous wrt mria state.
+%% The purpose of this hook is to maintain classy join lock on the
+%% *joinee* for the duration of schema copying (with bounded hold
+%% time). For startup of local business applications it's irrelevant,
+%% as the boot sequence relies on the same `wait_for_mnesia' with
+%% unbounded timeout.
+%%
+%% Here we choose limited timeout to avoid locking the *joinee*
+%% indefinitely, should the *joiner* run into some problem with
+%% copying schema. Practically, it's most important to hold the locks
+%% long enough to avoid race conditions in the autocluster, where two
+%% nodes try to join each other simultaneously and end up swapping the
+%% clusters. 30s should be enough to make sure classy membership data
+%% is propagated between the two.
 -spec on_post_join(classy:cluster_id(), classy:site(), node() | undefined, term()) -> ok.
 on_post_join(_Cluster, _Local, _JoinToNode, _Intent) ->
     Timeout = 30_000,
     mria_cluster:activate(),
-    try mria_cluster:wait_for_mnesia(Timeout) of
-        ok ->
-            ?tp(notice, mria_join_converged, #{})
-    catch
-        Class:Reason ->
-            ?tp(critical, mria_join_failed,
-                #{ reason  => {Class, Reason}
-                 , timeout => Timeout
-                 })
-    end.
+    ok = mria_cluster:wait_for_mnesia(Timeout).
 
 -spec on_kick_decided(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_kick_decided(_ClusterId, TargetSite, Intent) ->
