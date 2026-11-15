@@ -24,6 +24,8 @@ This module contains routines for migration from pure Mnesia deployment to class
 
 -export_type([]).
 
+-include_lib("snabbkaffe/include/trace.hrl").
+
 %%================================================================================
 %% Type declarations
 %%================================================================================
@@ -44,6 +46,9 @@ maybe_cluster_id() ->
     case mria_mnesia:schema_cookie() of
         {ok, {Cookie, _Node}} ->
             cookie_to_cluster_id(Cookie);
+        {error, Reason} ->
+            ?tp(error, mria_migration_failed_to_read_schema_cookie, #{reason => Reason}),
+            undefined;
         undefined ->
             undefined
     end.
