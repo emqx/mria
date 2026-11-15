@@ -1482,8 +1482,13 @@ t_join_each_other_simultaneously(_) ->
            %% Issue requests in parallel:
            Key1 = erpc:send_request(N1, mria_join_fixture, do_join, [N2, join]),
            Key2 = erpc:send_request(N2, mria_join_fixture, do_join, [N1, join]),
-           _ = erpc:wait_response(Key1, 10_000),
-           _ = erpc:wait_response(Key2, 10_000),
+           ?assertMatch(
+              { {response, ok}
+              , {response, ok}
+              },
+              { erpc:wait_response(Key1, 15_000)
+              , erpc:wait_response(Key2, 15_000)
+              }),
            mria_ct:wait_quorum(Nodes),
            %% Verify that they created a cluster:
            ?retry(1000, 10,

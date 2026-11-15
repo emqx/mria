@@ -623,8 +623,6 @@ copy_table(Table, Storage) ->
             case mria_mnesia:ensure_table_copy(Table, Storage) of
                 ok  ->
                     ok;
-                {error, {Node, {already_exists, Node}}} ->
-                    ok;
                 {error, Reason} ->
                     {error, {failed_to_copy_table, Reason}}
             end;
