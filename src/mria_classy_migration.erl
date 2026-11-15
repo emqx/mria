@@ -93,15 +93,15 @@ but aren't classy peers.
 """.
 -spec extra_sync_targets(classy:cluster_id()) -> [node()].
 extra_sync_targets(Cluster) ->
-    case mria_rlog:role() of
-        core ->
+    case mria_cluster:maybe_role() of
+        {ok, core} ->
             case maybe_cluster_id() of
                 Cluster ->
                     mria_mnesia:cluster_nodes(all) -- upgraded_nodes();
                 _ ->
                     []
             end;
-        replicant ->
+        _ ->
             []
     end.
 

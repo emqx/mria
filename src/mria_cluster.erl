@@ -279,7 +279,7 @@ terminate(_Reason, _State, _Data) ->
 handle_activate(From, D) ->
     %% Prevent node boot until Mnesia schema is ready:
     set_barrier(),
-    %% Resove my role:
+    %% Resolve my role:
     Role = assume_role(),
     ?tp(notice, "Starting mria", #{role => Role}),
     %% Next state:
@@ -335,8 +335,8 @@ log_enter(Prev, Next) ->
     ?tp(debug, mria_cluster_state_change, #{f => Prev, n => Next}).
 
 %% Defence against an unexpected restart of mria and/or `mria_cluster'
-%% server: ensure the barrier. NOP if classy is NOT running (normal
-%% case).
+%% server: ensure the barrier. Normally, this runs when classy system
+%% isn't started - in this case it's a NOP.
 maybe_set_barrier() ->
     try set_barrier()
     catch
