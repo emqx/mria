@@ -533,9 +533,7 @@ pre_start_recover(core) ->
     case {has_schema(), classy:nodes(core) -- [node()]} of
         {false, []} ->
             ensure_schema();
-        {false, Nodes} ->
-            copy_schema(Nodes);
-        {true, _} ->
+        _ ->
             ok
     end;
 pre_start_recover(replicant) ->
