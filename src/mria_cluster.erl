@@ -101,7 +101,9 @@ notify_member_leave(Site, MaybeNode) ->
 -doc """
 Signal to the server that system is booting.
 This happens when the boot sequence enters `?mria_rl_mnesia` run level.
-This activates the cluster logic, which starts dormant.
+This activates the cluster logic, which stayed dormant so far.
+
+NOTE: this function is idempotent.
 """.
 -spec activate() -> ok.
 activate() ->
