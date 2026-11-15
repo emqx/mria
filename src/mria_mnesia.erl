@@ -170,7 +170,8 @@ Delete the schema.
 """.
 -spec on_leave(classy:cluster_id(), classy:site(), classy:kick_intent()) -> ok.
 on_leave(Cluster, _Site, Intent) ->
-    false = is_running(), % assert
+    %% Normally a NOP, as `mria_cluster' stops mnesia beforehand:
+    ok = do_stop_mnesia(),
     case do_delete_schema() of
         ok ->
             ok;
