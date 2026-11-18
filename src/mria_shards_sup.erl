@@ -19,7 +19,7 @@
 
 -behaviour(supervisor).
 
--export([init/1, start_link/0, find_shard/1, start_shard/1, restart_shard/2]).
+-export([init/1, start_link/0, find_shard/1, start_shard/1, start_shard/2, restart_shard/2]).
 
 -define(SUPERVISOR, ?MODULE).
 
@@ -41,14 +41,19 @@ find_shard(Shard) ->
 -spec start_shard(mria_rlog:shard()) -> {ok, pid()}
                                       | {error, _}.
 start_shard(Shard) ->
+    start_shard(Shard, undefined).
+
+-spec start_shard(mria_rlog:shard(), mria_rlog:maybe_run_level()) -> {ok, pid()}
+                                       | {error, _}.
+start_shard(Shard, MaybeRunLevel) ->
     case whereis(?SUPERVISOR) of
         undefined ->
             %% FIXME: communicate via CVAR instead
             timer:sleep(100),
-            start_shard(Shard);
+            start_shard(Shard, MaybeRunLevel);
         _Pid ->
             maybe
-                {ok, Child} ?= shard_sup(Shard),
+                {ok, Child} ?= shard_sup(Shard, MaybeRunLevel),
                 supervisor:start_child(?SUPERVISOR, Child)
             else
                 Err -> {error, Err}
@@ -76,20 +81,20 @@ init(_) ->
                 , intensity => 100
                 , period    => 1
                 },
-    {ok, MetaShard} = shard_sup(?mria_meta_shard),
+    {ok, MetaShard} = shard_sup(?mria_meta_shard, undefined),
     {ok, {SupFlags, [MetaShard]}}.
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
-shard_sup(Shard) ->
+shard_sup(Shard, MaybeRunLevel) ->
     maybe
         {ok, IsMerge} ?= mria_schema:is_merge_shard(Shard),
         Start = case {IsMerge, mria_rlog:role()} of
-                    {true, _}          -> {mria_shard_merged_sup,     start_link, [Shard]};
-                    {false, core}      -> {mria_shard_upstream_sup,   start_link, [Shard]};
-                    {false, replicant} -> {mria_shard_downstream_sup, start_link, [Shard, ?any_core]}
+                    {true, _}          -> {mria_shard_merged_sup,     start_link, [Shard, MaybeRunLevel]};
+                    {false, core}      -> {mria_shard_upstream_sup,   start_link, [Shard, MaybeRunLevel]};
+                    {false, replicant} -> {mria_shard_downstream_sup, start_link, [Shard, ?any_core, MaybeRunLevel]}
                 end,
         {ok, #{ id       => Shard
               , start    => Start

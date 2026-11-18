@@ -111,7 +111,8 @@ prep_restart() ->
 %% It is the same node that serves the local replica, but this optvar
 %% is set before local replica goes up fully. WARNING: this `optvar'
 %% is set before local replica becomes consistent.
--spec rpc_target(mria_rlog:shard(), timeout()) -> {ok, node()} | {error, ?mria_stopping} | disconnected.
+-spec rpc_target(mria_rlog:shard(), infinity) -> {ok, node()} | {error, ?mria_stopping};
+                (mria_rlog:shard(), non_neg_integer()) -> {ok, node()} | {error, ?mria_stopping} | disconnected.
 rpc_target(Shard, Timeout) ->
     maybe
         ok ?= check_stopping(),
@@ -232,7 +233,7 @@ replicants() ->
 
 -spec get_shard_lag(mria_rlog:shard()) -> non_neg_integer() | disconnected.
 get_shard_lag(Shard) ->
-    case {mria_config:role(), upstream_node(Shard)} of
+    case {mria_cluster:role(), upstream_node(Shard)} of
         {core, _} ->
             0;
         {replicant, disconnected} ->
@@ -295,7 +296,7 @@ shards_down() ->
 -spec get_shard_stats(mria_rlog:shard()) -> map().
 get_shard_stats(Shard) ->
     LocalStats = get_local_shard_stats(Shard),
-    case mria_config:role() of
+    case mria_cluster:role() of
         core ->
             LocalStats;
         replicant ->
@@ -307,7 +308,7 @@ get_shard_stats(Shard) ->
 %% `get_shard_lag/1` performs an `erpc` call to a core node, so we avoid that.
 -spec get_local_shard_stats(mria_rlog:shard()) -> map().
 get_local_shard_stats(Shard) ->
-    case mria_config:role() of
+    case mria_cluster:role() of
         core ->
             Weight = case mria_lb:core_node_weight(Shard) of
                          undefined          -> undefined;

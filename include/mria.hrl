@@ -1,6 +1,8 @@
 -ifndef(MRIA_HRL).
 -define(MRIA_HRL, true).
 
+-include_lib("classy/include/classy.hrl").
+
 -type(cluster() :: atom()).
 
 -type(member_status() :: joining | up | healing | leaving | down).
@@ -27,5 +29,8 @@
         { shard :: mria_rlog:shard()
         , status :: mria_rlog_replica:state()
         }).
+
+%% Run level where mria becomes ready to create tables:
+-define(mria_rl_ready, (?classy_rl_single + 10)).
 
 -endif.

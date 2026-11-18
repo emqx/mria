@@ -21,10 +21,10 @@
 -behaviour(supervisor).
 
 %% API:
--export([start_link/1, ensure_downstream/2, stop_downstream/2]).
+-export([start_link/1, start_link/2, ensure_downstream/2, stop_downstream/2]).
 
 %% Internal exports:
--export([start_link_downstream_sup/1]).
+-export([start_link_downstream_sup/1, start_link_downstream_sup/2, start_downstream/3]).
 
 %% Supervisor callbacks:
 -export([init/1]).
@@ -42,7 +42,11 @@
 
 -spec start_link(mria_rlog:shard()) -> {ok, pid()}.
 start_link(Shard) ->
-    supervisor:start_link(?MODULE, {top, Shard}).
+    start_link(Shard, undefined).
+
+-spec start_link(mria_rlog:shard(), mria_rlog:maybe_run_level()) -> {ok, pid()}.
+start_link(Shard, MaybeRunLevel) ->
+    supervisor:start_link(?MODULE, {top, Shard, MaybeRunLevel}).
 
 -spec ensure_downstream(mria_rlog:shard(), mria_rlog_replica:upstream()) -> {ok, pid()} | {error, _}.
 ensure_downstream(Shard, Upstream) ->
@@ -72,19 +76,19 @@ stop_downstream(Shard, Upstream) ->
 %% Supervisor callbacks
 %%================================================================================
 
-init({top, Shard}) ->
+init({top, Shard, MaybeRunLevel}) ->
     SupFlags = #{ strategy      => one_for_all
                 , intensity     => 0
                 , period        => 1
                 },
     Children = [ #{ id          => upstream
-                  , start       => {mria_shard_upstream_sup, start_link, [Shard]}
+                  , start       => {mria_shard_upstream_sup, start_link, [Shard, MaybeRunLevel]}
                   , restart     => permanent
                   , shutdown    => infinity
                   , type        => supervisor
                   }
                , #{ id          => downstream_sup
-                  , start       => {?MODULE, start_link_downstream_sup, [Shard]}
+                  , start       => {?MODULE, start_link_downstream_sup, [Shard, MaybeRunLevel]}
                   , restart     => permanent
                   , shutdown    => infinity
                   , type        => supervisor
@@ -97,7 +101,7 @@ init({top, Shard}) ->
                   }
                ],
     {ok, {SupFlags, Children}};
-init({downstream, Shard}) ->
+init({downstream, Shard, MaybeRunLevel}) ->
     SupFlags = #{ strategy  => simple_one_for_one
                 , intensity => 100
                 , period    => 10
@@ -106,7 +110,7 @@ init({downstream, Shard}) ->
                 , restart  => permanent
                 , shutdown => infinity
                 , type     => supervisor
-                , start    => {mria_shard_downstream_sup, start_link, [Shard]}
+                , start    => {?MODULE, start_downstream, [Shard, MaybeRunLevel]}
                 },
     {ok, {SupFlags, [Children]}}.
 
@@ -116,4 +120,12 @@ init({downstream, Shard}) ->
 
 -spec start_link_downstream_sup(mria_rlog:shard()) -> {ok, pid()}.
 start_link_downstream_sup(Shard) ->
-    supervisor:start_link(?via(Shard), ?MODULE, {downstream, Shard}).
+    start_link_downstream_sup(Shard, undefined).
+
+-spec start_link_downstream_sup(mria_rlog:shard(), mria_rlog:maybe_run_level()) -> {ok, pid()}.
+start_link_downstream_sup(Shard, MaybeRunLevel) ->
+    supervisor:start_link(?via(Shard), ?MODULE, {downstream, Shard, MaybeRunLevel}).
+
+-spec start_downstream(mria_rlog:shard(), mria_rlog:maybe_run_level(), mria_rlog_replica:upstream()) -> {ok, pid()} | {error, _}.
+start_downstream(Shard, MaybeRunLevel, Upstream) ->
+    mria_shard_downstream_sup:start_link(Shard, Upstream, MaybeRunLevel).

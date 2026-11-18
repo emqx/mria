@@ -21,6 +21,7 @@
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include_lib("stdlib/include/assert.hrl").
+-include_lib("classy/include/classy_rl.hrl").
 
 init_per_suite(Config) ->
     mria_ct:start_dist(),
@@ -48,21 +49,6 @@ create_cluster(ClusterId, Subnet) ->
                                      , port_discovery => stateless
                                      }
                             end}}
-               , {familiar_app,
-                  #{ app => classy
-                   , env => fun(Site, _Node, _State) ->
-                                    #{ setup_hooks => {?MODULE, setup_init_hooks, [Site]}
-                                     , cleanup_check_interval => 100
-                                     , vote_retry_interval => 100
-                                     , rpc_timeout => 100
-                                     , discovery_interval => 100
-                                     , sync_timeout => 100
-                                     }
-                            end
-                   , prep_stop => fun(Site, _Node, _State) ->
-                                          familiar:call(Site, classy, prep_stop, [], infinity)
-                                  end
-                 }}
                ],
     put(mria_ct_cluster, {ok, ClusterId}),
     familiar:start_link_cluster(
@@ -87,19 +73,18 @@ end_per_testcase(TestCase, Config) ->
 setup_init_hooks({_Cluster, Site}) ->
     %% Use deterministic site IDs
     classy:on_node_init(fun() ->
-                                classy_node:maybe_init_the_site(Site),
-                                mria_app:on_node_init()
+                                classy_node:maybe_init_the_site(Site)
                         end,
                         0),
     %% Imitate business applications:
-    classy:run_level(fun ?MODULE:on_run_level/2, 0).
+    classy:on_run_level(fun ?MODULE:on_run_level/2, 0).
 
-on_run_level(single, cluster) ->
+on_run_level(enter, ?classy_rl_ready) ->
     ?tp_span(warning, initializing_run_level, #{node => node()},
              mria_transaction_gen:init());
-on_run_level(cluster, quorum) ->
+on_run_level(enter, ?classy_rl_quorum) ->
     optvar:set(test_mria_quorum, true);
-on_run_level(quorum, cluster) ->
+on_run_level(leave, ?classy_rl_quorum) ->
     optvar:unset(test_mria_quorum);
 on_run_level(_, _) ->
     ok.
@@ -119,15 +104,40 @@ create_node(SiteId, Role, MriaOpts, JoinTo, FamiliarOpts) ->
       FamiliarOpts#{ fixtures => fixtures(Role, MriaOpts, JoinTo)
                    }).
 
+-spec join(node() | classy:site(), node()) -> ok | {error, _}.
+join(Node, JoinTo) ->
+    join(Node, JoinTo, join).
+
+-spec join(node() | familiar:site(), node(), term()) -> ok | {error, _}.
+join(Node, JoinTo, Intent) when is_atom(Node) ->
+    erpc:call(Node, mria_join_fixture, do_join, [JoinTo, Intent]);
+join(Site, JoinTo, Intent) ->
+    familiar:call(Site, mria_join_fixture, do_join, [JoinTo, Intent]).
+
 fixtures(Role, MriaOpts, JoinTo) ->
     [ {familiar_app,
+       #{ app => classy
+        , timeout => 15_000
+        , env => fun(Site, _Node, _State) ->
+                         #{ setup_hooks => {?MODULE, setup_init_hooks, [Site]}
+                          , cleanup_check_interval => 100
+                          , vote_retry_interval => 100
+                          , rpc_timeout => 100
+                          , discovery_interval => 100
+                          , sync_timeout => 100
+                          }
+                 end
+        }}
+    , {familiar_app,
        #{ app => mria
-        , start => false
+        , timeout => 15_000
         , env => MriaOpts#{ strict_mode             => true
                           , rlog_lb_update_interval => 100
                           , node_role               => Role
                           , cluster_autoheal        => 200
-                          }}}
+                          }
+        }}
+    , {classy_start_system_fixture, #{timeout => 15_000}}
     , {mria_join_fixture, JoinTo}
     ].
 

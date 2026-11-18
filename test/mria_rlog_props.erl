@@ -45,14 +45,34 @@ no_unexpected_events(Trace0) ->
     ?assertMatch([], ?of_kind(?unexpected_event_kind, Trace)),
     true.
 
-%% Check that each replicant didn't restart
+%% Check that each replica process (for each shard on each node)
+%% doesn't restart without a reason:
 replicant_no_restarts(Trace0) ->
     %% Ignore everything that happens after cluster teardown:
     {Trace, _} = ?split_trace_at(#{?snk_kind := teardown_cluster}, Trace0),
-    StartEvents = ?projection([node, shard], ?of_kind(rlog_replica_start, Trace)),
-    %% FIXME!!
-    %?assertEqual(length(lists:usort(StartEvents)), length(StartEvents)),
-    ct:pal("Start events ~p", [StartEvents]),
+    %% Verify that shards don't restart unless mria is restarted as a whole:
+    lists:foldl(
+      fun(Evt = #{?snk_meta := #{node := Node}}, State) ->
+              case Evt of
+                  #{?snk_kind := rlog_replica_start, shard := Shard} ->
+                      case State of
+                          #{Node := #{Shard := _}} ->
+                              error({unexpected_replica_restart, {Node, Shard}});
+                          #{Node := Shards} ->
+                              State#{Node => Shards#{Shard => true}};
+                          #{} ->
+                              State#{Node => #{Shard => true}}
+                      end;
+                  #{?snk_kind := "Mria is stopped"} ->
+                      maps:remove(Node, State);
+                  _ ->
+                      State
+              end;
+         (_, State) ->
+              State
+      end,
+      #{},
+      Trace),
     true.
 
 no_split_brain(Trace0) ->
@@ -202,7 +222,7 @@ check_transaction_replay_sequence(Max, Prev, [Next|_]) ->
 check_transaction_replay_sequence_test() ->
     try
         meck:new(classy_site_metadata, [no_history, passthrough]),
-        meck:expect(classy_site_metadata, set, fun(_, _) -> ok end),
+        meck:expect(classy_site_metadata, c_set, fun(_, _) -> ok end),
         ?assert(check_transaction_replay_sequence([])),
         ?assert(check_transaction_replay_sequence([1, 2])),
         ?assert(check_transaction_replay_sequence([2, 3, 4])),

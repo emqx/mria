@@ -18,7 +18,6 @@
 -module(mria_config).
 
 -export([ role/0
-        , role_/0
         , backend/0
         , whoami/0
         , rpc_module/0
@@ -113,12 +112,7 @@ backend() ->
 
 -spec role() -> mria_rlog:role().
 role() ->
-    persistent_term:get(?mria(node_role), core).
-
-%% Variant of role that works even when mria application is stopped.
--spec role_() -> mria_rlog:role().
-role_() ->
-    application:get_env(mria, node_role, core).
+    mria_cluster:role().
 
 %% Get backend and role:
 -spec whoami() -> core | replicant.
@@ -160,22 +154,17 @@ lb_poll_interval() ->
 
 -spec load_config() -> ok.
 load_config() ->
+    %% NOTE: role is set by mria_cluster. See the related comment as to why.
     copy_from_env(rlog_rpc_module),
     copy_from_env(core_rpc_retries),
     copy_from_env(core_rpc_cooldown),
-    copy_from_env(node_role),
     copy_from_env(strict_mode),
     copy_from_env(replay_batch_size),
     copy_from_env(shard_transport),
     copy_from_env(max_mql),
     copy_from_env(bootstrap_batch_size),
     copy_from_env(extra_mnesia_diagnostic_checks),
-    consistency_check(),
-    classy_site_metadata:set(
-      mria,
-      #{ role => mria_rlog:role()
-       , vsn => mria_rlog:get_protocol_version()
-       }).
+    consistency_check().
 
 -spec set_dirty_shard(mria_rlog:shard(), boolean()) -> ok.
 set_dirty_shard(Shard, IsDirty) when IsDirty =:= true;
@@ -282,8 +271,8 @@ consistency_check() ->
         ?TRANSPORT_ERL_DISTR -> ok;
         ?TRANSPORT_GEN_RPC -> ok
     end,
-    case {backend(), role(), otp_is_compatible()} of
-        {rlog, _, false} ->
+    case {backend(), otp_is_compatible()} of
+        {rlog, false} ->
             ?LOG(critical, "Configuration error: cannot use mria DB "
                            "backend with this version of Erlang/OTP", []),
             error(unsupported_otp_version);
@@ -401,7 +390,7 @@ erase_global_config_test() ->
     PersTerms = lists:sort(persistent_term:get()),
     try
         meck:new(classy_site_metadata, [no_history, passthrough]),
-        meck:expect(classy_site_metadata, set, fun(_, _) -> ok end),
+        meck:expect(classy_site_metadata, c_set, fun(_, _) -> ok end),
 
         ok = load_config(),
         meck:unload(classy_site_metadata)

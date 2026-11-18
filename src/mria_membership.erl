@@ -496,13 +496,13 @@ make_new_local_member() ->
                       guid = mria_guid:gen(),
                       status = up, mnesia = IsMnesiaRunning,
                       last_update = now_seconds(),
-                      role = mria_config:role()
+                      role = mria_cluster:role()
                      }).
 
 initialize_members() ->
     LocalMember = make_new_local_member(),
     true = ets:insert(?TAB, LocalMember),
-    case mria_config:role() of
+    case mria_cluster:role() of
         core -> ping_core_nodes(LocalMember);
         %% We don't attempt to ping any nodes on a replicant, because
         %% it must be done by mria_lb which uses a proper nodes discovery mechanism.
@@ -569,7 +569,7 @@ del_monitor({Type, PidOrFun}, S = #state{monitors = Monitors}) ->
 
 mnesia_cluster_status(Node) ->
     %% FIXME: ugly workaround. Mnesia status is wrong on the replicant
-    case mria_config:role() of
+    case mria_cluster:role() of
         core ->
             mria_mnesia:cluster_status(Node);
         replicant ->
@@ -582,7 +582,7 @@ is_remote_registered(_) ->
     false.
 
 monitor_if_replicant(Member = #member{node = Node, role = Role}, State) ->
-    case Role =:= replicant orelse mria_config:role() =:= replicant of
+    case Role =:= replicant orelse mria_cluster:role() =:= replicant of
         true ->
             %% Core nodes need to monitor replicants, replicants need to monitor
             %% both cores and other replicants.

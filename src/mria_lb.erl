@@ -303,7 +303,7 @@ core_node_weight(Shard) ->
 -spec lb_callback() -> {node(), node_info()}.
 lb_callback() ->
     IsRunning = is_pid(whereis(mria_rlog_sup)),
-    Whoami = mria_config:whoami(),
+    Whoami = mria_cluster:role(),
     Version = case application:get_key(mria, vsn) of
                   {ok, Vsn} -> Vsn;
                   undefined -> undefined
