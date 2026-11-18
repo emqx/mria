@@ -214,6 +214,7 @@ handle_event(enter, OldState, #s_core{schema = true} = NextState, _D) ->
     ok = lift_barrier(),
     keep_state_and_data;
 handle_event({call, From}, #call_join_winner{node = Node}, #s_core{schema = true}, D) ->
+    ?tp(critical, mria_stop_for_autoheal, #{winner => Node}),
     handle_deactivate(),
     {ok, Cluster} = classy:the_cluster(),
     {ok, Local} = classy:the_site(),

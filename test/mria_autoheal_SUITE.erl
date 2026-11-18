@@ -107,7 +107,7 @@ t_autoheal_with_replicants(Config) when is_list(Config) ->
        end,
        [fun ?MODULE:prop_reboots/1]).
 
-t_autoheal_overlapping_parition(Config) when is_list(Config) ->
+t_autoheal_overlapping_partition(Config) when is_list(Config) ->
     ?check_trace(
        #{timetrap => 25000},
        begin
